@@ -518,10 +518,14 @@ class TradovateClient:
             "orderType": order_type,     # "Market" | "Limit" | "Stop"
             "isAutomated": True,
         }
-        if price is not None:
-            body["price"] = price
-        if stop_price is not None:
-            body["stopPrice"] = stop_price
+        # Tradovate rejects a price on Market orders and a stopPrice on non-stop
+        # orders, so only attach each field to the order types that accept it.
+        sent_price = price if order_type in ("Limit", "StopLimit") else None
+        sent_stop = stop_price if order_type in ("Stop", "StopLimit") else None
+        if sent_price is not None:
+            body["price"] = sent_price
+        if sent_stop is not None:
+            body["stopPrice"] = sent_stop
 
         data = await self._request("POST", "/order/placeorder", json=body)
         result = {
@@ -530,8 +534,8 @@ class TradovateClient:
             "account": spec,
             "qty": qty,
             "order_type": order_type,
-            "price": price,
-            "stop_price": stop_price,
+            "price": sent_price,
+            "stop_price": sent_stop,
             "order_id": (data or {}).get("orderId"),
             "status": "submitted" if data and data.get("orderId") else "rejected",
             "raw": data,

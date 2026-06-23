@@ -103,12 +103,17 @@ async def apply_update() -> dict[str, Any]:
     if not (config.ROOT_DIR / ".git").exists():
         return {"success": False, "message": "Not a git checkout — cannot self-update"}
 
-    state.log_event("info", "Applying update from GitHub…")
+    old_version = config.get_version()
+    state.log_event("info", f"Applying update from GitHub (current v{old_version})…")
 
-    ok, fetch_out = await asyncio.to_thread(_run, ["git", "fetch", "--all", "--prune"])
+    ok, fetch_out = await asyncio.to_thread(
+        _run, ["git", "fetch", "--all", "--tags", "--prune"]
+    )
     if not ok:
         return {"success": False, "message": f"git fetch failed: {fetch_out}"}
 
+    # Hard-reset to the tracked branch. Settings live in data/ (git-ignored) so
+    # they are never touched by the reset.
     ok, pull_out = await asyncio.to_thread(
         _run, ["git", "reset", "--hard", f"origin/{config.GITHUB_BRANCH}"]
     )
@@ -121,13 +126,14 @@ async def apply_update() -> dict[str, Any]:
     )
 
     new_version = config.get_version()
-    state.log_event("info", f"Updated to version {new_version}; restarting…")
+    state.log_event("info", f"Updated v{old_version} → v{new_version}; restarting…")
 
     # Restart shortly after responding so the dashboard gets the response first.
     asyncio.get_event_loop().call_later(1.5, _restart)
     return {
         "success": True,
-        "message": f"Updated to {new_version}. Restarting…",
+        "message": f"Updated v{old_version} → v{new_version}. Restarting…",
+        "previous_version": old_version,
         "version": new_version,
         "log": pull_out,
     }
