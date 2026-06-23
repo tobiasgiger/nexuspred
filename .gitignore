@@ -1,0 +1,18 @@
+# Runtime data (created on first run)
+data/settings.json
+data/*.log
+data/*.db
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.env
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

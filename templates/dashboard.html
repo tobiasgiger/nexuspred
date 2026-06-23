@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tradovate Webhook Bridge</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">◈</span>
+      <div>
+        <h1>Tradovate Bridge</h1>
+        <span class="subtitle">TradingView → Tradovate signal router</span>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <div class="conn-pill" id="connPill">
+        <span class="dot" id="connDot"></span>
+        <span id="connText">Disconnected</span>
+      </div>
+      <div class="version" id="versionBox">
+        <span id="versionText">v—</span>
+        <button id="updateBtn" class="btn btn-update hidden">Update available</button>
+      </div>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="monitor">Monitor</button>
+    <button class="tab" data-tab="settings">Settings</button>
+    <button class="tab" data-tab="logs">Logs</button>
+    <button class="tab" data-tab="test">Test &amp; Webhook</button>
+  </nav>
+
+  <main>
+    <!-- ============================ MONITOR ============================ -->
+    <section class="panel active" id="tab-monitor">
+      <div class="grid grid-3">
+        <div class="card stat">
+          <div class="stat-label">Trading</div>
+          <div class="stat-value" id="statTrading">—</div>
+        </div>
+        <div class="card stat">
+          <div class="stat-label">Environment</div>
+          <div class="stat-value" id="statEnv">—</div>
+        </div>
+        <div class="card stat">
+          <div class="stat-label">Account</div>
+          <div class="stat-value" id="statAccount">—</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Open Positions</h2>
+          <button class="btn btn-ghost" id="refreshPositions">Refresh</button>
+        </div>
+        <table class="data-table" id="positionsTable">
+          <thead>
+            <tr><th>Symbol</th><th>Net Pos</th><th>Avg Price</th><th>Open P&amp;L</th></tr>
+          </thead>
+          <tbody><tr><td colspan="4" class="empty">No positions</td></tr></tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Active Trades (tracked by bridge)</h2></div>
+        <table class="data-table" id="activeTable">
+          <thead>
+            <tr><th>Symbol</th><th>Contract</th><th>Side</th><th>Qty</th><th>SL Order</th><th>TP Orders</th></tr>
+          </thead>
+          <tbody><tr><td colspan="6" class="empty">None</td></tr></tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Recent Orders</h2></div>
+        <table class="data-table" id="ordersTable">
+          <thead>
+            <tr><th>Time</th><th>Action</th><th>Symbol</th><th>Qty</th><th>Type</th><th>Price</th><th>Status</th></tr>
+          </thead>
+          <tbody><tr><td colspan="7" class="empty">No orders yet</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============================ SETTINGS ============================ -->
+    <section class="panel" id="tab-settings">
+      <form id="settingsForm">
+        <div class="grid grid-2">
+          <div class="card">
+            <div class="card-head"><h2>Tradovate Connection</h2></div>
+            <label>Environment
+              <select name="environment">
+                <option value="demo">Demo</option>
+                <option value="live">Live</option>
+              </select>
+            </label>
+            <label>Username <input name="username" autocomplete="off" /></label>
+            <label>Password <input name="password" type="password" autocomplete="off" /></label>
+            <label>App ID <input name="app_id" autocomplete="off" /></label>
+            <label>App Version <input name="app_version" /></label>
+            <label>API Key (cid) <input name="cid" autocomplete="off" /></label>
+            <label>API Secret (sec) <input name="sec" type="password" autocomplete="off" /></label>
+            <label>Device ID (optional) <input name="device_id" /></label>
+            <label>Account Spec <input name="account_spec" placeholder="auto-detected on connect" /></label>
+            <button type="button" class="btn btn-secondary" id="connectBtn">Connect &amp; Verify</button>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h2>Trading Rules</h2></div>
+            <label class="switch-row">
+              <span>Trading enabled</span>
+              <input type="checkbox" name="trading_enabled" class="switch" />
+            </label>
+            <label>Default entry contracts <input name="default_qty" type="number" min="1" /></label>
+            <label>Contracts per TP <input name="tp_qty" type="number" min="1" /></label>
+            <label>Entry order type
+              <select name="entry_order_type"><option>Market</option><option>Limit</option></select>
+            </label>
+            <label>TP order type
+              <select name="tp_order_type"><option>Limit</option><option>Market</option></select>
+            </label>
+            <label>SL order type
+              <select name="sl_order_type"><option>Stop</option><option>StopLimit</option></select>
+            </label>
+            <label>Allowed symbols (comma separated)
+              <input name="allowed_symbols" placeholder="MNQ, MES" />
+            </label>
+            <label>Symbol map (JSON: TradingView → root)
+              <textarea name="symbol_map" rows="3">{}</textarea>
+            </label>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h2>Webhook Security</h2></div>
+            <label>Webhook secret (URL path) <input name="webhook_secret" /></label>
+            <label>Passphrase (optional, in JSON body) <input name="webhook_passphrase" type="password" /></label>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h2>Updates</h2></div>
+            <label class="switch-row">
+              <span>Auto-check for updates</span>
+              <input type="checkbox" name="auto_check_updates" class="switch" />
+            </label>
+            <div class="update-status" id="updateStatus">Checking…</div>
+            <button type="button" class="btn btn-secondary" id="checkUpdateBtn">Check now</button>
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Save Settings</button>
+          <span class="save-hint" id="saveHint"></span>
+        </div>
+      </form>
+    </section>
+
+    <!-- ============================ LOGS ============================ -->
+    <section class="panel" id="tab-logs">
+      <div class="card">
+        <div class="card-head">
+          <h2>Event Log</h2>
+          <button class="btn btn-ghost" id="refreshLogs">Refresh</button>
+        </div>
+        <div class="log-stream" id="eventLog"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Recent Signals</h2></div>
+        <div class="log-stream" id="signalLog"></div>
+      </div>
+    </section>
+
+    <!-- ============================ TEST ============================ -->
+    <section class="panel" id="tab-test">
+      <div class="card">
+        <div class="card-head"><h2>Your Webhook URL</h2></div>
+        <p class="hint">Point your TradingView alert to this URL (POST, JSON body):</p>
+        <div class="url-box"><code id="webhookUrl">—</code><button class="btn btn-ghost" id="copyUrl">Copy</button></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Send Test Signal</h2></div>
+        <p class="hint">Runs through the full pipeline. Load an example, then send.</p>
+        <div class="preset-row">
+          <button class="btn btn-ghost preset" data-preset="entry">Entry (sell)</button>
+          <button class="btn btn-ghost preset" data-preset="move_sl">Move SL</button>
+          <button class="btn btn-ghost preset" data-preset="trail">Trail active</button>
+          <button class="btn btn-ghost preset" data-preset="close">Close all</button>
+        </div>
+        <textarea id="testPayload" rows="10" spellcheck="false"></textarea>
+        <div class="form-actions">
+          <button class="btn btn-primary" id="sendTestBtn">Send Test Signal</button>
+        </div>
+        <pre class="result-box hidden" id="testResult"></pre>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
