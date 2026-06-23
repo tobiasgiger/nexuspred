@@ -101,7 +101,13 @@ def _run(cmd: list[str]) -> tuple[bool, str]:
 async def apply_update() -> dict[str, Any]:
     """Pull the latest code from GitHub and schedule a restart."""
     if not (config.ROOT_DIR / ".git").exists():
-        return {"success": False, "message": "Not a git checkout — cannot self-update"}
+        return {
+            "success": False,
+            "message": (
+                "Not a git checkout — run connect-git.bat (Windows) or ./connect-git.sh "
+                "in the install folder once to enable one-click updates."
+            ),
+        }
 
     old_version = config.get_version()
     state.log_event("info", f"Applying update from GitHub (current v{old_version})…")

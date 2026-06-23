@@ -214,6 +214,18 @@ and are gated by the **Allowed symbols** list.
 
 To cut a new release, bump `VERSION` and tag it (`vX.Y.Z`).
 
+### "Not a git checkout" — connecting a ZIP download
+
+The Update button needs the install folder to be a Git checkout. If you downloaded a
+ZIP instead of `git clone`, run the one-time helper in the install folder:
+
+- **Windows:** double-click `connect-git.bat`
+- **Linux/macOS:** `./connect-git.sh`
+
+It initialises Git, points the folder at this repo, and resets the **code** to the
+latest `main` — your `data/` settings are git-ignored and left untouched. After that,
+the dashboard **Update** button works.
+
 ---
 
 ## API reference
