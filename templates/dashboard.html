@@ -33,6 +33,7 @@
     <button class="tab" data-tab="settings">Settings</button>
     <button class="tab" data-tab="logs">Logs</button>
     <button class="tab" data-tab="test">Test &amp; Webhook</button>
+    <button class="tab" data-tab="simulator">Simulator</button>
     <button class="tab" data-tab="guide">Setup Guide</button>
   </nav>
 
@@ -51,6 +52,21 @@
         <div class="card stat">
           <div class="stat-label">Account</div>
           <div class="stat-value" id="statAccount">—</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Connection Health</h2>
+          <button class="btn btn-ghost" id="healthCheckBtn">Check now</button>
+        </div>
+        <div class="grid grid-3 health-grid">
+          <div><span class="kv-label">Status</span><span class="kv-value" id="hStatus">—</span></div>
+          <div><span class="kv-label">User</span><span class="kv-value" id="hUser">—</span></div>
+          <div><span class="kv-label">Token expires</span><span class="kv-value" id="hExpires">—</span></div>
+          <div><span class="kv-label">Last check</span><span class="kv-value" id="hCheck">—</span></div>
+          <div><span class="kv-label">Last token renew</span><span class="kv-value" id="hRenew">—</span></div>
+          <div><span class="kv-label">Last error</span><span class="kv-value" id="hError">—</span></div>
         </div>
       </div>
 
@@ -108,6 +124,9 @@
             <label>API Secret (sec) <input name="sec" type="password" autocomplete="off" /></label>
             <label>Device ID (optional) <input name="device_id" /></label>
             <label>Account Spec <input name="account_spec" placeholder="auto-detected on connect" /></label>
+            <label>Health check / token refresh interval (seconds)
+              <input name="health_check_interval" type="number" min="0" placeholder="60 (0 = off)" />
+            </label>
             <button type="button" class="btn btn-secondary" id="connectBtn">Connect &amp; Verify</button>
           </div>
 
@@ -196,6 +215,50 @@
           <button class="btn btn-primary" id="sendTestBtn">Send Test Signal</button>
         </div>
         <pre class="result-box hidden" id="testResult"></pre>
+      </div>
+    </section>
+
+    <!-- ============================ SIMULATOR ============================ -->
+    <section class="panel" id="tab-simulator">
+      <div class="card">
+        <div class="card-head"><h2>Trade Simulator</h2></div>
+        <p class="hint">
+          Rehearse a complete trade lifecycle through the <strong>real signal
+          logic</strong> — entries, TP/SL brackets, stop moves and closes — without
+          sending anything to Tradovate. No credentials needed. Pick a scenario,
+          then <em>Run all</em> or <em>step through</em> it.
+        </p>
+        <div class="sim-controls">
+          <label class="sim-select">Scenario
+            <select id="scenarioSelect"></select>
+          </label>
+          <div class="sim-buttons">
+            <button class="btn btn-primary" id="simRunAll">▶ Run all</button>
+            <button class="btn btn-secondary" id="simStep">⏭ Run next step</button>
+            <button class="btn btn-ghost" id="simReset">↺ Reset</button>
+          </div>
+        </div>
+        <p class="sim-desc" id="scenarioDesc"></p>
+      </div>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <div class="card-head"><h2>Steps</h2><span class="sim-progress" id="simProgress"></span></div>
+          <ol class="sim-steps" id="simSteps"></ol>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2>Simulated Account</h2><button class="btn btn-ghost" id="simRefresh">Refresh</button></div>
+          <h3 class="sim-sub">Positions</h3>
+          <table class="data-table" id="simPositions">
+            <thead><tr><th>Symbol</th><th>Net</th><th>Avg Price</th></tr></thead>
+            <tbody><tr><td colspan="3" class="empty">Flat</td></tr></tbody>
+          </table>
+          <h3 class="sim-sub">Working Orders</h3>
+          <table class="data-table" id="simWorking">
+            <thead><tr><th>ID</th><th>Side</th><th>Qty</th><th>Type</th><th>Price</th></tr></thead>
+            <tbody><tr><td colspan="5" class="empty">None</td></tr></tbody>
+          </table>
+        </div>
       </div>
     </section>
 

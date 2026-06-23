@@ -58,6 +58,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
 
     # --- Auto-updater ---------------------------------------------------------
     "auto_check_updates": True,
+
+    # --- Connection health ----------------------------------------------------
+    # How often (seconds) the bridge verifies the Tradovate session is alive and
+    # renews the access token before it expires. 0 disables the background check.
+    "health_check_interval": 60,
 }
 
 # Reentrant: save_settings() holds the lock while calling load_settings().

@@ -23,8 +23,12 @@ connection: dict[str, Any] = {
     "environment": "demo",
     "account_spec": "",
     "account_id": 0,
+    "user": "",
     "last_error": "",
     "last_auth": None,
+    "last_renew": None,
+    "last_check": None,
+    "token_expires": None,
 }
 
 

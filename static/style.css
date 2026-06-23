@@ -121,6 +121,12 @@ main { padding: 24px; max-width: 1200px; margin: 0 auto; }
 .stat-value.on { color: var(--green); }
 .stat-value.off { color: var(--red); }
 
+.health-grid > div { display: flex; flex-direction: column; gap: 3px; }
+.kv-label { color: var(--text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+.kv-value { font-size: 13px; word-break: break-word; }
+.kv-value.on { color: var(--green); }
+.kv-value.off { color: var(--red); }
+
 /* ---------------------------------------------------------------- forms */
 label { display: block; margin-bottom: 12px; color: var(--text-dim); font-size: 12.5px; }
 input, select, textarea {
@@ -154,6 +160,7 @@ textarea { resize: vertical; font-family: "SF Mono", "Fira Code", Consolas, mono
 .tag.sell { background: rgba(255,92,92,0.15); color: var(--red); }
 .tag.ok { background: rgba(46,204,113,0.15); color: var(--green); }
 .tag.rejected, .tag.error { background: rgba(255,92,92,0.15); color: var(--red); }
+.tag.sim { background: rgba(255,180,84,0.15); color: var(--amber); }
 
 /* ---------------------------------------------------------------- logs */
 .log-stream { font-family: "SF Mono", "Fira Code", Consolas, monospace; font-size: 12px; max-height: 360px; overflow-y: auto; }
@@ -185,6 +192,38 @@ textarea { resize: vertical; font-family: "SF Mono", "Fira Code", Consolas, mono
 .toast.show { opacity: 1; transform: none; }
 .toast.error { border-left-color: var(--red); }
 .toast.success { border-left-color: var(--green); }
+
+/* ---------------------------------------------------------------- simulator */
+.sim-controls { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-top: 6px; }
+.sim-select { flex: 1; min-width: 240px; margin: 0; }
+.sim-buttons { display: flex; gap: 8px; }
+.sim-desc { color: var(--text-dim); font-size: 13px; margin: 14px 0 0; }
+.sim-progress { color: var(--text-dim); font-size: 12px; }
+.sim-sub { font-size: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; margin: 16px 0 8px; }
+.sim-sub:first-of-type { margin-top: 0; }
+
+.sim-steps { list-style: none; margin: 0; padding: 0; counter-reset: simstep; }
+.sim-step {
+  border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px;
+  margin-bottom: 10px; background: var(--bg); transition: border-color 0.2s, background 0.2s;
+}
+.sim-step.current { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.sim-step.done { border-color: rgba(46,204,113,0.4); }
+.sim-step.failed { border-color: rgba(255,92,92,0.5); }
+.sim-step-head { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.sim-step-num {
+  flex: 0 0 22px; width: 22px; height: 22px; border-radius: 50%;
+  background: var(--border); color: var(--text); font-size: 11px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.sim-step.done .sim-step-num { background: var(--green); color: #04210f; }
+.sim-step.current .sim-step-num { background: var(--accent); color: #fff; }
+.sim-step.failed .sim-step-num { background: var(--red); color: #fff; }
+.sim-step-label { flex: 1; font-size: 13px; }
+.sim-step-status { font-size: 11px; color: var(--text-dim); }
+.sim-step-body { margin-top: 10px; display: none; }
+.sim-step.open .sim-step-body { display: block; }
+.sim-step-body pre { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 6px; padding: 9px 11px; font-size: 11.5px; margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; }
 
 /* ---------------------------------------------------------------- guide */
 .guide-intro h2 { margin-bottom: 8px; }

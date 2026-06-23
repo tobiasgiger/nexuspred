@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from . import config, signals, state, updater
+from .simulator import SCENARIOS, sim_client
 from .tradovate import TradovateError, client
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -135,6 +136,38 @@ async def api_webhook_test(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+# ================================================================== Simulator
+@app.get("/api/scenarios")
+async def api_scenarios() -> list[dict[str, Any]]:
+    return SCENARIOS
+
+
+@app.post("/api/simulate")
+async def api_simulate(request: Request) -> dict[str, Any]:
+    """Run a single signal through the pipeline in simulation mode (no broker)."""
+    payload = await request.json()
+    state.log_signal(payload, result="simulated")
+    try:
+        return await signals.process(payload, simulate=True)
+    except (signals.SignalError, TradovateError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/simulate/state")
+async def api_simulate_state() -> dict[str, Any]:
+    return {
+        "positions": await sim_client.positions(),
+        "working_orders": await sim_client.working_orders(),
+        "active_trades": signals.active_trades(simulate=True),
+    }
+
+
+@app.post("/api/simulate/reset")
+async def api_simulate_reset() -> dict[str, Any]:
+    signals.reset_simulation()
+    return {"status": "reset"}
+
+
 # ==================================================================== Updater
 @app.get("/api/update/check")
 async def api_update_check() -> dict[str, Any]:
@@ -149,8 +182,31 @@ async def api_update_apply() -> dict[str, Any]:
     return result
 
 
+@app.get("/api/health")
+async def api_health() -> dict[str, Any]:
+    """On-demand connection health check (also runs periodically in the background)."""
+    return await client.health_check()
+
+
+async def _health_loop() -> None:
+    """Periodically verify the Tradovate session and renew the token before expiry."""
+    import asyncio
+    while True:
+        interval = int(config.load_settings().get("health_check_interval", 60) or 0)
+        if interval <= 0:
+            await asyncio.sleep(30)
+            continue
+        try:
+            await client.health_check()
+        except Exception as exc:  # noqa: BLE001 - never let the loop die
+            state.log_event("warn", f"Health check error: {exc}")
+        await asyncio.sleep(interval)
+
+
 @app.on_event("startup")
 async def _startup() -> None:
+    import asyncio
     s = config.load_settings()
     state.connection["environment"] = s.get("environment", "demo")
     state.log_event("info", f"Bridge started (v{config.get_version()})")
+    asyncio.create_task(_health_loop())

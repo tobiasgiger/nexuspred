@@ -18,6 +18,12 @@ configuration and monitoring, and a built-in GitHub auto-updater.
   - `move_sl` → moves the protective stop (e.g. to break-even).
   - `trail_active` → acknowledged (the strategy keeps sending `move_sl` updates).
   - `close_all` → cancels working orders and **flattens the whole position**.
+- **Trade simulator** that runs full scenarios (winning trade, losing trade, manual
+  close…) through the *real* signal logic with an in-memory executor — no credentials,
+  no broker calls. Run a whole scenario or step through it.
+- **Token refresh & health monitoring**: authenticates once for an API user session
+  token, then renews it via `/auth/renewaccesstoken` before expiry (no password resend),
+  and a background loop continuously verifies the connection is up.
 - **Dark-themed dashboard** to manage settings, watch positions/orders, and read logs.
 - **Auto-updater** that checks the GitHub repo and shows an **Update** button when a new
   version is available — one click pulls the latest code and restarts.
@@ -120,6 +126,30 @@ All quantities and order types are configurable on the **Settings** tab.
 
 ---
 
+## Simulator
+
+The **Simulator** tab lets you rehearse complete trades without sending anything to
+Tradovate. Pick a scenario, then **Run all** or **Run next step**:
+
+- *Winning trade — SELL MNQ* — entry → move SL to break-even → trailing → close all
+- *Losing trade — BUY MNQ* — entry → stopped out
+- *Winning trade — BUY MES* — entry → partial → full take-profit
+- *Manual close — SELL MNQ* — entry → manual flatten
+
+Each step runs through the exact same logic as a live webhook, but orders are filled in
+an in-memory account shown alongside (simulated positions + working orders). Simulated
+orders are tagged **SIM** in the Monitor. No credentials or `trading_enabled` required.
+
+## Connection, tokens & health
+
+- On connect, the bridge requests an **API user session token** (`accesstokenrequest`).
+- Before the token expires it is **renewed** via `/auth/renewaccesstoken` — your password
+  is sent only for the initial authentication.
+- A background **health check** (default every 60s, configurable in Settings; `0`
+  disables) verifies the session with `/auth/me`, renews the token as needed, and updates
+  the **Connection Health** card (status, user, token expiry, last check, last renew,
+  last error). You can also trigger it on demand with **Check now** or `GET /api/health`.
+
 ## Symbol mapping
 
 TradingView sends continuous symbols like `MNQ1!`. The bridge maps these to a Tradovate
@@ -153,7 +183,12 @@ To cut a new release, bump `VERSION` and tag it (`vX.Y.Z`).
 | `GET`  | `/api/orders` `/api/signals` `/api/events` | Rolling logs |
 | `GET`  | `/api/positions` | Live Tradovate positions |
 | `POST` | `/api/connect` | Authenticate & verify account |
+| `GET`  | `/api/health` | Check connection (renews token if needed) |
 | `POST` | `/api/webhook-test` | Run a payload through the pipeline |
+| `GET`  | `/api/scenarios` | List built-in simulator scenarios |
+| `POST` | `/api/simulate` | Run a signal in simulation (no broker) |
+| `GET`  | `/api/simulate/state` | Simulated positions & working orders |
+| `POST` | `/api/simulate/reset` | Clear the simulated account |
 | `GET`  | `/api/update/check` | Check GitHub for a new version |
 | `POST` | `/api/update/apply` | Pull latest & restart |
 

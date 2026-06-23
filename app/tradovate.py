@@ -26,7 +26,8 @@ class TradovateError(Exception):
 
 class TradovateClient:
     def __init__(self) -> None:
-        self._token: str | None = None
+        self._token: str | None = None          # API user session token
+        self._md_token: str | None = None        # market-data token
         self._token_expires: datetime | None = None
         self._lock = asyncio.Lock()
 
@@ -53,18 +54,58 @@ class TradovateClient:
         return None
 
     # ----------------------------------------------------------------- auth
+    def _token_valid(self, buffer_minutes: int = 5) -> bool:
+        return bool(
+            self._token
+            and self._token_expires
+            and datetime.now(timezone.utc)
+            < self._token_expires - timedelta(minutes=buffer_minutes)
+        )
+
     async def _get_token(self) -> str:
         async with self._lock:
-            now = datetime.now(timezone.utc)
-            if (
-                self._token
-                and self._token_expires
-                and now < self._token_expires - timedelta(minutes=2)
-            ):
-                return self._token
+            # Still comfortably valid → reuse.
+            if self._token_valid():
+                return self._token  # type: ignore[return-value]
+            # We have a token but it's near/at expiry → renew (no password resend).
+            if self._token:
+                try:
+                    await self._renew()
+                    if self._token_valid(buffer_minutes=0):
+                        return self._token  # type: ignore[return-value]
+                except TradovateError as exc:
+                    state.log_event("warn", f"Token renew failed, re-authenticating: {exc}")
+            # No token, or renew failed → full authentication.
             await self._authenticate()
             assert self._token is not None
             return self._token
+
+    def _store_token(self, data: dict[str, Any]) -> None:
+        self._token = data["accessToken"]
+        self._md_token = data.get("mdAccessToken")
+        expiration = data.get("expirationTime")
+        if expiration:
+            self._token_expires = datetime.fromisoformat(
+                expiration.replace("Z", "+00:00")
+            )
+        else:
+            self._token_expires = datetime.now(timezone.utc) + timedelta(hours=1)
+        state.connection["token_expires"] = (
+            self._token_expires.isoformat() if self._token_expires else None
+        )
+
+    async def _renew(self) -> None:
+        """Renew the access token using the existing session (no credentials)."""
+        headers = {"Authorization": f"Bearer {self._token}"}
+        data = await self._request(
+            "POST", "/auth/renewaccesstoken", auth=False, headers=headers
+        )
+        if not data or not data.get("accessToken"):
+            err = (data or {}).get("errorText", "renew returned no token")
+            raise TradovateError(f"Renew failed: {err}")
+        self._store_token(data)
+        state.connection["last_renew"] = datetime.now(timezone.utc).isoformat()
+        state.log_event("info", "Access token renewed")
 
     async def _authenticate(self) -> None:
         s = config.load_settings()
@@ -93,15 +134,7 @@ class TradovateClient:
             err = (data or {}).get("errorText", "unknown error")
             raise TradovateError(f"Authentication failed: {err}")
 
-        self._token = data["accessToken"]
-        expiration = data.get("expirationTime")
-        if expiration:
-            self._token_expires = datetime.fromisoformat(
-                expiration.replace("Z", "+00:00")
-            )
-        else:
-            self._token_expires = datetime.now(timezone.utc) + timedelta(hours=1)
-
+        self._store_token(data)
         state.connection["last_auth"] = datetime.now(timezone.utc).isoformat()
 
     async def connect(self) -> dict[str, Any]:
@@ -128,6 +161,32 @@ class TradovateClient:
             state.connection.update(connected=False, last_error=str(exc))
             state.log_event("error", f"Connect failed: {exc}")
             raise
+
+    async def health_check(self) -> dict[str, Any]:
+        """Verify the connection is up: ensure a valid token (renewing if needed)
+        and make a lightweight authenticated call. Updates the status snapshot.
+
+        Safe to call on a timer — never raises; failures are recorded on the
+        connection state so the dashboard can show them.
+        """
+        s = config.load_settings()
+        if not all(s.get(k) for k in ("username", "password", "app_id", "cid", "sec")):
+            state.connection.update(connected=False, last_error="Credentials not set")
+            state.connection["last_check"] = datetime.now(timezone.utc).isoformat()
+            return state.connection
+        try:
+            await self._get_token()  # validates / renews / re-auths as needed
+            me = await self._request("GET", "/auth/me")
+            state.connection.update(
+                connected=True,
+                environment=s.get("environment", "demo"),
+                last_error="",
+                user=(me or {}).get("name", ""),
+            )
+        except Exception as exc:  # noqa: BLE001
+            state.connection.update(connected=False, last_error=str(exc))
+        state.connection["last_check"] = datetime.now(timezone.utc).isoformat()
+        return state.connection
 
     @staticmethod
     def _select_account(

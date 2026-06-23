@@ -55,8 +55,29 @@ async function refreshStatus() {
     $("#statEnv").textContent = (conn.environment || "—").toUpperCase();
     $("#statAccount").textContent = conn.account_spec || "—";
 
+    renderHealth(conn);
     renderActive(s.active_trades || {});
   } catch (e) { /* status polling is best-effort */ }
+}
+
+function renderHealth(conn) {
+  const st = $("#hStatus");
+  st.textContent = conn.connected ? "Connected" : "Disconnected";
+  st.className = "kv-value " + (conn.connected ? "on" : "off");
+  $("#hUser").textContent = conn.user || conn.account_spec || "—";
+  $("#hExpires").textContent = fmtDateTime(conn.token_expires);
+  $("#hCheck").textContent = fmtDateTime(conn.last_check);
+  $("#hRenew").textContent = fmtDateTime(conn.last_renew);
+  const err = $("#hError");
+  err.textContent = conn.last_error || "—";
+  err.className = "kv-value " + (conn.last_error ? "off" : "");
+}
+
+function fmtDateTime(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return d.toLocaleString([], { month: "short", day: "numeric",
+    hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 function renderActive(trades) {
@@ -89,9 +110,10 @@ async function refreshOrders() {
       const side = (o.action || "").toLowerCase();
       const sideClass = side === "buy" ? "buy" : side === "sell" ? "sell" : "";
       const statusClass = (o.status || "").includes("reject") ? "rejected" : "ok";
+      const sim = o.simulated ? ' <span class="tag sim">SIM</span>' : "";
       return `<tr><td>${fmtTime(o.ts)}</td>
         <td><span class="tag ${sideClass}">${o.action}</span></td>
-        <td>${o.symbol}</td><td>${o.qty}</td><td>${o.order_type}</td>
+        <td>${o.symbol}${sim}</td><td>${o.qty}</td><td>${o.order_type}</td>
         <td>${price}</td><td><span class="tag ${statusClass}">${o.status}</span></td></tr>`;
     }).join("");
   } catch (e) { /* ignore */ }
@@ -293,6 +315,149 @@ $("#sendTestBtn").addEventListener("click", async () => {
 $("#refreshPositions").addEventListener("click", refreshPositions);
 $("#refreshLogs").addEventListener("click", refreshLogs);
 
+$("#healthCheckBtn").addEventListener("click", async () => {
+  toast("Checking connection…");
+  try {
+    const conn = await api("/api/health", { method: "GET" });
+    renderHealth(conn);
+    toast(conn.connected ? "Connection healthy" : "Disconnected: " + (conn.last_error || ""),
+      conn.connected ? "success" : "error");
+  } catch (e) { toast(e.message, "error"); }
+});
+
+/* --------------------------------------------------------------- simulator */
+let SCENARIOS = [];
+let simIndex = 0;     // index of the next step to run
+
+async function loadScenarios() {
+  try {
+    SCENARIOS = await api("/api/scenarios");
+    const sel = $("#scenarioSelect");
+    sel.innerHTML = SCENARIOS.map((s, i) => `<option value="${i}">${s.name}</option>`).join("");
+    renderScenario();
+  } catch (e) { /* ignore */ }
+}
+
+function currentScenario() { return SCENARIOS[$("#scenarioSelect").value || 0]; }
+
+function renderScenario() {
+  const sc = currentScenario();
+  if (!sc) return;
+  simIndex = 0;
+  $("#scenarioDesc").textContent = sc.description;
+  const list = $("#simSteps");
+  list.innerHTML = sc.steps.map((step, i) => `
+    <li class="sim-step" data-i="${i}">
+      <div class="sim-step-head">
+        <span class="sim-step-num">${i + 1}</span>
+        <span class="sim-step-label">${escapeHtml(step.label)}</span>
+        <span class="sim-step-status"></span>
+      </div>
+      <div class="sim-step-body">
+        <pre class="sim-signal">${escapeHtml(JSON.stringify(step.signal, null, 2))}</pre>
+        <pre class="sim-result hidden"></pre>
+      </div>
+    </li>`).join("");
+  list.querySelectorAll(".sim-step-head").forEach((h) =>
+    h.addEventListener("click", () => h.parentElement.classList.toggle("open")));
+  updateSimProgress();
+  refreshSimState();
+}
+
+function updateSimProgress() {
+  const sc = currentScenario();
+  $("#simProgress").textContent = sc ? `${simIndex} / ${sc.steps.length} executed` : "";
+  $$("#simSteps .sim-step").forEach((el, i) => {
+    el.classList.toggle("current", i === simIndex);
+  });
+}
+
+async function runStep(i) {
+  const sc = currentScenario();
+  if (!sc || i >= sc.steps.length) return false;
+  const step = sc.steps[i];
+  const el = $(`#simSteps .sim-step[data-i="${i}"]`);
+  const statusEl = el.querySelector(".sim-step-status");
+  const resultEl = el.querySelector(".sim-result");
+  statusEl.textContent = "running…";
+  try {
+    const r = await api("/api/simulate", { method: "POST", body: JSON.stringify(step.signal) });
+    el.classList.remove("failed"); el.classList.add("done");
+    const n = (r.orders || []).length;
+    statusEl.textContent = r.status === "ok"
+      ? (n ? `✓ ${n} order(s)` : "✓ " + (r.action || "ok"))
+      : "• " + (r.reason || r.status);
+    resultEl.textContent = JSON.stringify(r, null, 2);
+    resultEl.classList.remove("hidden");
+    return true;
+  } catch (e) {
+    el.classList.add("failed");
+    statusEl.textContent = "✗ " + e.message;
+    resultEl.textContent = "Error: " + e.message;
+    resultEl.classList.remove("hidden");
+    return false;
+  } finally {
+    refreshSimState();
+  }
+}
+
+$("#simStep").addEventListener("click", async () => {
+  const sc = currentScenario();
+  if (!sc || simIndex >= sc.steps.length) { toast("Scenario complete — reset to run again"); return; }
+  const ok = await runStep(simIndex);
+  if (ok) { simIndex++; updateSimProgress(); }
+});
+
+$("#simRunAll").addEventListener("click", async () => {
+  const sc = currentScenario();
+  if (!sc) return;
+  $("#simRunAll").disabled = true;
+  for (; simIndex < sc.steps.length; simIndex++) {
+    updateSimProgress();
+    const ok = await runStep(simIndex);
+    if (!ok) break;
+    await new Promise((r) => setTimeout(r, 700));
+  }
+  updateSimProgress();
+  $("#simRunAll").disabled = false;
+  toast("Simulation finished", "success");
+});
+
+$("#simReset").addEventListener("click", async () => {
+  try { await api("/api/simulate/reset", { method: "POST" }); } catch (e) { /* ignore */ }
+  renderScenario();
+  toast("Simulation reset");
+});
+
+$("#scenarioSelect").addEventListener("change", async () => {
+  try { await api("/api/simulate/reset", { method: "POST" }); } catch (e) { /* ignore */ }
+  renderScenario();
+});
+
+$("#simRefresh").addEventListener("click", refreshSimState);
+
+async function refreshSimState() {
+  try {
+    const st = await api("/api/simulate/state");
+    const pb = $("#simPositions tbody");
+    pb.innerHTML = (st.positions || []).length
+      ? st.positions.map((p) => `<tr><td>${p.symbol}</td>
+          <td class="${p.netPos >= 0 ? "pos" : "neg"}">${p.netPos}</td>
+          <td>${p.netPrice}</td></tr>`).join("")
+      : '<tr><td colspan="3" class="empty">Flat</td></tr>';
+    const wb = $("#simWorking tbody");
+    wb.innerHTML = (st.working_orders || []).length
+      ? st.working_orders.map((o) => {
+          const side = (o.action || "").toLowerCase();
+          return `<tr><td>${o.id}</td>
+            <td><span class="tag ${side}">${o.action}</span></td>
+            <td>${o.qty}</td><td>${o.order_type}</td>
+            <td>${o.price ?? o.stop_price ?? "—"}</td></tr>`;
+        }).join("")
+      : '<tr><td colspan="5" class="empty">None</td></tr>';
+  } catch (e) { /* ignore */ }
+}
+
 /* --------------------------------------------------------------- boot */
 async function boot() {
   await loadSettings();
@@ -300,6 +465,7 @@ async function boot() {
   refreshOrders();
   refreshLogs();
   checkUpdate();
+  loadScenarios();
   $("#testPayload").value = JSON.stringify(PRESETS.entry, null, 2);
 
   setInterval(refreshStatus, 5000);
