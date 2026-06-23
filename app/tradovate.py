@@ -42,6 +42,37 @@ class TradovatePenalty(TradovateError):
     """Raised when Tradovate returns a time penalty / captcha (p-ticket)."""
 
 
+# Futures month codes → calendar month, for front-month selection.
+_MONTH_CODES = {"F": 1, "G": 2, "H": 3, "J": 4, "K": 5, "M": 6,
+                "N": 7, "Q": 8, "U": 9, "V": 10, "X": 11, "Z": 12}
+
+
+def _front_month_key(name: str, root: str) -> tuple[int, int]:
+    """Sort key (year, month) parsed from a contract name like ``MNQM5``.
+
+    Contracts at/after the current month sort before past ones, so the nearest
+    active (front) month comes first. Unparseable names sort last.
+    """
+    suffix = name[len(root):]
+    if len(suffix) < 2 or suffix[0] not in _MONTH_CODES:
+        return (9999, 99)
+    month = _MONTH_CODES[suffix[0]]
+    digits = suffix[1:]
+    now = datetime.now(timezone.utc)
+    try:
+        if len(digits) == 1:                 # single-digit year, e.g. "5" → 2025
+            year = now.year - (now.year % 10) + int(digits)
+            if year < now.year - 1:          # rolled into the next decade
+                year += 10
+        else:
+            year = 2000 + int(digits)
+    except ValueError:
+        return (9999, 99)
+    # Past contracts get pushed to the back by adding a century.
+    past = (year, month) < (now.year, now.month)
+    return (year + (100 if past else 0), month)
+
+
 def _decode_jwt_exp(token: str) -> datetime | None:
     """Return the ``exp`` claim of a JWT access token as a UTC datetime, if present.
 
@@ -424,25 +455,39 @@ class TradovateClient:
         If a fully dated symbol is supplied (e.g. ``MNQU5``) it is verified and
         returned as-is; otherwise the nearest (front-month) contract is chosen.
         """
-        # Already a dated contract? verify it exists.
-        found = await self._request(
-            "GET", "/contract/find", params={"name": root_or_symbol}
-        )
-        if found and found.get("name"):
-            return found["name"]
+        # Already a dated contract? verify it exists. Tradovate answers /contract/find
+        # with HTTP 404 when the name isn't an exact contract, so treat that as
+        # "not found" and fall through to /contract/suggest.
+        try:
+            found = await self._request(
+                "GET", "/contract/find", params={"name": root_or_symbol}
+            )
+            if found and found.get("name"):
+                return found["name"]
+        except TradovateError:
+            pass
 
         # Otherwise suggest contracts for the root and pick the front month.
-        suggestions = await self._request(
-            "GET", "/contract/suggest", params={"t": root_or_symbol, "l": 20}
-        )
+        try:
+            suggestions = await self._request(
+                "GET", "/contract/suggest", params={"t": root_or_symbol, "l": 20}
+            )
+        except TradovateError as exc:
+            raise TradovateError(f"No contract found for '{root_or_symbol}': {exc}")
         candidates = [
             c for c in (suggestions or [])
             if c.get("name", "").startswith(root_or_symbol)
         ]
         if not candidates:
             raise TradovateError(f"No contract found for '{root_or_symbol}'")
-        # Front month = earliest expiration among active contracts.
-        candidates.sort(key=lambda c: c.get("expirationDate") or c.get("name", ""))
+        # Front month = nearest active contract (parsed from the month/year code;
+        # fall back to expirationDate/name if the code can't be parsed).
+        candidates.sort(
+            key=lambda c: (
+                _front_month_key(c.get("name", ""), root_or_symbol),
+                c.get("expirationDate") or c.get("name", ""),
+            )
+        )
         return candidates[0]["name"]
 
     async def list_accounts(self) -> list[dict[str, Any]]:
