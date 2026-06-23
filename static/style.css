@@ -230,6 +230,10 @@ textarea { resize: vertical; font-family: "SF Mono", "Fira Code", Consolas, mono
 
 /* ---------------------------------------------------------------- guide */
 .guide-intro h2 { margin-bottom: 8px; }
+.part-divider { border-left: 3px solid var(--accent); background: rgba(79,140,255,0.06); }
+.part-divider h2 { font-size: 16px; margin: 0 0 6px; letter-spacing: 0.3px; }
+.part-tag { font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px; padding: 2px 8px; border-radius: 999px; margin-left: 8px; vertical-align: middle; background: rgba(46,204,113,0.18); color: var(--green); }
+.part-tag.alt { background: rgba(138,150,168,0.18); color: var(--text-dim); }
 .guide-toc { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .guide-toc a {
   text-decoration: none; color: var(--text-dim);

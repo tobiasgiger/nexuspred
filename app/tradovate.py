@@ -226,12 +226,16 @@ class TradovateClient:
         self._cooldown_until = None
         state.connection["token_expires"] = self._token_expires.isoformat()
         state.connection["cooldown_until"] = None
-        # Persist so tokens survive a restart (renewed without a password).
-        config.save_settings({
-            "access_token": self._token,
-            "md_token": self._md_token or "",
-            "token_expires": self._token_expires.isoformat(),
-        })
+        # Persist so tokens survive a restart — best-effort: a failed write (e.g.
+        # a read-only data dir) must NOT break renewal, or the session would drop.
+        try:
+            config.save_settings({
+                "access_token": self._token,
+                "md_token": self._md_token or "",
+                "token_expires": self._token_expires.isoformat(),
+            })
+        except OSError as exc:
+            state.log_event("warn", f"Could not persist token (using in-memory): {exc}")
 
     def _apply_penalty(self, data: dict[str, Any]) -> None:
         """Record a Tradovate p-ticket time penalty / captcha as a cooldown."""
@@ -598,7 +602,36 @@ class TradovateClient:
         return data
 
     async def positions(self) -> list[dict[str, Any]]:
-        return await self._request("GET", "/position/list") or []
+        """Return only *open* positions (netPos != 0) with the contract symbol.
+
+        Tradovate's /position/list reports the numeric contractId and includes
+        flat (closed) positions; we filter those out and resolve each contract id
+        to its readable name.
+        """
+        raw = await self._request("GET", "/position/list") or []
+        names: dict[int, str] = {}
+        out: list[dict[str, Any]] = []
+        for p in raw:
+            net = p.get("netPos") or 0
+            if not net:                      # skip flat / closed positions
+                continue
+            cid = p.get("contractId")
+            name = names.get(cid)
+            if name is None:
+                try:
+                    item = await self._request("GET", "/contract/item", params={"id": cid})
+                    name = (item or {}).get("name") or str(cid)
+                except TradovateError:
+                    name = str(cid)
+                names[cid] = name
+            out.append({
+                "symbol": name,
+                "account_id": p.get("accountId"),
+                "netPos": net,
+                "netPrice": p.get("netPrice"),
+                "openPL": p.get("openPL") or 0,
+            })
+        return out
 
 
 # Singleton client used across the app.

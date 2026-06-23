@@ -4,6 +4,16 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 1.4.0
+- Reworked the in-dashboard **Setup Guide** into a structured how-to (Parts A–H):
+  Render deploy, self-host on Linux, configure, TradingView, test, go-live,
+  operate/update, and troubleshooting — with sub-steps throughout.
+- **Open Positions** now shows the resolved contract symbol (not the numeric id)
+  and lists only *open* positions (netPos ≠ 0); flat/closed ones are hidden.
+- **Token auto-renewal hardened**: persisting a renewed token is now best-effort,
+  so a read-only data dir can no longer break renewal and drop the session
+  (caused the "disconnected, signal didn't go through" issue).
+
 ## 1.3.3
 - Don't 500 when `NEXUSPRED_DATA_DIR` isn't writable (e.g. Render env var set but
   no persistent disk mounted): fall back to the local `data/` dir with a clear

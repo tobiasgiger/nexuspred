@@ -129,14 +129,14 @@ async function refreshPositions() {
   try {
     const positions = await api("/api/positions");
     if (!positions.length) {
-      tbody.innerHTML = '<tr><td colspan="4" class="empty">No positions</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="4" class="empty">No open positions</td></tr>';
       return;
     }
     tbody.innerHTML = positions.map((p) => {
       const net = p.netPos ?? 0;
       const pnl = p.openPL ?? p.realizedPL ?? 0;
       const pnlClass = pnl >= 0 ? "pos" : "neg";
-      return `<tr><td>${p.contractId ?? p.symbol ?? "—"}</td>
+      return `<tr><td>${p.symbol ?? "—"}</td>
         <td>${net}</td><td>${p.netPrice ?? "—"}</td>
         <td class="${pnlClass}">${Number(pnl).toFixed(2)}</td></tr>`;
     }).join("");
