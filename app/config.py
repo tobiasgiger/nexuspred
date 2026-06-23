@@ -25,15 +25,32 @@ GITHUB_BRANCH = os.environ.get("NEXUSPRED_BRANCH", "main")
 DEFAULT_SETTINGS: dict[str, Any] = {
     # --- Tradovate connection -------------------------------------------------
     "environment": "demo",          # "demo" or "live"
+    # auth_mode: how we obtain the access token —
+    #   "credentials" : username/password (+ optional API key); falls back to the
+    #                   web-trader app ids so no paid API add-on is needed.
+    #   "token"       : paste an existing access token (and md/check token).
+    #   "oauth"       : OAuth2 authorization-code flow with a refresh token.
+    "auth_mode": "credentials",
     "username": "",
     "password": "",
     "app_id": "",
     "app_version": "1.0",
-    "cid": "",                       # API key id
-    "sec": "",                       # API secret
+    "cid": "",                       # API key id (optional)
+    "sec": "",                       # API secret (optional)
     "device_id": "",                 # optional device id
+    "use_web_trader_fallback": True,  # try web-trader app ids (no API subscription)
     "account_spec": "",              # account name, e.g. "DEMO12345"
     "account_id": 0,                 # numeric account id (auto-filled on connect)
+
+    # Token cache / token-mode input (persisted so it survives restarts).
+    "access_token": "",              # API user session token
+    "md_token": "",                  # market-data (check) token
+    "token_expires": "",             # ISO expiry of the cached access token
+
+    # OAuth2 (refresh-token) settings.
+    "refresh_token": "",             # obtained after authorizing
+    "oauth_client_id": "3159",       # public web client; override with your own
+    "oauth_client_secret": "",
 
     # --- Trading behaviour ----------------------------------------------------
     "trading_enabled": False,        # master kill switch (safety: off by default)
@@ -114,7 +131,10 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
 
 
 # Fields that must never be returned to the browser in plain text.
-SECRET_FIELDS = {"password", "sec", "webhook_passphrase"}
+SECRET_FIELDS = {
+    "password", "sec", "webhook_passphrase",
+    "access_token", "md_token", "refresh_token", "oauth_client_secret",
+}
 
 
 def public_settings() -> dict[str, Any]:

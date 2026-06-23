@@ -116,13 +116,48 @@
                 <option value="live">Live</option>
               </select>
             </label>
-            <label>Username <input name="username" autocomplete="off" /></label>
-            <label>Password <input name="password" type="password" autocomplete="off" /></label>
-            <label>App ID <input name="app_id" autocomplete="off" /></label>
-            <label>App Version <input name="app_version" /></label>
-            <label>API Key (cid) <input name="cid" autocomplete="off" /></label>
-            <label>API Secret (sec) <input name="sec" type="password" autocomplete="off" /></label>
-            <label>Device ID (optional) <input name="device_id" /></label>
+            <label>Authentication method
+              <select name="auth_mode" id="authMode">
+                <option value="credentials">Username &amp; password</option>
+                <option value="token">Paste access token</option>
+                <option value="oauth">OAuth (refresh token)</option>
+              </select>
+            </label>
+
+            <!-- credentials mode -->
+            <div class="auth-section" data-auth="credentials">
+              <label>Username <input name="username" autocomplete="off" /></label>
+              <label>Password <input name="password" type="password" autocomplete="off" /></label>
+              <label class="switch-row">
+                <span>Use web-trader fallback (no API subscription)</span>
+                <input type="checkbox" name="use_web_trader_fallback" class="switch" />
+              </label>
+              <details class="auth-advanced">
+                <summary>Advanced: own API key</summary>
+                <label>App ID <input name="app_id" autocomplete="off" /></label>
+                <label>App Version <input name="app_version" /></label>
+                <label>API Key (cid) <input name="cid" autocomplete="off" /></label>
+                <label>API Secret (sec) <input name="sec" type="password" autocomplete="off" /></label>
+                <label>Device ID <input name="device_id" /></label>
+              </details>
+            </div>
+
+            <!-- token mode -->
+            <div class="auth-section" data-auth="token">
+              <label>Access token <textarea name="access_token" rows="3" placeholder="paste accessToken"></textarea></label>
+              <label>Market-data / check token (optional) <textarea name="md_token" rows="2"></textarea></label>
+              <p class="hint">The token is auto-renewed before it expires via renewaccesstoken.</p>
+            </div>
+
+            <!-- oauth mode -->
+            <div class="auth-section" data-auth="oauth">
+              <label>OAuth client id <input name="oauth_client_id" /></label>
+              <label>OAuth client secret (optional) <input name="oauth_client_secret" type="password" /></label>
+              <div class="oauth-status" id="oauthStatus">Not authorized</div>
+              <button type="button" class="btn btn-secondary" id="oauthBtn">Authorize with Tradovate</button>
+              <p class="hint">Opens Tradovate to grant access; a refresh token is then stored and used to keep the session alive.</p>
+            </div>
+
             <label>Account Spec <input name="account_spec" placeholder="auto-detected on connect" /></label>
             <label>Health check / token refresh interval (seconds)
               <input name="health_check_interval" type="number" min="0" placeholder="60 (0 = off)" />
@@ -322,11 +357,12 @@ Windows:      start.bat</pre></div></li>
       </div>
 
       <div class="card" id="g-tradovate">
-        <div class="card-head"><h2>3 · Get your Tradovate API access</h2></div>
+        <div class="card-head"><h2>3 · Choose how to authenticate</h2></div>
+        <p class="hint">Pick an <em>Authentication method</em> in Settings:</p>
         <ol class="steps">
-          <li><span class="step-num">1</span><div>Sign in at <a href="https://trader.tradovate.com" target="_blank" rel="noopener">trader.tradovate.com</a>. API access requires the API add-on to be enabled on your account.</div></li>
-          <li><span class="step-num">2</span><div>Create an <strong>API Key</strong> in the Tradovate application settings. Note the <code>cid</code> (key id) and <code>sec</code> (secret).</div></li>
-          <li><span class="step-num">3</span><div>You'll also need your Tradovate <strong>username</strong>, <strong>password</strong> and an <strong>App ID</strong> (any name identifying this app).</div></li>
+          <li><span class="step-num">1</span><div><strong>Username &amp; password</strong> (easiest) — just your Tradovate login. With <em>“web-trader fallback”</em> on, it connects <strong>without a paid API subscription</strong>. Have an API key? Add <code>cid</code>/<code>sec</code> under <em>Advanced</em>.</div></li>
+          <li><span class="step-num">2</span><div><strong>Paste access token</strong> — paste an existing <code>accessToken</code>; it's auto-renewed for you.</div></li>
+          <li><span class="step-num">3</span><div><strong>OAuth</strong> — click <em>Authorize with Tradovate</em>, grant access, and a <strong>refresh token</strong> is stored so your password is never kept.</div></li>
         </ol>
         <div class="callout warn">⚠ Start with the <strong>Demo</strong> environment. Switch to Live only after verifying fills.</div>
       </div>

@@ -142,13 +142,30 @@ orders are tagged **SIM** in the Monitor. No credentials or `trading_enabled` re
 
 ## Connection, tokens & health
 
-- On connect, the bridge requests an **API user session token** (`accesstokenrequest`).
-- Before the token expires it is **renewed** via `/auth/renewaccesstoken` — your password
-  is sent only for the initial authentication.
-- A background **health check** (default every 60s, configurable in Settings; `0`
-  disables) verifies the session with `/auth/me`, renews the token as needed, and updates
-  the **Connection Health** card (status, user, token expiry, last check, last renew,
-  last error). You can also trigger it on demand with **Check now** or `GET /api/health`.
+Three authentication methods (Settings → *Authentication method*):
+
+1. **Username & password** (default) — requests an **API user session token**
+   (`accesstokenrequest`). If you don't have a paid API key it falls back to the
+   **web-trader app identities** (cid 8/2…), so it works **without an API
+   subscription**. Supply your own `cid`/`sec` under *Advanced* to use those first.
+2. **Paste access token** — paste an existing `accessToken` (and optional market-data
+   token). Useful if you already have one; it's kept alive automatically.
+3. **OAuth (refresh token)** — authorize once in the browser; the bridge stores a
+   **refresh token** and uses it to mint new access tokens (no password stored). Set
+   your `oauth_client_id` (defaults to the public web client) and click **Authorize**.
+
+Token lifecycle (all modes):
+
+- Expiry is read from the token's **JWT `exp` claim** (falling back to `expirationTime`),
+  so the real lifetime is always respected.
+- Before expiry the token is **refreshed without a password** — `renewaccesstoken` for
+  password/token modes, the **refresh token** for OAuth.
+- Repeated auth failures trigger an **exponential backoff** (and `p-ticket` time
+  penalties are honored) so the bridge won't trip Tradovate's IP lockout.
+- A background **health check** (default every 60s, configurable; `0` disables) verifies
+  the session with `/auth/me`, refreshes as needed, and updates the **Connection Health**
+  card (status, user, token expiry, last check, last renew, last error). Trigger it on
+  demand with **Check now** or `GET /api/health`.
 
 ## Symbol mapping
 

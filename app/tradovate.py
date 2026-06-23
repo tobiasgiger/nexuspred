@@ -9,6 +9,9 @@ Docs: https://api.tradovate.com/
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -19,16 +22,55 @@ from . import config, state
 LIVE_BASE = "https://live.tradovateapi.com/v1"
 DEMO_BASE = "https://demo.tradovateapi.com/v1"
 
+# OAuth2 (authorization-code → refresh-token) flow.
+OAUTH_AUTHORIZE_URL = "https://trader.tradovate.com/oauth"
+
+# Fallback "web trader" app identities. Tradovate's web platform authenticates
+# with these client ids, which do NOT require the paid API access add-on. If the
+# user hasn't supplied their own API key (cid/sec), we try these in order — the
+# same trick Bridge-Bot-TV uses to connect without an API subscription.
+WEB_APP_CONFIGS: list[dict[str, Any]] = [
+    {"appId": "Tradovate", "cid": 8, "sec": ""},
+    {"appId": "Tradovate", "cid": 2, "sec": ""},
+    {"appId": "Tradovate Web", "cid": 8, "sec": ""},
+]
+
 
 class TradovateError(Exception):
     """Raised when the Tradovate API returns an error."""
 
 
+class TradovatePenalty(TradovateError):
+    """Raised when Tradovate returns a time penalty / captcha (p-ticket)."""
+
+
+def _decode_jwt_exp(token: str) -> datetime | None:
+    """Return the ``exp`` claim of a JWT access token as a UTC datetime, if present.
+
+    Tradovate's access tokens are JWTs; the ``exp`` claim is the most reliable
+    expiry source (Bridge-Bot-TV reads it the same way).
+    """
+    try:
+        payload_b64 = token.split(".")[1]
+        payload_b64 += "=" * (-len(payload_b64) % 4)  # pad to a multiple of 4
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+        exp = payload.get("exp")
+        if exp:
+            return datetime.fromtimestamp(int(exp), tz=timezone.utc)
+    except (IndexError, ValueError, binascii.Error, json.JSONDecodeError):
+        pass
+    return None
+
+
 class TradovateClient:
     def __init__(self) -> None:
         self._token: str | None = None          # API user session token
-        self._md_token: str | None = None        # market-data token
+        self._md_token: str | None = None        # market-data (check) token
+        self._refresh_token: str | None = None    # OAuth refresh token
         self._token_expires: datetime | None = None
+        self._cooldown_until: datetime | None = None  # backoff against lockout
+        self._auth_fails = 0
+        self._loaded = False
         self._lock = asyncio.Lock()
 
     # ------------------------------------------------------------------ helpers
@@ -62,37 +104,112 @@ class TradovateClient:
             < self._token_expires - timedelta(minutes=buffer_minutes)
         )
 
+    def invalidate(self) -> None:
+        """Drop cached tokens so the next call re-reads settings (after edits)."""
+        self._loaded = False
+        self._token = None
+        self._md_token = None
+        self._refresh_token = None
+        self._token_expires = None
+        self._cooldown_until = None
+        self._auth_fails = 0
+
+    def _load_persisted(self) -> None:
+        """Hydrate tokens from settings once (survives restarts; powers token mode)."""
+        if self._loaded:
+            return
+        s = config.load_settings()
+        self._token = self._token or s.get("access_token") or None
+        self._md_token = self._md_token or s.get("md_token") or None
+        self._refresh_token = self._refresh_token or s.get("refresh_token") or None
+        exp = s.get("token_expires")
+        if exp and not self._token_expires:
+            try:
+                self._token_expires = datetime.fromisoformat(exp)
+            except ValueError:
+                self._token_expires = self._token and _decode_jwt_exp(self._token)
+        elif self._token and not self._token_expires:
+            self._token_expires = _decode_jwt_exp(self._token)
+        self._loaded = True
+
     async def _get_token(self) -> str:
         async with self._lock:
-            # Still comfortably valid → reuse.
+            self._load_persisted()
             if self._token_valid():
                 return self._token  # type: ignore[return-value]
-            # We have a token but it's near/at expiry → renew (no password resend).
-            if self._token:
-                try:
+
+            mode = config.load_settings().get("auth_mode", "credentials")
+            # 1) Try a lightweight refresh that needs no password.
+            try:
+                if mode == "oauth" and self._refresh_token:
+                    await self._oauth_refresh()
+                elif self._token:
                     await self._renew()
-                    if self._token_valid(buffer_minutes=0):
-                        return self._token  # type: ignore[return-value]
-                except TradovateError as exc:
-                    state.log_event("warn", f"Token renew failed, re-authenticating: {exc}")
-            # No token, or renew failed → full authentication.
+                if self._token_valid(buffer_minutes=0):
+                    return self._token  # type: ignore[return-value]
+            except TradovateError as exc:
+                state.log_event("warn", f"Token refresh failed, re-authenticating: {exc}")
+
+            # 2) Full (re)authentication — gated by the cooldown to avoid lockout.
+            now = datetime.now(timezone.utc)
+            if self._cooldown_until and now < self._cooldown_until:
+                wait = int((self._cooldown_until - now).total_seconds())
+                raise TradovateError(
+                    f"Authentication cooling down for {wait}s (rate-limit/penalty). "
+                    "Check your credentials before retrying."
+                )
             await self._authenticate()
             assert self._token is not None
             return self._token
 
     def _store_token(self, data: dict[str, Any]) -> None:
         self._token = data["accessToken"]
-        self._md_token = data.get("mdAccessToken")
-        expiration = data.get("expirationTime")
-        if expiration:
-            self._token_expires = datetime.fromisoformat(
-                expiration.replace("Z", "+00:00")
-            )
-        else:
-            self._token_expires = datetime.now(timezone.utc) + timedelta(hours=1)
-        state.connection["token_expires"] = (
-            self._token_expires.isoformat() if self._token_expires else None
+        self._md_token = data.get("mdAccessToken") or self._md_token
+        if data.get("refreshToken"):
+            self._refresh_token = data["refreshToken"]
+        # Expiry: prefer the JWT exp claim, then expirationTime (ISO string),
+        # then a conservative default. (Bridge-Bot-TV's bug was treating the ISO
+        # expirationTime as an integer number of seconds — we avoid that here.)
+        expires = _decode_jwt_exp(self._token) if self._token else None
+        if not expires:
+            raw = data.get("expirationTime")
+            if isinstance(raw, str):
+                try:
+                    expires = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                except ValueError:
+                    expires = None
+        self._token_expires = expires or datetime.now(timezone.utc) + timedelta(hours=1)
+
+        self._auth_fails = 0
+        self._cooldown_until = None
+        state.connection["token_expires"] = self._token_expires.isoformat()
+        state.connection["cooldown_until"] = None
+        # Persist so tokens survive a restart (renewed without a password).
+        config.save_settings({
+            "access_token": self._token,
+            "md_token": self._md_token or "",
+            "refresh_token": self._refresh_token or "",
+            "token_expires": self._token_expires.isoformat(),
+        })
+
+    def _apply_penalty(self, data: dict[str, Any]) -> None:
+        """Record a Tradovate p-ticket time penalty / captcha as a cooldown."""
+        wait = int(data.get("p-time", 60) or 60)
+        self._cooldown_until = datetime.now(timezone.utc) + timedelta(seconds=wait)
+        state.connection["cooldown_until"] = self._cooldown_until.isoformat()
+        captcha = " (captcha required — log in via the web platform once)" if \
+            data.get("p-captcha") else ""
+        raise TradovatePenalty(
+            f"Tradovate time penalty: wait {wait}s before retrying{captcha}"
         )
+
+    def _begin_backoff(self, reason: str) -> None:
+        """Exponential backoff after a failed password auth, to dodge IP lockout."""
+        self._auth_fails += 1
+        # Tradovate locks an IP for ~5–10 min after ~5 bad attempts.
+        secs = 300 if "password" in reason.lower() else min(300, 20 * 2 ** self._auth_fails)
+        self._cooldown_until = datetime.now(timezone.utc) + timedelta(seconds=secs)
+        state.connection["cooldown_until"] = self._cooldown_until.isoformat()
 
     async def _renew(self) -> None:
         """Renew the access token using the existing session (no credentials)."""
@@ -107,35 +224,121 @@ class TradovateClient:
         state.connection["last_renew"] = datetime.now(timezone.utc).isoformat()
         state.log_event("info", "Access token renewed")
 
+    def _candidate_bodies(self, s: dict[str, Any]) -> list[dict[str, Any]]:
+        """Build the ordered list of accesstokenrequest bodies to try.
+
+        The user's own API key (cid/sec) is tried first; if none is set — or as a
+        fallback — the web-trader identities are tried so login works without the
+        paid API add-on.
+        """
+        base = {
+            "name": s.get("username", ""),
+            "password": s.get("password", ""),
+            "appVersion": s.get("app_version", "1.0"),
+            "deviceId": s.get("device_id") or "nexuspred",
+        }
+        bodies: list[dict[str, Any]] = []
+        if s.get("cid") and s.get("sec"):
+            bodies.append({**base, "appId": s.get("app_id") or "nexuspred",
+                           "cid": s["cid"], "sec": s["sec"]})
+        if s.get("use_web_trader_fallback", True) or not bodies:
+            for cfg in WEB_APP_CONFIGS:
+                bodies.append({**base, "appId": cfg["appId"],
+                               "cid": cfg["cid"], "sec": cfg["sec"]})
+        return bodies
+
     async def _authenticate(self) -> None:
         s = config.load_settings()
-        missing = [
-            k for k in ("username", "password", "app_id", "cid", "sec")
-            if not s.get(k)
-        ]
-        if missing:
-            raise TradovateError(f"Missing credentials: {', '.join(missing)}")
+        mode = s.get("auth_mode", "credentials")
 
-        body = {
-            "name": s["username"],
-            "password": s["password"],
-            "appId": s["app_id"],
-            "appVersion": s.get("app_version", "1.0"),
-            "cid": s["cid"],
-            "sec": s["sec"],
-        }
-        if s.get("device_id"):
-            body["deviceId"] = s["device_id"]
+        if mode == "token":
+            # A token was pasted into settings but is missing/expired in memory.
+            self._load_persisted()
+            if self._token and self._token_valid(buffer_minutes=0):
+                return
+            raise TradovateError(
+                "Token mode: stored access token is missing or expired — paste a fresh one"
+            )
 
-        data = await self._request(
-            "POST", "/auth/accesstokenrequest", auth=False, json=body
+        if mode == "oauth":
+            if self._refresh_token:
+                await self._oauth_refresh()
+                return
+            raise TradovateError("OAuth mode: not authorized yet — click ‘Authorize’")
+
+        # --- credentials mode -------------------------------------------------
+        if not s.get("username") or not s.get("password"):
+            raise TradovateError("Missing username/password")
+
+        last_err = "no app configuration succeeded"
+        for body in self._candidate_bodies(s):
+            try:
+                data = await self._request(
+                    "POST", "/auth/accesstokenrequest", auth=False, json=body
+                )
+            except TradovateError as exc:
+                last_err = str(exc)
+                continue
+            if data and (data.get("p-ticket") or data.get("p-captcha")):
+                self._apply_penalty(data)  # raises TradovatePenalty
+            if data and data.get("accessToken"):
+                self._store_token(data)
+                state.connection["last_auth"] = datetime.now(timezone.utc).isoformat()
+                state.log_event(
+                    "info", f"Authenticated (appId={body['appId']}, cid={body['cid']})"
+                )
+                return
+            last_err = (data or {}).get("errorText", "authentication rejected")
+
+        self._begin_backoff(last_err)
+        raise TradovateError(f"Authentication failed: {last_err}")
+
+    # ----------------------------------------------------------------- oauth
+    def oauth_authorize_url(self, redirect_uri: str) -> str:
+        """Build the Tradovate OAuth consent URL for the authorization-code flow."""
+        s = config.load_settings()
+        client_id = s.get("oauth_client_id") or "3159"
+        return (
+            f"{OAUTH_AUTHORIZE_URL}?response_type=code&client_id={client_id}"
+            f"&redirect_uri={redirect_uri}&scope=trading"
         )
-        if not data or not data.get("accessToken"):
-            err = (data or {}).get("errorText", "unknown error")
-            raise TradovateError(f"Authentication failed: {err}")
 
+    async def oauth_exchange_code(self, code: str, redirect_uri: str) -> None:
+        """Exchange an authorization code for an access + refresh token."""
+        s = config.load_settings()
+        body = {
+            "grant_type": "authorization_code",
+            "code": code,
+            "client_id": s.get("oauth_client_id") or "3159",
+            "redirect_uri": redirect_uri,
+        }
+        if s.get("oauth_client_secret"):
+            body["client_secret"] = s["oauth_client_secret"]
+        data = await self._request("POST", "/auth/oauthtoken", auth=False, json=body)
+        if not data or not data.get("accessToken"):
+            raise TradovateError(f"OAuth exchange failed: {(data or {}).get('error_description', data)}")
         self._store_token(data)
         state.connection["last_auth"] = datetime.now(timezone.utc).isoformat()
+        state.log_event("info", "OAuth authorization complete")
+
+    async def _oauth_refresh(self) -> None:
+        """Get a fresh access token from the OAuth refresh token (same env host)."""
+        if not self._refresh_token:
+            raise TradovateError("No OAuth refresh token")
+        s = config.load_settings()
+        body = {
+            "grant_type": "refresh_token",
+            "refresh_token": self._refresh_token,
+            "client_id": s.get("oauth_client_id") or "3159",
+        }
+        if s.get("oauth_client_secret"):
+            body["client_secret"] = s["oauth_client_secret"]
+        data = await self._request("POST", "/auth/oauthtoken", auth=False, json=body)
+        if not data or not data.get("accessToken"):
+            raise TradovateError(f"OAuth refresh failed: {(data or {}).get('error_description', data)}")
+        self._store_token(data)
+        state.connection["last_renew"] = datetime.now(timezone.utc).isoformat()
+        state.log_event("info", "OAuth access token refreshed")
 
     async def connect(self) -> dict[str, Any]:
         """Authenticate and resolve the trading account; update status snapshot."""
@@ -162,6 +365,15 @@ class TradovateClient:
             state.log_event("error", f"Connect failed: {exc}")
             raise
 
+    def _can_authenticate(self, s: dict[str, Any]) -> bool:
+        """Whether the current settings can produce a token in the selected mode."""
+        mode = s.get("auth_mode", "credentials")
+        if mode == "token":
+            return bool(self._token or s.get("access_token"))
+        if mode == "oauth":
+            return bool(self._refresh_token or s.get("refresh_token") or self._token)
+        return bool(s.get("username") and s.get("password"))
+
     async def health_check(self) -> dict[str, Any]:
         """Verify the connection is up: ensure a valid token (renewing if needed)
         and make a lightweight authenticated call. Updates the status snapshot.
@@ -170,8 +382,11 @@ class TradovateClient:
         connection state so the dashboard can show them.
         """
         s = config.load_settings()
-        if not all(s.get(k) for k in ("username", "password", "app_id", "cid", "sec")):
-            state.connection.update(connected=False, last_error="Credentials not set")
+        self._load_persisted()
+        if not self._can_authenticate(s):
+            state.connection.update(
+                connected=False, last_error="Not configured (no credentials/token)"
+            )
             state.connection["last_check"] = datetime.now(timezone.utc).isoformat()
             return state.connection
         try:

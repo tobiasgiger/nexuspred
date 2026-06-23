@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -90,6 +90,14 @@ async def api_save_settings(request: Request) -> dict[str, Any]:
         if updates.get(field) == "********":
             updates.pop(field, None)
     config.save_settings(updates)
+    # If anything auth-related changed, drop cached tokens so the new values apply.
+    auth_keys = {
+        "auth_mode", "environment", "username", "password", "cid", "sec", "app_id",
+        "app_version", "device_id", "use_web_trader_fallback", "access_token",
+        "md_token", "refresh_token", "oauth_client_id", "oauth_client_secret",
+    }
+    if auth_keys & set(updates):
+        client.invalidate()
     state.log_event("info", "Settings updated")
     return config.public_settings()
 
@@ -186,6 +194,29 @@ async def api_update_apply() -> dict[str, Any]:
 async def api_health() -> dict[str, Any]:
     """On-demand connection health check (also runs periodically in the background)."""
     return await client.health_check()
+
+
+# ====================================================================== OAuth
+@app.get("/api/oauth/url")
+async def api_oauth_url(request: Request) -> dict[str, Any]:
+    """Return the Tradovate OAuth consent URL (redirects back to /oauth/callback)."""
+    redirect_uri = str(request.url_for("oauth_callback"))
+    return {"url": client.oauth_authorize_url(redirect_uri), "redirect_uri": redirect_uri}
+
+
+@app.get("/oauth/callback", name="oauth_callback")
+async def oauth_callback(request: Request, code: str = "", error: str = "") -> RedirectResponse:
+    """OAuth redirect target: exchange the code for tokens, then back to the dashboard."""
+    if error or not code:
+        state.log_event("error", f"OAuth callback error: {error or 'no code'}")
+        return RedirectResponse(url="/?oauth=error")
+    redirect_uri = str(request.url_for("oauth_callback"))
+    try:
+        await client.oauth_exchange_code(code, redirect_uri)
+        return RedirectResponse(url="/?oauth=ok")
+    except TradovateError as exc:
+        state.log_event("error", f"OAuth exchange failed: {exc}")
+        return RedirectResponse(url="/?oauth=fail")
 
 
 async def _health_loop() -> None:
