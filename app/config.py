@@ -6,6 +6,7 @@ editable from the dashboard. Sensitive credentials never leave the local machine
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 from pathlib import Path
@@ -104,7 +105,30 @@ def get_version() -> str:
 
 
 def _ensure_data_dir() -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    """Create the data dir; if it isn't writable, fall back to a local dir.
+
+    On hosts like Render, NEXUSPRED_DATA_DIR must point at a *mounted* persistent
+    disk. If the path can't be created (e.g. the disk wasn't attached), we fall
+    back to ``<repo>/data`` so the app keeps working — but that location is
+    ephemeral, so settings won't survive a redeploy until the disk is fixed.
+    """
+    global DATA_DIR, SETTINGS_FILE
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        return
+    except OSError as exc:
+        fallback = ROOT_DIR / "data"
+        if DATA_DIR != fallback:
+            logging.getLogger("nexuspred").warning(
+                "Data dir %s is not writable (%s). Falling back to %s — settings "
+                "will NOT persist across redeploys. Attach a persistent disk at %s.",
+                DATA_DIR, exc, fallback, DATA_DIR,
+            )
+            DATA_DIR = fallback
+            SETTINGS_FILE = DATA_DIR / "settings.json"
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+        else:
+            raise
 
 
 def load_settings(force: bool = False) -> dict[str, Any]:
