@@ -15,7 +15,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-PORT=6000
+PORT=9000
 INSTALL_SERVICE=0
 while [[ $# -gt 0 ]]; do
   case "$1" in

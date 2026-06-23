@@ -2,7 +2,7 @@
 """Entry point for the Tradovate Webhook Bridge.
 
 Usage:
-    python run.py                # serve on 0.0.0.0:6000
+    python run.py                # serve on 0.0.0.0:9000
     HOST=127.0.0.1 PORT=9000 python run.py
 
 The auto-updater re-execs this same command, so keep it self-contained.
@@ -13,5 +13,5 @@ import uvicorn
 
 if __name__ == "__main__":
     host = os.environ.get("HOST", "0.0.0.0")
-    port = int(os.environ.get("PORT", "6000"))
+    port = int(os.environ.get("PORT", "9000"))
     uvicorn.run("app.main:app", host=host, port=port, reload=False)

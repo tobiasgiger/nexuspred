@@ -371,7 +371,7 @@
           <li><span class="step-num">1</span><div>Start it:
             <pre class="code">Linux/macOS:  ./start.sh
 Windows:      start.bat</pre></div></li>
-          <li><span class="step-num">2</span><div>Open <a href="/" target="_blank">http://localhost:6000</a> in your browser — you're looking at the dashboard right now.</div></li>
+          <li><span class="step-num">2</span><div>Open <a href="/" target="_blank">http://localhost:9000</a> in your browser — you're looking at the dashboard right now.</div></li>
         </ol>
         <div class="callout">💡 The bridge must keep running to receive signals. On Linux use <code>--service</code>; on Windows leave the <code>start.bat</code> window open or add it to startup.</div>
       </div>
@@ -415,7 +415,7 @@ Windows:      start.bat</pre></div></li>
         <div class="card-head"><h2>6 · Point TradingView at the bridge</h2></div>
         <ol class="steps">
           <li><span class="step-num">1</span><div>In Settings, set a strong <strong>Webhook secret</strong> and copy your URL from the <strong>Test &amp; Webhook</strong> tab. It looks like:
-            <pre class="code" id="guideUrl">http://YOUR_HOST:6000/webhook/YOUR_SECRET</pre>
+            <pre class="code" id="guideUrl">http://YOUR_HOST:9000/webhook/YOUR_SECRET</pre>
             <span class="hint">For TradingView to reach it, the bridge must be on a public address (port-forward, VPS, or a tunnel like ngrok / Cloudflare Tunnel).</span>
           </div></li>
           <li><span class="step-num">2</span><div>Create a TradingView alert → <em>Notifications</em> → enable <strong>Webhook URL</strong> and paste the URL above.</div></li>

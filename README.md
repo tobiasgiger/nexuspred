@@ -60,7 +60,7 @@ pip install -r requirements.txt
 python run.py
 ```
 
-Open the dashboard at **http://localhost:6000** — then follow the built-in
+Open the dashboard at **http://localhost:9000** — then follow the built-in
 **Setup Guide** tab, which walks you through Tradovate API setup, connecting, and
 wiring up your TradingView alert.
 
@@ -77,7 +77,7 @@ wiring up your TradingView alert.
 Create an alert and set the **Webhook URL** to:
 
 ```
-http://YOUR_HOST:6000/webhook/YOUR_SECRET
+http://YOUR_HOST:9000/webhook/YOUR_SECRET
 ```
 
 Set the alert message to the strategy's JSON. Examples (matching the strategy):
