@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -24,7 +24,7 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 
 # Paths that must stay reachable without the dashboard password: the webhook
 # (TradingView can't send auth), static assets, and the health check.
-_AUTH_EXEMPT = ("/webhook/", "/static/", "/healthz")
+_AUTH_EXEMPT = ("/webhook/", "/static/", "/healthz", "/guide")
 
 
 def _dashboard_password() -> str:
@@ -59,6 +59,12 @@ async def _basic_auth(request: Request, call_next):
 async def healthz() -> dict[str, Any]:
     """Unauthenticated liveness probe (for Render/uptime checks)."""
     return {"ok": True, "version": config.get_version()}
+
+
+@app.get("/guide", response_class=HTMLResponse)
+async def guide() -> FileResponse:
+    """Standalone, self-contained setup guide page."""
+    return FileResponse(str(BASE_DIR / "docs" / "setup-guide.html"))
 
 
 # ============================================================== Dashboard view

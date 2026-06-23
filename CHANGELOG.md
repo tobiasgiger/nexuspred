@@ -4,6 +4,11 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 1.4.1
+- Added a **standalone Setup Guide page** (`docs/setup-guide.html`, self-contained,
+  inline styles) served at **`/guide`** (public, auth-exempt) with a link from the
+  dashboard's Setup Guide tab.
+
 ## 1.4.0
 - Reworked the in-dashboard **Setup Guide** into a structured how-to (Parts A–H):
   Render deploy, self-host on Linux, configure, TradingView, test, go-live,

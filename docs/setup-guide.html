@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>nexuspred — Setup Guide</title>
+  <style>
+    :root{
+      --bg:#0b0e14; --bg-elev:#121722; --bg-card:#161c28; --border:#232c3d;
+      --text:#e6ebf2; --text-dim:#8a96a8; --accent:#4f8cff; --accent-2:#1f6feb;
+      --green:#2ecc71; --red:#ff5c5c; --amber:#ffb454; --radius:10px;
+      --shadow:0 6px 24px rgba(0,0,0,.35);
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(1200px 500px at 80% -10%,rgba(79,140,255,.08),transparent),var(--bg);
+      color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+      font-size:14px;line-height:1.55}
+    a{color:var(--accent);text-decoration:none}
+    a:hover{text-decoration:underline}
+    .topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;
+      padding:14px 24px;background:var(--bg-elev);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10}
+    .brand{display:flex;align-items:center;gap:14px}
+    .logo{font-size:26px;color:var(--accent);filter:drop-shadow(0 0 8px rgba(79,140,255,.5))}
+    .brand h1{font-size:17px;margin:0;letter-spacing:.3px}
+    .subtitle{color:var(--text-dim);font-size:12px}
+    .topbar a.btn{border:1px solid var(--border);background:var(--bg-card);padding:8px 14px;border-radius:8px;font-size:13px;color:var(--text)}
+    .topbar a.btn:hover{border-color:var(--accent);text-decoration:none}
+    main{padding:24px;max-width:1000px;margin:0 auto}
+    .card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);
+      padding:18px;margin-bottom:18px;box-shadow:var(--shadow)}
+    .card-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+    .card h2{font-size:14px;margin:0;font-weight:600;letter-spacing:.2px}
+    .hint{color:var(--text-dim);font-size:12.5px;margin:0 0 12px}
+    .guide-intro h2{font-size:20px;margin-bottom:8px}
+    .guide-toc{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+    .guide-toc a{color:var(--text-dim);background:var(--bg);border:1px solid var(--border);
+      padding:6px 12px;border-radius:999px;font-size:12.5px}
+    .guide-toc a:hover{color:var(--text);border-color:var(--accent);text-decoration:none}
+    .part-divider{border-left:3px solid var(--accent);background:rgba(79,140,255,.06)}
+    .part-divider h2{font-size:16px;margin:0 0 6px;letter-spacing:.3px}
+    .part-tag{font-size:10px;text-transform:uppercase;letter-spacing:.6px;padding:2px 8px;border-radius:999px;
+      margin-left:8px;vertical-align:middle;background:rgba(46,204,113,.18);color:var(--green)}
+    .part-tag.alt{background:rgba(138,150,168,.18);color:var(--text-dim)}
+    .steps{list-style:none;margin:0;padding:0}
+    .steps li{display:flex;gap:12px;align-items:flex-start;padding:9px 0;border-bottom:1px solid rgba(35,44,61,.4)}
+    .steps li:last-child{border-bottom:none}
+    .steps li>div{flex:1}
+    .step-num{flex:0 0 24px;width:24px;height:24px;border-radius:50%;background:var(--accent-2);color:#fff;
+      font-size:12px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;margin-top:1px}
+    .plain-list{margin:8px 0 0;padding-left:18px}
+    .plain-list li{padding:2px 0}
+    pre.code{background:var(--bg);border:1px solid var(--border);border-left:3px solid var(--accent);
+      border-radius:7px;padding:10px 12px;margin:8px 0;font-family:"SF Mono","Fira Code",Consolas,monospace;
+      font-size:12.5px;color:var(--text);white-space:pre-wrap;word-break:break-word;overflow-x:auto}
+    code{background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-size:12px;color:var(--accent)}
+    .callout{margin-top:14px;padding:11px 14px;border-radius:8px;font-size:13px;
+      background:rgba(79,140,255,.08);border:1px solid rgba(79,140,255,.25)}
+    .callout.warn{background:rgba(255,180,84,.08);border-color:rgba(255,180,84,.3)}
+    .ok-dot{color:var(--green);font-weight:600}
+    table.data-table{width:100%;border-collapse:collapse;font-size:13px;margin-top:4px}
+    .data-table th{text-align:left;color:var(--text-dim);font-weight:500;padding:8px 10px;border-bottom:1px solid var(--border);
+      font-size:11.5px;text-transform:uppercase;letter-spacing:.5px}
+    .data-table td{padding:9px 10px;border-bottom:1px solid rgba(35,44,61,.5);vertical-align:top}
+    footer{color:var(--text-dim);font-size:12px;text-align:center;padding:24px}
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">◈</span>
+      <div>
+        <h1>nexuspred — Setup Guide</h1>
+        <span class="subtitle">TradingView → Tradovate signal router</span>
+      </div>
+    </div>
+    <a class="btn" href="/">← Back to dashboard</a>
+  </header>
+
+  <main>
+    <div class="card guide-intro">
+      <h2>Setup How-To</h2>
+      <p class="hint">A complete, step-by-step guide from zero to live signal routing.
+        Pick <strong>one</strong> hosting option: <strong>Part A — Render</strong>
+        (recommended; gives you the HTTPS URL TradingView needs) or
+        <strong>Part B — self-host on Linux</strong>. Then everyone does
+        <strong>Parts C–H</strong>. Lines starting with <code>$</code> are typed in a
+        terminal (don't type the <code>$</code>). Stay on a <strong>Demo</strong> account
+        until test signals fill correctly.</p>
+      <div class="guide-toc">
+        <a href="#p-a">A · Deploy on Render</a>
+        <a href="#p-b">B · Self-host (Linux)</a>
+        <a href="#p-c">C · Configure</a>
+        <a href="#p-d">D · TradingView</a>
+        <a href="#p-e">E · Test safely</a>
+        <a href="#p-f">F · Go live</a>
+        <a href="#p-g">G · Operate &amp; update</a>
+        <a href="#p-h">H · Troubleshooting</a>
+      </div>
+    </div>
+
+    <!-- ===== PART A — RENDER ===== -->
+    <div class="card part-divider" id="p-a">
+      <h2>Part A · Deploy on Render <span class="part-tag">recommended</span></h2>
+      <p class="hint">TradingView only sends webhooks to ports <strong>80/443</strong>.
+        Render serves your app over <strong>HTTPS (443)</strong> with a public URL, so it's
+        the simplest way to receive alerts. This repo ships a <code>render.yaml</code>
+        blueprint that sets everything up for you.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>A1 · Before you start</h2></div>
+      <ol class="steps">
+        <li><span class="step-num">1</span><div>Create accounts (all have free tiers to begin): <a href="https://github.com" target="_blank" rel="noopener">GitHub</a>, <a href="https://render.com" target="_blank" rel="noopener">Render</a>, and a <a href="https://www.tradovate.com" target="_blank" rel="noopener">Tradovate</a> account.</div></li>
+        <li><span class="step-num">2</span><div>Make sure the code is in a GitHub repo Render can access — your own repo or a fork of it. Render deploys from GitHub.</div></li>
+        <li><span class="step-num">3</span><div>Decide a strong <strong>dashboard password</strong> and a strong <strong>webhook secret</strong> now (you'll paste them in shortly).</div></li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>A2 · Create the service (Blueprint)</h2></div>
+      <ol class="steps">
+        <li><span class="step-num">1</span><div>In Render, click <strong>New → Blueprint</strong>.</div></li>
+        <li><span class="step-num">2</span><div>Select your GitHub repository and confirm. Render reads <code>render.yaml</code> and proposes a <strong>web service</strong> + a <strong>1 GB persistent disk</strong> at <code>/var/data</code>.</div></li>
+        <li><span class="step-num">3</span><div>Choose the <strong>Starter</strong> instance type (always-on). The <em>free</em> plan sleeps after ~15 min idle, so the first alert after a quiet period can be delayed or missed — not suitable for live trading.</div></li>
+        <li><span class="step-num">4</span><div>Click <strong>Apply</strong> / <strong>Create</strong>. Don't open the URL yet — finish A3 and A4 first.</div></li>
+      </ol>
+      <div class="callout">Prefer to set it up by hand? <strong>New → Web Service</strong> → pick the repo →
+        <em>Build command</em> <code>pip install -r requirements.txt</code>,
+        <em>Start command</em> <code>python run.py</code>,
+        <em>Health check path</em> <code>/healthz</code>. Then do A3 and A4 manually.</div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>A3 · Set environment variables</h2></div>
+      <p class="hint">Render → your service → <strong>Environment</strong>. Add:</p>
+      <table class="data-table">
+        <thead><tr><th>Key</th><th>Value</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td><code>NEXUSPRED_DATA_DIR</code></td><td><code>/var/data</code></td><td>Store settings/tokens on the disk (must match A4's mount path)</td></tr>
+          <tr><td><code>DASHBOARD_PASSWORD</code></td><td>your password</td><td>Protects the public dashboard (HTTP Basic auth)</td></tr>
+          <tr><td><code>PYTHON_VERSION</code></td><td><code>3.11.9</code></td><td>Avoids a too-new Python with no prebuilt wheels (build fails otherwise)</td></tr>
+          <tr><td><code>TRADOVATE_ACCESS_TOKEN</code></td><td><em>optional</em></td><td>Pre-seed a session token instead of using username/password</td></tr>
+        </tbody>
+      </table>
+      <span class="hint">Do <strong>not</strong> set <code>PORT</code> — Render injects it and the app binds it automatically.</span>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>A4 · Attach a persistent disk</h2></div>
+      <div class="callout warn">⚠ Do this <strong>before</strong> you enter any Tradovate
+        token. Without a disk, settings save to a temporary folder and are wiped on the
+        next deploy (and you'll see a “Permission denied: /var/data” error if the env var
+        points at a non-existent path).</div>
+      <ol class="steps">
+        <li><span class="step-num">1</span><div>Render → your service → <strong>Disks</strong> → <strong>Add Disk</strong> (Blueprint users already have one — verify it).</div></li>
+        <li><span class="step-num">2</span><div>Set: <strong>Name</strong> <code>nexuspred-data</code>, <strong>Mount Path</strong> <code>/var/data</code> (exactly equal to <code>NEXUSPRED_DATA_DIR</code>), <strong>Size</strong> <code>1 GB</code>.</div></li>
+        <li><span class="step-num">3</span><div>Save — Render redeploys automatically.</div></li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>A5 · Deploy &amp; first login</h2></div>
+      <ol class="steps">
+        <li><span class="step-num">1</span><div>Wait for the deploy to finish (Logs show <em>Uvicorn running</em>). You get a URL like <code>https://nexuspred.onrender.com</code>.</div></li>
+        <li><span class="step-num">2</span><div>Open it. A login box appears — enter <strong>any username</strong> and your <code>DASHBOARD_PASSWORD</code> (only the password is checked).</div></li>
+        <li><span class="step-num">3</span><div>Continue with <strong>Part C</strong> below to configure Tradovate. ✅</div></li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>A6 · Render build/runtime issues</h2></div>
+      <ol class="steps">
+        <li><span class="step-num">?</span><div><strong>Build fails compiling <code>pydantic-core</code>/<code>orjson</code></strong> → Python too new. The repo pins 3.11 via <code>.python-version</code>; if your service predates that, set <code>PYTHON_VERSION=3.11.9</code> and <em>Manual Deploy → Clear build cache &amp; deploy</em>.</div></li>
+        <li><span class="step-num">?</span><div><strong>“Permission denied: /var/data” / 500 on save</strong> → the disk isn't mounted at <code>/var/data</code>. Do A4, then redeploy.</div></li>
+        <li><span class="step-num">?</span><div><strong>First signal after idle is missed</strong> → you're on the free plan (sleeps). Switch to <strong>Starter</strong>.</div></li>
+      </ol>
+      <div class="callout">On Render, the in-app <strong>Update</strong> button is disabled — updates deploy automatically when you push to GitHub (or click <em>Manual Deploy</em>). Skip Part B and go to <strong>Part C</strong>.</div>
+    </div>
+
+    <!-- ===== PART B — SELF-HOST ===== -->
+    <div class="card part-divider" id="p-b">
+      <h2>Part B · Self-host on Linux <span class="part-tag alt">alternative</span></h2>
+      <p class="hint">Only needed if you're <em>not</em> using Render. Commands use the folder
+        <code>/home/py/nexuspred</code>. TradingView still needs HTTPS/443 — see B7.
+        <strong>On Windows?</strong> Install
+        <a href="https://www.python.org/downloads/windows/" target="_blank" rel="noopener">Python 3.9+</a>
+        (tick “Add python.exe to PATH”) and
+        <a href="https://git-scm.com/download/win" target="_blank" rel="noopener">Git</a>,
+        then run <code>install.bat</code> and <code>start.bat</code>; the rest is identical.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>B1 · Prerequisites</h2></div>
+      <ol class="steps">
+        <li><span class="step-num">1</span><div>Open a terminal (or SSH in: <code>$ ssh py@YOUR_SERVER_IP</code>).</div></li>
+        <li><span class="step-num">2</span><div>Install Python, venv, pip and git.
+          <pre class="code"># Debian / Ubuntu
+$ sudo apt update
+$ sudo apt install -y python3 python3-venv python3-pip git
+
+# Fedora / RHEL
+$ sudo dnf install -y python3 python3-pip git</pre></div></li>
+        <li><span class="step-num">3</span><div>Verify: <code>$ python3 --version</code> and <code>$ git --version</code>.</div></li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>B2 · Download the code</h2></div>
+      <ol class="steps">
+        <li><span class="step-num">1</span><div>Clone into <code>/home/py/nexuspred</code> (clone, not ZIP, so the Update button works):
+          <pre class="code">$ cd /home/py
+$ git clone https://github.com/tobiasgiger/nexuspred.git
+$ cd /home/py/nexuspred</pre></div></li>
+        <li><span class="step-num">2</span><div>Already have a ZIP in that folder? Convert it once: <code>$ ./connect-git.sh</code></div></li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>B3 · Install</h2></div>
+      <ol class="steps">
+        <li><span class="step-num">1</span><div>Run the installer (creates an isolated <code>.venv</code> and a <code>start.sh</code>):
+          <pre class="code">$ cd /home/py/nexuspred
+$ chmod +x install.sh
+$ ./install.sh</pre></div></li>
+        <li><span class="step-num">2</span><div>Wait for <em>“Installation complete!”</em>.</div></li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>B4 · Start</h2></div>
+      <pre class="code">$ cd /home/py/nexuspred
+$ ./start.sh        # serves on 0.0.0.0:9000 — Ctrl+C to stop</pre>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>B5 · Keep it running after you close SSH</h2></div>
+      <p class="hint">A bare <code>./start.sh</code> stops when you disconnect. Pick one:</p>
+      <ol class="steps">
+        <li><span class="step-num">A</span><div><strong>systemd (recommended)</strong> — survives disconnect, reboot, crashes:
+          <pre class="code">$ ./install.sh --service
+$ sudo loginctl enable-linger py     # key: keeps it alive after logout</pre>
+          Manage: <code>$ systemctl --user status tradovate-bridge</code> ·
+          <code>restart</code> · <code>$ journalctl --user -u tradovate-bridge -f</code></div></li>
+        <li><span class="step-num">B</span><div><strong>tmux</strong>: <code>$ tmux new -s bridge</code> → run <code>./start.sh</code> → detach with <code>Ctrl+b</code> then <code>d</code> → reattach <code>$ tmux attach -t bridge</code>.</div></li>
+        <li><span class="step-num">C</span><div><strong>nohup</strong>: <code>$ nohup ./start.sh &gt; bridge.log 2&gt;&amp;1 &amp;</code> (stop: <code>$ pkill -f run.py</code>).</div></li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>B6 · Open / whitelist port 9000</h2></div>
+      <ol class="steps">
+        <li><span class="step-num">1</span><div>Confirm it's listening on all interfaces (expect <code>0.0.0.0:9000</code>): <code>$ ss -tlnp | grep 9000</code></div></li>
+        <li><span class="step-num">2</span><div>Open the OS firewall:
+          <pre class="code">$ sudo ufw allow 9000/tcp                 # Ubuntu/Debian
+$ sudo firewall-cmd --permanent --add-port=9000/tcp &amp;&amp; sudo firewall-cmd --reload   # Fedora/RHEL</pre></div></li>
+        <li><span class="step-num">3</span><div><strong>Cloud server?</strong> Also add an inbound <strong>TCP 9000</strong> rule in the provider firewall: AWS <em>Security Group</em>, GCP <em>VPC Firewall</em>, Azure <em>NSG</em>, Oracle <em>Security List</em>, Hetzner/DO/Vultr <em>Firewall</em>.</div></li>
+        <li><span class="step-num">4</span><div>Test: <code>$ curl http://localhost:9000/healthz</code> (on the server) and <code>$ curl http://YOUR_SERVER_IP:9000/healthz</code> (remote). Local works but remote hangs = firewall.</div></li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>B7 · Make it reachable for TradingView (HTTPS)</h2></div>
+      <p class="hint">TradingView needs a public <strong>HTTPS</strong> URL. Self-hosting on port
+        9000 isn't enough — put a tunnel in front:</p>
+      <pre class="code"># Cloudflare Tunnel (free, no port-forward)
+$ cloudflared tunnel --url http://localhost:9000
+
+# or ngrok
+$ ngrok http 9000</pre>
+      <span class="hint">Use the <code>https://…</code> address it prints for your webhook in Part D.</span>
+    </div>
+
+    <!-- ===== PART C — CONFIGURE ===== -->
+    <div class="card part-divider" id="p-c">
+      <h2>Part C · Configure the bridge</h2>
+      <p class="hint">Done in the dashboard (your Render URL, or <code>http://YOUR_SERVER_IP:9000</code>). Open the <strong>Settings</strong> tab.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>C1 · Set a dashboard password</h2></div>
+      <ol class="steps">
+        <li><span class="step-num">1</span><div>On a public host this is essential. On Render it's the <code>DASHBOARD_PASSWORD</code> env var (already set in A3). Self-hosting publicly? Set <strong>Settings → Webhook Security → Dashboard password</strong>.</div></li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>C2 · Authenticate with Tradovate</h2></div>
+      <p class="hint">Settings → <em>Tradovate Connection</em>. Leave <strong>Environment = Demo</strong> for now. Choose one:</p>
+      <ol class="steps">
+        <li><span class="step-num">1</span><div><strong>Username &amp; password</strong> (easiest) — enter your Tradovate login; keep <em>“Use web-trader fallback”</em> ON so it works without a paid API subscription. (Have an API key? Open <em>Advanced</em> and add <code>cid</code>/<code>sec</code>.)</div></li>
+        <li><span class="step-num">2</span><div><strong>Access token</strong> (optional) — paste an <code>accessToken</code> under <em>“Use an existing access token”</em>, or set <code>TRADOVATE_ACCESS_TOKEN</code> (and optionally <code>TRADOVATE_CHECK_TOKEN</code>) as env vars. It's auto-renewed; if renewal ever fails it falls back to your username/password.</div></li>
+        <li><span class="step-num">3</span><div>Click <strong>Save Settings</strong>.</div></li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>C3 · Connect &amp; verify</h2></div>
+      <ol class="steps">
+        <li><span class="step-num">1</span><div>Click <strong>Connect &amp; Verify</strong>. The top-right indicator turns <span class="ok-dot">green “Connected”</span> and your accounts load.</div></li>
+        <li><span class="step-num">2</span><div>Trouble? Open <strong>Monitor → Connection Health</strong> and the <strong>Logs</strong> tab for the exact error.</div></li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>C4 · Enable accounts</h2></div>
+      <ol class="steps">
+        <li><span class="step-num">1</span><div>Settings → <strong>Accounts</strong>. Tick <strong>Enabled</strong> for every account to trade — each signal goes to <em>all</em> enabled accounts; disabled ones are ignored.</div></li>
+        <li><span class="step-num">2</span><div>(Optional) Set a <strong>Qty ×</strong> multiplier per account, then <strong>Save Accounts</strong>.</div></li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>C5 · Symbol mapping</h2></div>
+      <ol class="steps">
+        <li><span class="step-num">1</span><div>Settings → <strong>Current Symbol Mapping</strong>. Confirm each TradingView symbol points to the right Tradovate contract (e.g. <code>MNQ1!</code> → <code>MNQU6</code>).</div></li>
+        <li><span class="step-num">2</span><div><strong>After every rollover</strong>, update the contract here (e.g. <code>MNQU6</code> → <code>MNQZ6</code>) and click <strong>Save Mapping</strong>. No restart needed.</div></li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>C6 · Trading rules &amp; safety</h2></div>
+      <p class="hint">Defaults match the strategy (editable under Settings → <em>Trading Rules</em>):</p>
+      <table class="data-table">
+        <thead><tr><th>Signal</th><th>Order</th><th>Type</th><th>Qty</th></tr></thead>
+        <tbody>
+          <tr><td>buy / sell</td><td>Entry</td><td>Market</td><td>3 (default)</td></tr>
+          <tr><td>tp1 / tp2 / tp3</td><td>Take-profit</td><td>Limit</td><td>1 each</td></tr>
+          <tr><td>sl</td><td>Stop-loss</td><td>Stop</td><td>full position</td></tr>
+          <tr><td>move_sl</td><td>Move the stop</td><td>—</td><td>—</td></tr>
+          <tr><td>close_all</td><td>Cancel + flatten</td><td>Market</td><td>full position</td></tr>
+        </tbody>
+      </table>
+      <div class="callout">🔒 <strong>Trading enabled</strong> is OFF by default. Leave it off until you've tested (Part E).</div>
+    </div>
+
+    <!-- ===== PART D — TRADINGVIEW ===== -->
+    <div class="card part-divider" id="p-d"><h2>Part D · Connect TradingView</h2></div>
+
+    <div class="card">
+      <div class="card-head"><h2>D1 · Your webhook URL</h2></div>
+      <ol class="steps">
+        <li><span class="step-num">1</span><div>Set a strong <strong>Webhook secret</strong> in Settings and Save.</div></li>
+        <li><span class="step-num">2</span><div>Your URL (also shown on the <strong>Test &amp; Webhook</strong> tab):
+          <pre class="code">https://YOUR-SERVICE.onrender.com/webhook/YOUR_SECRET
+# self-host:  http://YOUR_HOST:9000/webhook/YOUR_SECRET (front with HTTPS — see B7)</pre></div></li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>D2 · Create the alert</h2></div>
+      <ol class="steps">
+        <li><span class="step-num">1</span><div>In TradingView, create an alert on your strategy/symbol.</div></li>
+        <li><span class="step-num">2</span><div>Under <em>Notifications</em>, enable <strong>Webhook URL</strong> and paste your URL.</div></li>
+        <li><span class="step-num">3</span><div>If you set a <em>passphrase</em> in Settings, include <code>"passphrase":"…"</code> in the alert JSON.</div></li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>D3 · Alert message (signal reference)</h2></div>
+      <p class="hint">Set the alert <strong>message</strong> to the strategy JSON. The bridge routes on the <code>action</code> field:</p>
+      <table class="data-table">
+        <thead><tr><th>action</th><th>example events</th><th>does</th></tr></thead>
+        <tbody>
+          <tr><td><code>buy</code> / <code>sell</code></td><td>entry</td><td>Market entry + TP/SL bracket</td></tr>
+          <tr><td><code>move_sl</code></td><td>tp1_hit</td><td>Moves the stop to <code>new_sl</code></td></tr>
+          <tr><td><code>trail_active</code></td><td>tp2_hit</td><td>Acknowledged (strategy keeps sending move_sl)</td></tr>
+          <tr><td><code>close_all</code></td><td>tp3_hit, sl_hit, runner_exit</td><td>Cancels orders + flattens</td></tr>
+        </tbody>
+      </table>
+      <pre class="code">{"event":"entry","action":"sell","symbol":"MNQ1!",
+ "entry":30267,"sl":30285.07,
+ "tp1":30261.58,"tp2":30265.19,"tp3":30247.04}</pre>
+    </div>
+
+    <!-- ===== PART E — TEST ===== -->
+    <div class="card part-divider" id="p-e"><h2>Part E · Test safely</h2></div>
+
+    <div class="card">
+      <div class="card-head"><h2>E1 · Simulator (no real orders)</h2></div>
+      <ol class="steps">
+        <li><span class="step-num">1</span><div>Open the <strong>Simulator</strong> tab, pick a scenario, click <strong>Run all</strong> (or step through). Orders are filled in memory — nothing reaches Tradovate, no credentials needed.</div></li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>E2 · Test &amp; Webhook</h2></div>
+      <div class="callout warn">⚠ The <strong>Test &amp; Webhook</strong> tab runs the <em>live</em> pipeline and <strong>places real orders</strong> if Trading is enabled. Use it on Demo, or keep Trading off to just see routing.</div>
+    </div>
+
+    <!-- ===== PART F — GO LIVE ===== -->
+    <div class="card part-divider" id="p-f"><h2>Part F · Go live</h2></div>
+    <div class="card">
+      <div class="card-head"><h2>F1–F3 · Switch to live</h2></div>
+      <ol class="steps">
+        <li><span class="step-num">1</span><div>Verify demo fills on <strong>Monitor</strong> (Open Positions, Recent Orders) and <strong>Logs</strong>.</div></li>
+        <li><span class="step-num">2</span><div>Settings → switch <em>Environment</em> to <strong>Live</strong>, re-enter live credentials, <strong>Connect &amp; Verify</strong>, and re-check <strong>Accounts</strong>.</div></li>
+        <li><span class="step-num">3</span><div>Turn <strong>Trading enabled</strong> ON. You're live. 🚀</div></li>
+      </ol>
+    </div>
+
+    <!-- ===== PART G — OPERATE ===== -->
+    <div class="card part-divider" id="p-g"><h2>Part G · Operate &amp; update</h2></div>
+    <div class="card">
+      <div class="card-head"><h2>G1 · Monitor</h2></div>
+      <ol class="steps">
+        <li><span class="step-num">1</span><div><strong>Monitor</strong> tab: connection health (status, token expiry, last renew), open positions, active trades, recent orders.</div></li>
+        <li><span class="step-num">2</span><div><strong>Logs</strong> tab: every signal and event with timestamps.</div></li>
+      </ol>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>G2 · Updates</h2></div>
+      <ol class="steps">
+        <li><span class="step-num">1</span><div><strong>Render:</strong> push to GitHub → auto-deploy (or <em>Manual Deploy</em>).</div></li>
+        <li><span class="step-num">2</span><div><strong>Self-host:</strong> click <strong>Update available</strong> in the header, or <code>$ cd /home/py/nexuspred &amp;&amp; git pull origin main</code> then restart.</div></li>
+      </ol>
+    </div>
+
+    <!-- ===== PART H — TROUBLESHOOTING ===== -->
+    <div class="card part-divider" id="p-h"><h2>Part H · Troubleshooting</h2></div>
+    <div class="card">
+      <ol class="steps">
+        <li><span class="step-num">?</span><div><strong>Can't reach the dashboard (self-host)</strong> — open TCP 9000 in the OS + cloud firewall (B6); verify <code>$ curl http://localhost:9000/healthz</code>.</div></li>
+        <li><span class="step-num">?</span><div><strong>Render build fails / 500 on save</strong> — see A6 (Python pin, disk at <code>/var/data</code>).</div></li>
+        <li><span class="step-num">?</span><div><strong>Stops after SSH disconnect</strong> — run as a service + <code>enable-linger</code> (B5).</div></li>
+        <li><span class="step-num">?</span><div><strong>Disconnected / signal didn't go through</strong> — check <em>Connection Health</em>; the token auto-renews and webhooks re-authenticate on demand. Keep the host always-on (Starter plan / systemd) so renewal runs.</div></li>
+        <li><span class="step-num">?</span><div><strong>“Update failed: Not a git checkout”</strong> — you used a ZIP; run <code>$ ./connect-git.sh</code> once.</div></li>
+        <li><span class="step-num">?</span><div><strong>Signal rejected “not mapped”</strong> — add the symbol in Current Symbol Mapping (C5).</div></li>
+        <li><span class="step-num">?</span><div><strong>Nothing trades</strong> — is <strong>Trading enabled</strong> on and at least one account <strong>Enabled</strong>?</div></li>
+      </ol>
+    </div>
+  </main>
+
+  <footer>nexuspred — TradingView → Tradovate signal router</footer>
+</body>
+</html>
