@@ -183,34 +183,7 @@ async function loadSettings() {
     else el.value = val ?? "";
   }
   updateWebhookUrl(s.webhook_secret);
-  applyAuthMode(s.auth_mode || "credentials");
-  $("#oauthStatus").textContent = s.refresh_token ? "Authorized ✓" : "Not authorized";
-  $("#oauthStatus").className = "oauth-status" + (s.refresh_token ? " ok" : "");
 }
-
-function applyAuthMode(mode) {
-  $$(".auth-section").forEach((el) =>
-    el.classList.toggle("active", el.dataset.auth === mode));
-}
-
-$("#authMode").addEventListener("change", (e) => applyAuthMode(e.target.value));
-
-$("#oauthBtn").addEventListener("click", async () => {
-  try {
-    const r = await api("/api/oauth/url");
-    window.open(r.url, "_blank");
-    toast("Complete authorization in the opened tab, then Connect");
-  } catch (e) { toast(e.message, "error"); }
-});
-
-// Surface the OAuth callback result (?oauth=ok|fail|error).
-(function () {
-  const p = new URLSearchParams(location.search).get("oauth");
-  if (!p) return;
-  if (p === "ok") toast("OAuth authorized ✓", "success");
-  else toast("OAuth failed: " + p, "error");
-  history.replaceState({}, "", location.pathname);
-})();
 
 $("#settingsForm").addEventListener("submit", async (e) => {
   e.preventDefault();

@@ -142,28 +142,28 @@ orders are tagged **SIM** in the Monitor. No credentials or `trading_enabled` re
 
 ## Connection, tokens & health
 
-Three authentication methods (Settings → *Authentication method*):
+Authentication mirrors Bridge-Bot-TV — a token is used whenever one is available,
+otherwise the bridge logs in with credentials:
 
-1. **Username & password** (default) — requests an **API user session token**
-   (`accesstokenrequest`). If you don't have a paid API key it falls back to the
-   **web-trader app identities** (cid 8/2…), so it works **without an API
-   subscription**. Supply your own `cid`/`sec` under *Advanced* to use those first.
-2. **Paste access token** — paste an existing `accessToken` (and optional market-data
-   token). Useful if you already have one; it's kept alive automatically.
-3. **OAuth (refresh token)** — authorize once in the browser; the bridge stores a
-   **refresh token** and uses it to mint new access tokens (no password stored). Set
-   your `oauth_client_id` (defaults to the public web client) and click **Authorize**.
+1. **Access token** — set the `TRADOVATE_ACCESS_TOKEN` (and optional
+   `TRADOVATE_CHECK_TOKEN`) environment variables, or paste them in
+   *Settings → Use an existing access token*. The token's expiry is read from its
+   **JWT `exp` claim** (fallback `now + 75 min`). Env vars take precedence over the
+   pasted/stored values.
+2. **Username & password** — used to log in when no usable token is present (and as
+   the final fallback when a token can't be renewed). Without a paid API key it falls
+   back to the **web-trader app identities** (cid 8/2…), so it works **without an API
+   subscription**; supply your own `cid`/`sec` under *Advanced* to use those first.
 
-Token lifecycle (all modes):
+Token lifecycle:
 
-- Expiry is read from the token's **JWT `exp` claim** (falling back to `expirationTime`),
-  so the real lifetime is always respected.
-- Before expiry the token is **refreshed without a password** — `renewaccesstoken` for
-  password/token modes, the **refresh token** for OAuth.
-- Repeated auth failures trigger an **exponential backoff** (and `p-ticket` time
+- Before expiry the token is **renewed without a password** via `renewaccesstoken`,
+  trying the **access token first, then the check token** — then falling back to a
+  credentials login (the exact chain Bridge-Bot-TV uses).
+- Repeated login failures trigger an **exponential backoff** (and `p-ticket` time
   penalties are honored) so the bridge won't trip Tradovate's IP lockout.
 - A background **health check** (default every 60s, configurable; `0` disables) verifies
-  the session with `/auth/me`, refreshes as needed, and updates the **Connection Health**
+  the session with `/auth/me`, renews as needed, and updates the **Connection Health**
   card (status, user, token expiry, last check, last renew, last error). Trigger it on
   demand with **Check now** or `GET /api/health`.
 
