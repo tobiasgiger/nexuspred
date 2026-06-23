@@ -4,6 +4,13 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 1.2.3
+- Setup Guide: added a **Quick install** copy-paste block (apt → git clone →
+  install → service → firewall), a dedicated **Open / whitelist port 9000** step
+  (ss check, ufw/firewalld/iptables, cloud security groups, curl test), and a
+  stronger **keep running after SSH disconnect** step (systemd + enable-linger,
+  tmux, nohup). Troubleshooting updated.
+
 ## 1.2.2
 - Rewrote the in-dashboard **Setup Guide** as a beginner-friendly, 15-step
   walkthrough with copy-paste **Linux** commands (using `/home/py/nexuspred`):

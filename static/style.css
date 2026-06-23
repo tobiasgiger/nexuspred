@@ -246,6 +246,8 @@ textarea { resize: vertical; font-family: "SF Mono", "Fira Code", Consolas, mono
 .steps li { display: flex; gap: 12px; align-items: flex-start; padding: 9px 0; border-bottom: 1px solid rgba(35,44,61,0.4); }
 .steps li:last-child { border-bottom: none; }
 .steps li > div { flex: 1; }
+.plain-list { margin: 8px 0 0; padding-left: 18px; }
+.plain-list li { padding: 2px 0; border: none; display: list-item; }
 .step-num {
   flex: 0 0 24px; width: 24px; height: 24px; border-radius: 50%;
   background: var(--accent-2); color: #fff; font-size: 12px; font-weight: 700;

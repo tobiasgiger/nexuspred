@@ -333,18 +333,37 @@
           <a href="#g-get">2 · Get the code</a>
           <a href="#g-install">3 · Install</a>
           <a href="#g-run">4 · Start</a>
-          <a href="#g-boot">5 · Run on boot</a>
-          <a href="#g-open">6 · Open dashboard</a>
-          <a href="#g-auth">7 · Authenticate</a>
-          <a href="#g-connect">8 · Connect &amp; accounts</a>
-          <a href="#g-symbols">9 · Symbol mapping</a>
-          <a href="#g-rules">10 · Trading rules</a>
-          <a href="#g-sim">11 · Test safely</a>
-          <a href="#g-tradingview">12 · TradingView</a>
-          <a href="#g-golive">13 · Go live</a>
-          <a href="#g-update">14 · Updates</a>
-          <a href="#g-trouble">15 · Troubleshooting</a>
+          <a href="#g-boot">5 · Run after disconnect</a>
+          <a href="#g-firewall">6 · Open port 9000</a>
+          <a href="#g-open">7 · Open dashboard</a>
+          <a href="#g-auth">8 · Authenticate</a>
+          <a href="#g-connect">9 · Connect &amp; accounts</a>
+          <a href="#g-symbols">10 · Symbol mapping</a>
+          <a href="#g-rules">11 · Trading rules</a>
+          <a href="#g-sim">12 · Test safely</a>
+          <a href="#g-tradingview">13 · TradingView</a>
+          <a href="#g-golive">14 · Go live</a>
+          <a href="#g-update">15 · Updates</a>
+          <a href="#g-trouble">16 · Troubleshooting</a>
         </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>⚡ Quick install (copy-paste all at once)</h2></div>
+        <p class="hint">In a hurry? Paste this whole block into the terminal (as the
+          <code>py</code> user). Each line is explained in the detailed steps below.</p>
+        <pre class="code">$ sudo apt update
+$ sudo apt install -y python3 python3-venv python3-pip git
+$ cd /home/py
+$ git clone https://github.com/tobiasgiger/nexuspred.git
+$ cd /home/py/nexuspred
+$ chmod +x install.sh
+$ ./install.sh --service          # installs + auto-starts on boot
+$ sudo loginctl enable-linger py  # keep running after you log out
+$ sudo ufw allow 9000/tcp         # open the firewall (if ufw is active)</pre>
+        <span class="hint">Then open <code>http://YOUR_SERVER_IP:9000</code>. If a cloud
+          server (AWS/GCP/Azure/Oracle/Hetzner…), you must <strong>also</strong> open
+          TCP 9000 in the provider's firewall — see step 6.</span>
       </div>
 
       <div class="card" id="g-prep">
@@ -421,42 +440,91 @@ $ ./start.sh</pre>
       </div>
 
       <div class="card" id="g-boot">
-        <div class="card-head"><h2>5 · Keep it running (auto-start on boot)</h2></div>
-        <p class="hint">So the bridge survives logout/reboot and restarts itself if it
-          crashes. Two options — pick one.</p>
+        <div class="card-head"><h2>5 · Keep it running after you close SSH</h2></div>
+        <p class="hint">If you just run <code>./start.sh</code> over SSH, it stops the moment
+          you disconnect. Use one of these so it keeps running (and restarts on reboot).
+          <strong>Option A is recommended.</strong></p>
         <ol class="steps">
-          <li><span class="step-num">A</span><div><strong>systemd service (recommended).</strong> Install it, then allow it to run without you being logged in:
+          <li><span class="step-num">A</span><div><strong>systemd service — survives disconnect, reboot, and crashes.</strong>
             <pre class="code">$ cd /home/py/nexuspred
 $ ./install.sh --service
-$ sudo loginctl enable-linger py</pre>
+$ sudo loginctl enable-linger py    # <-- key: keeps it alive after logout</pre>
+            <span class="hint">Without <code>enable-linger</code>, a user service is killed when you log out — that's the usual “it stops after SSH disconnect” cause.</span>
             Manage it any time:
             <pre class="code">$ systemctl --user status tradovate-bridge
 $ systemctl --user restart tradovate-bridge
-$ journalctl --user -u tradovate-bridge -f      # live logs</pre>
+$ journalctl --user -u tradovate-bridge -f      # live logs (Ctrl+C to exit)</pre>
           </div></li>
-          <li><span class="step-num">B</span><div><strong>Quick background run (no service).</strong> Runs until the machine reboots:
+          <li><span class="step-num">B</span><div><strong>tmux — a terminal that stays alive after disconnect</strong> (easy to watch logs):
+            <pre class="code">$ sudo apt install -y tmux
+$ tmux new -s bridge          # opens a session
+$ cd /home/py/nexuspred &amp;&amp; ./start.sh
+# detach (leaves it running): press  Ctrl+b  then  d
+# later, reattach:            $ tmux attach -t bridge</pre>
+          </div></li>
+          <li><span class="step-num">C</span><div><strong>nohup — fire-and-forget</strong> (runs until reboot):
             <pre class="code">$ cd /home/py/nexuspred
 $ nohup ./start.sh > bridge.log 2>&amp;1 &amp;</pre>
-            Stop it with: <code>$ pkill -f run.py</code>
+            Watch logs: <code>$ tail -f bridge.log</code> &nbsp;·&nbsp; Stop it: <code>$ pkill -f run.py</code>
           </div></li>
         </ol>
       </div>
 
+      <div class="card" id="g-firewall">
+        <div class="card-head"><h2>6 · Open / whitelist port 9000</h2></div>
+        <p class="hint">Can't reach the dashboard from another computer? The bridge is
+          almost certainly running fine — the port is being blocked. Work through these
+          in order.</p>
+        <ol class="steps">
+          <li><span class="step-num">1</span><div><strong>Confirm the bridge is listening on all interfaces</strong> (you should see <code>0.0.0.0:9000</code>):
+            <pre class="code">$ ss -tlnp | grep 9000</pre>
+            <span class="hint">If it shows <code>127.0.0.1:9000</code> instead, start it with <code>HOST=0.0.0.0 ./start.sh</code> (the default already binds 0.0.0.0).</span>
+          </div></li>
+          <li><span class="step-num">2</span><div><strong>Open the OS firewall</strong> (run the one your system uses):
+            <p class="hint">Ubuntu / Debian (ufw):</p>
+            <pre class="code">$ sudo ufw allow 9000/tcp
+$ sudo ufw status</pre>
+            <p class="hint">Fedora / RHEL / CentOS (firewalld):</p>
+            <pre class="code">$ sudo firewall-cmd --permanent --add-port=9000/tcp
+$ sudo firewall-cmd --reload</pre>
+            <p class="hint">Plain iptables:</p>
+            <pre class="code">$ sudo iptables -A INPUT -p tcp --dport 9000 -j ACCEPT</pre>
+          </div></li>
+          <li><span class="step-num">3</span><div><strong>Open the cloud provider firewall</strong> (the #1 reason a cloud server “can't connect”). Add an <em>inbound</em> rule allowing <strong>TCP 9000</strong> from your IP (or <code>0.0.0.0/0</code> to allow all):
+            <ul class="plain-list">
+              <li>AWS EC2 → <em>Security Group → Inbound rules</em></li>
+              <li>Google Cloud → <em>VPC Network → Firewall → Create rule</em></li>
+              <li>Azure → <em>Network Security Group → Inbound security rules</em></li>
+              <li>Oracle Cloud → <em>VCN → Security List → Ingress rules</em></li>
+              <li>Hetzner / DigitalOcean / Vultr → <em>Firewall</em> in the panel</li>
+            </ul>
+          </div></li>
+          <li><span class="step-num">4</span><div><strong>Test it.</strong> From the server itself (should print JSON):
+            <pre class="code">$ curl http://localhost:9000/api/status</pre>
+            From another computer (replace with your server's public IP):
+            <pre class="code">$ curl http://YOUR_SERVER_IP:9000/api/status</pre>
+            If the local curl works but the remote one hangs, it's a firewall (step 2 or 3).
+          </div></li>
+        </ol>
+        <div class="callout warn">🔓 Exposing 9000 to <code>0.0.0.0/0</code> puts the dashboard
+          on the open internet. Prefer allowing only your own IP, or keep it closed and
+          reach TradingView via a tunnel (step 13) instead of opening the port.</div>
+      </div>
+
       <div class="card" id="g-open">
-        <div class="card-head"><h2>6 · Open the dashboard</h2></div>
+        <div class="card-head"><h2>7 · Open the dashboard</h2></div>
         <ol class="steps">
           <li><span class="step-num">1</span><div>On the same machine: open
             <a href="http://localhost:9000" target="_blank">http://localhost:9000</a>.</div></li>
-          <li><span class="step-num">2</span><div>From another computer on your network: <code>http://YOUR_SERVER_IP:9000</code>
-            (find the IP with <code>$ hostname -I</code>).
-            <span class="hint">If it doesn't load, your firewall may block the port:
-            <code>$ sudo ufw allow 9000</code></span></div></li>
+          <li><span class="step-num">2</span><div>From another computer: <code>http://YOUR_SERVER_IP:9000</code>
+            (find the IP with <code>$ hostname -I</code>, or your public IP from the cloud panel).
+            <span class="hint">Doesn't load from another computer? That's the firewall — do step 6 above.</span></div></li>
         </ol>
         <div class="callout">You're reading this guide <em>in</em> the dashboard — so it's already open. 🎉 The tabs are along the top: <strong>Monitor</strong>, <strong>Settings</strong>, <strong>Logs</strong>, <strong>Test &amp; Webhook</strong>, <strong>Simulator</strong>.</div>
       </div>
 
       <div class="card" id="g-auth">
-        <div class="card-head"><h2>7 · Authenticate with Tradovate</h2></div>
+        <div class="card-head"><h2>8 · Authenticate with Tradovate</h2></div>
         <p class="hint">Open the <strong>Settings</strong> tab → <em>Tradovate Connection</em>.
           Leave <em>Environment</em> on <strong>Demo</strong> to start. Choose one method:</p>
         <ol class="steps">
@@ -473,7 +541,7 @@ $ ./start.sh</pre>
       </div>
 
       <div class="card" id="g-connect">
-        <div class="card-head"><h2>8 · Connect &amp; choose accounts</h2></div>
+        <div class="card-head"><h2>9 · Connect &amp; choose accounts</h2></div>
         <ol class="steps">
           <li><span class="step-num">1</span><div>Still in <strong>Settings</strong>, click <strong>Connect &amp; Verify</strong>. The dot in the top-right turns <span class="ok-dot">green “Connected”</span> and your accounts load.</div></li>
           <li><span class="step-num">2</span><div>Scroll to the <strong>Accounts</strong> card. Tick <strong>Enabled</strong> for every account you want to trade. Each signal is sent to <strong>all enabled accounts</strong>; disabled ones are skipped.</div></li>
@@ -483,7 +551,7 @@ $ ./start.sh</pre>
       </div>
 
       <div class="card" id="g-symbols">
-        <div class="card-head"><h2>9 · Check the symbol mapping</h2></div>
+        <div class="card-head"><h2>10 · Check the symbol mapping</h2></div>
         <ol class="steps">
           <li><span class="step-num">1</span><div>In <strong>Settings</strong> → <strong>Current Symbol Mapping</strong>, confirm each TradingView symbol points to the right Tradovate contract (e.g. <code>MNQ1!</code> → <code>MNQU6</code>).</div></li>
           <li><span class="step-num">2</span><div><strong>After every contract rollover</strong>, edit the contract here (e.g. <code>MNQU6</code> → <code>MNQZ6</code>) and click <strong>Save Mapping</strong>. No restart needed.</div></li>
@@ -491,7 +559,7 @@ $ ./start.sh</pre>
       </div>
 
       <div class="card" id="g-rules">
-        <div class="card-head"><h2>10 · Review the trading rules</h2></div>
+        <div class="card-head"><h2>11 · Review the trading rules</h2></div>
         <p class="hint">Defaults match the strategy. Change them in <strong>Settings</strong> → <em>Trading Rules</em> if you like.</p>
         <table class="data-table">
           <thead><tr><th>Signal</th><th>Order</th><th>Type</th><th>Qty</th></tr></thead>
@@ -507,7 +575,7 @@ $ ./start.sh</pre>
       </div>
 
       <div class="card" id="g-sim">
-        <div class="card-head"><h2>11 · Test safely (no real orders)</h2></div>
+        <div class="card-head"><h2>12 · Test safely (no real orders)</h2></div>
         <ol class="steps">
           <li><span class="step-num">1</span><div>Open the <strong>Simulator</strong> tab. Pick a scenario (e.g. <em>Winning trade — SELL MNQ</em>).</div></li>
           <li><span class="step-num">2</span><div>Click <strong>Run all</strong> (or <strong>Run next step</strong>) and watch the simulated entry, TP/SL, and close. <strong>Nothing is sent to Tradovate</strong> — credentials aren't even required.</div></li>
@@ -516,7 +584,7 @@ $ ./start.sh</pre>
       </div>
 
       <div class="card" id="g-tradingview">
-        <div class="card-head"><h2>12 · Connect TradingView</h2></div>
+        <div class="card-head"><h2>13 · Connect TradingView</h2></div>
         <ol class="steps">
           <li><span class="step-num">1</span><div>In <strong>Settings</strong>, set a strong <strong>Webhook secret</strong> and Save. Your webhook URL (from the <strong>Test &amp; Webhook</strong> tab) looks like:
             <pre class="code" id="guideUrl">http://YOUR_HOST:9000/webhook/YOUR_SECRET</pre></div></li>
@@ -537,7 +605,7 @@ $ ngrok http 9000</pre>
       </div>
 
       <div class="card" id="g-golive">
-        <div class="card-head"><h2>13 · Go live</h2></div>
+        <div class="card-head"><h2>14 · Go live</h2></div>
         <ol class="steps">
           <li><span class="step-num">1</span><div>Confirm demo fills on <strong>Monitor</strong> (positions/orders) and <strong>Logs</strong>.</div></li>
           <li><span class="step-num">2</span><div>In <strong>Settings</strong>, switch <em>Environment</em> to <strong>Live</strong>, re-enter live credentials, and click <strong>Connect &amp; Verify</strong> again. Re-check the <strong>Accounts</strong> list.</div></li>
@@ -546,7 +614,7 @@ $ ngrok http 9000</pre>
       </div>
 
       <div class="card" id="g-update">
-        <div class="card-head"><h2>14 · Keep it updated</h2></div>
+        <div class="card-head"><h2>15 · Keep it updated</h2></div>
         <p class="hint">When a new version exists, an amber <strong>Update available</strong> button appears in the header. Click it — the bridge pulls the latest code and restarts. Your settings in <code>data/</code> are kept.</p>
         <div class="callout">Prefer the terminal?
           <pre class="code">$ cd /home/py/nexuspred
@@ -555,12 +623,13 @@ $ ./start.sh    # or: systemctl --user restart tradovate-bridge</pre></div>
       </div>
 
       <div class="card" id="g-trouble">
-        <div class="card-head"><h2>15 · Troubleshooting</h2></div>
+        <div class="card-head"><h2>16 · Troubleshooting</h2></div>
         <ol class="steps">
-          <li><span class="step-num">?</span><div><strong>Dashboard won't open</strong> — is <code>./start.sh</code> running? Try <code>$ sudo ufw allow 9000</code> and use <code>http://YOUR_SERVER_IP:9000</code>.</div></li>
+          <li><span class="step-num">?</span><div><strong>Can't connect from another computer</strong> — open TCP 9000 in the OS firewall <em>and</em> your cloud provider's firewall (step 6). Verify with <code>$ curl http://localhost:9000/api/status</code> on the server.</div></li>
+          <li><span class="step-num">?</span><div><strong>Stops when I close SSH</strong> — run it as a service and enable lingering (step 5A: <code>./install.sh --service</code> then <code>sudo loginctl enable-linger py</code>), or use tmux (step 5B).</div></li>
           <li><span class="step-num">?</span><div><strong>“Update failed: Not a git checkout”</strong> — you used a ZIP. Run <code>$ ./connect-git.sh</code> once (step 2).</div></li>
           <li><span class="step-num">?</span><div><strong>Can't connect to Tradovate</strong> — check <em>Connection Health</em> on Monitor and the <strong>Logs</strong> tab; verify credentials and Demo/Live.</div></li>
-          <li><span class="step-num">?</span><div><strong>Signal rejected / “not mapped”</strong> — add the symbol in <strong>Current Symbol Mapping</strong> (step 9).</div></li>
+          <li><span class="step-num">?</span><div><strong>Signal rejected / “not mapped”</strong> — add the symbol in <strong>Current Symbol Mapping</strong> (step 10).</div></li>
           <li><span class="step-num">?</span><div><strong>Nothing trades</strong> — is <strong>Trading enabled</strong> on, and at least one account <strong>Enabled</strong>?</div></li>
           <li><span class="step-num">?</span><div><strong>Service logs:</strong> <code>$ journalctl --user -u tradovate-bridge -f</code> (or the <strong>Logs</strong> tab in the dashboard).</div></li>
         </ol>
