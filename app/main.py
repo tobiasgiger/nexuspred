@@ -1,11 +1,14 @@
 """FastAPI application: webhook endpoint + dashboard + management API."""
 from __future__ import annotations
 
+import base64
+import os
+import secrets
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -18,6 +21,44 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 app = FastAPI(title="Tradovate Webhook Bridge", version=config.get_version())
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+
+# Paths that must stay reachable without the dashboard password: the webhook
+# (TradingView can't send auth), static assets, and the health check.
+_AUTH_EXEMPT = ("/webhook/", "/static/", "/healthz")
+
+
+def _dashboard_password() -> str:
+    return os.environ.get("DASHBOARD_PASSWORD") or config.load_settings().get(
+        "dashboard_password", ""
+    )
+
+
+@app.middleware("http")
+async def _basic_auth(request: Request, call_next):
+    """Require HTTP Basic auth for the dashboard/API when a password is configured."""
+    pw = _dashboard_password()
+    path = request.url.path
+    if pw and not path.startswith(_AUTH_EXEMPT):
+        header = request.headers.get("Authorization", "")
+        ok = False
+        if header.startswith("Basic "):
+            try:
+                _, _, supplied = base64.b64decode(header[6:]).decode().partition(":")
+                ok = secrets.compare_digest(supplied, pw)
+            except (ValueError, UnicodeDecodeError):
+                ok = False
+        if not ok:
+            return Response(
+                status_code=401,
+                headers={"WWW-Authenticate": 'Basic realm="nexuspred"'},
+            )
+    return await call_next(request)
+
+
+@app.get("/healthz")
+async def healthz() -> dict[str, Any]:
+    """Unauthenticated liveness probe (for Render/uptime checks)."""
+    return {"ok": True, "version": config.get_version()}
 
 
 # ============================================================== Dashboard view

@@ -64,6 +64,28 @@ Open the dashboard at **http://localhost:9000** — then follow the built-in
 **Setup Guide** tab, which walks you through Tradovate API setup, connecting, and
 wiring up your TradingView alert.
 
+### Deploy on Render (for TradingView webhooks)
+
+TradingView only posts webhooks to **port 80/443**. Render serves every service over
+**HTTPS (443)** with a public URL, so it's the easiest way to receive alerts. This repo
+includes a `render.yaml` blueprint.
+
+1. In Render: **New → Blueprint**, pick this repo (it reads `render.yaml`: a web service
+   + a 1 GB persistent disk at `/var/data`).
+2. Set env vars: `NEXUSPRED_DATA_DIR=/var/data` (persists settings/tokens) and
+   `DASHBOARD_PASSWORD=<your-password>` (the dashboard is public — protect it). Render
+   injects `PORT` automatically.
+3. Use the **Starter** plan (always-on); the free plan sleeps after ~15 min idle.
+4. Deploy → you get `https://YOUR-SERVICE.onrender.com`. Your TradingView webhook is
+   `https://YOUR-SERVICE.onrender.com/webhook/YOUR_SECRET`.
+5. Updates deploy automatically on `git push` (the in-app Update button is disabled on
+   managed hosts).
+
+> **Persistence & security on any public host:** point `NEXUSPRED_DATA_DIR` at a
+> persistent disk so settings survive deploys, and always set `DASHBOARD_PASSWORD`
+> (HTTP Basic auth on the dashboard + API; the `/webhook/<secret>` and `/healthz` paths
+> stay open). `GET /healthz` is an unauthenticated liveness probe.
+
 1. Go to **Settings** → enter your Tradovate credentials (start in **Demo**).
 2. Click **Connect & Verify** — the account is auto-detected.
 3. Set a strong **Webhook secret**.

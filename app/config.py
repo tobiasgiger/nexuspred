@@ -13,7 +13,10 @@ from typing import Any
 
 # Repository root (one level up from the ``app`` package).
 ROOT_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = ROOT_DIR / "data"
+# Where runtime settings live. On hosts with an ephemeral filesystem (e.g. Render)
+# set NEXUSPRED_DATA_DIR to a mounted persistent disk so settings/tokens survive
+# restarts and deploys.
+DATA_DIR = Path(os.environ.get("NEXUSPRED_DATA_DIR") or (ROOT_DIR / "data"))
 SETTINGS_FILE = DATA_DIR / "settings.json"
 VERSION_FILE = ROOT_DIR / "VERSION"
 
@@ -74,6 +77,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # --- Webhook security -----------------------------------------------------
     "webhook_secret": "change-me",   # required in the webhook URL path
     "webhook_passphrase": "",        # optional passphrase checked in JSON body
+    # Protect the dashboard + API with HTTP Basic auth when hosted publicly.
+    # The DASHBOARD_PASSWORD env var overrides this (use it for the first deploy).
+    # The /webhook/<secret> endpoint is never behind this (TradingView can't auth).
+    "dashboard_password": "",
 
     # --- Auto-updater ---------------------------------------------------------
     "auto_check_updates": True,
@@ -135,6 +142,7 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
 # Fields that must never be returned to the browser in plain text.
 SECRET_FIELDS = {
     "password", "sec", "webhook_passphrase", "access_token", "md_token",
+    "dashboard_password",
 }
 
 

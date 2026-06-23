@@ -173,6 +173,12 @@
             <div class="card-head"><h2>Webhook Security</h2></div>
             <label>Webhook secret (URL path) <input name="webhook_secret" /></label>
             <label>Passphrase (optional, in JSON body) <input name="webhook_passphrase" type="password" /></label>
+            <label>Dashboard password (protect this dashboard when hosted publicly)
+              <input name="dashboard_password" type="password" autocomplete="new-password" />
+            </label>
+            <p class="hint">Set this on any public deploy. The <code>DASHBOARD_PASSWORD</code>
+              env var overrides it. Takes effect on the next request; the webhook URL is
+              never behind it.</p>
           </div>
 
           <div class="card">
@@ -329,6 +335,7 @@
           account until test signals fill correctly.
         </p>
         <div class="guide-toc">
+          <a href="#g-render">☁️ Render (port 443)</a>
           <a href="#g-prep">1 · Prepare Linux</a>
           <a href="#g-get">2 · Get the code</a>
           <a href="#g-install">3 · Install</a>
@@ -364,6 +371,36 @@ $ sudo ufw allow 9000/tcp         # open the firewall (if ufw is active)</pre>
         <span class="hint">Then open <code>http://YOUR_SERVER_IP:9000</code>. If a cloud
           server (AWS/GCP/Azure/Oracle/Hetzner…), you must <strong>also</strong> open
           TCP 9000 in the provider's firewall — see step 6.</span>
+      </div>
+
+      <div class="card" id="g-render">
+        <div class="card-head"><h2>☁️ Deploy on Render (recommended for TradingView)</h2></div>
+        <p class="hint">TradingView only sends webhooks to <strong>port 80/443</strong>.
+          Render gives every service a public <strong>HTTPS (443)</strong> URL, so it's the
+          easiest way to receive alerts without touching your own server's port 80. This
+          repo ships a <code>render.yaml</code> blueprint. Steps 7–15 below still apply
+          (done in the dashboard at your Render URL).</p>
+        <ol class="steps">
+          <li><span class="step-num">1</span><div>Make sure your GitHub repo is reachable by Render (your own repo or a fork). Push any changes you want deployed.</div></li>
+          <li><span class="step-num">2</span><div>In Render: <strong>New → Blueprint</strong>, pick this repository. Render reads <code>render.yaml</code> and proposes a web service + a 1&nbsp;GB persistent disk at <code>/var/data</code>.
+            <span class="hint">Prefer manual setup? <strong>New → Web Service</strong> → Build: <code>pip install -r requirements.txt</code>, Start: <code>python run.py</code>, Health check path: <code>/healthz</code>, add a disk mounted at <code>/var/data</code>.</span>
+          </div></li>
+          <li><span class="step-num">3</span><div>Set environment variables:
+            <pre class="code">NEXUSPRED_DATA_DIR = /var/data      # persists settings/tokens (disk)
+DASHBOARD_PASSWORD = <your-password>  # protects the public dashboard</pre>
+            <span class="hint">Optional: <code>TRADOVATE_ACCESS_TOKEN</code> / <code>TRADOVATE_CHECK_TOKEN</code>. Render injects <code>PORT</code> automatically — don't set it.</span>
+          </div></li>
+          <li><span class="step-num">4</span><div>Choose the <strong>Starter</strong> plan (always-on). The <em>free</em> plan sleeps after ~15 min idle, so the first alert after a quiet spell can be delayed or missed — not ideal for trading.</div></li>
+          <li><span class="step-num">5</span><div>Click <strong>Deploy</strong>. When it's live you get a URL like <code>https://nexuspred.onrender.com</code>.</div></li>
+          <li><span class="step-num">6</span><div>Open that URL, log in (any username + your <code>DASHBOARD_PASSWORD</code>), then configure everything from <strong>step 8</strong> below (authenticate, accounts, symbol map, webhook secret).</div></li>
+          <li><span class="step-num">7</span><div>Your TradingView webhook URL is simply:
+            <pre class="code">https://YOUR-SERVICE.onrender.com/webhook/YOUR_SECRET</pre>
+            HTTPS on 443 — no tunnel or port-forwarding needed. 🎉
+          </div></li>
+          <li><span class="step-num">8</span><div><strong>Updates on Render</strong> are automatic: push to GitHub (or click <em>Manual Deploy</em> in Render). The in-app Update button is disabled there.</div></li>
+        </ol>
+        <div class="callout warn">🔐 The dashboard is now on the public internet — <strong>always set <code>DASHBOARD_PASSWORD</code></strong>, use a strong <em>Webhook secret</em>, and keep <em>Trading enabled</em> off until you've tested.</div>
+        <div class="callout">🖥️ Want to self-host on your own Linux box instead? Follow the steps below. (TradingView still needs 443 — use the Cloudflare Tunnel / ngrok option in step 13.)</div>
       </div>
 
       <div class="card" id="g-prep">

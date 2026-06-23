@@ -4,6 +4,16 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 1.3.0
+- **Render.com deployment** for TradingView's port-80/443 requirement: added
+  `render.yaml` blueprint (web service + persistent disk), `NEXUSPRED_DATA_DIR`
+  to store settings/tokens on a mounted disk, an unauthenticated `/healthz`
+  probe, and a Render walkthrough in the Setup Guide + README.
+- **Dashboard auth**: optional HTTP Basic auth via `DASHBOARD_PASSWORD` env var
+  or the new *Dashboard password* setting — protects the dashboard + API on
+  public hosts; `/webhook/<secret>`, `/static`, `/healthz` stay open.
+- Self-update button now reports that managed hosts (Render) deploy via git push.
+
 ## 1.2.3
 - Setup Guide: added a **Quick install** copy-paste block (apt → git clone →
   install → service → firewall), a dedicated **Open / whitelist port 9000** step

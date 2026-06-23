@@ -1,0 +1,32 @@
+# Render.com Blueprint for nexuspred — Tradovate Webhook Bridge
+# Deploy: Render Dashboard → New → Blueprint → pick this repo.
+# Render injects $PORT (run.py binds 0.0.0.0:$PORT) and serves it over HTTPS:443,
+# which is what TradingView webhooks require.
+services:
+  - type: web
+    name: nexuspred
+    runtime: python
+    plan: starter            # always-on. The free plan sleeps after 15 min idle.
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run.py
+    healthCheckPath: /healthz
+    autoDeploy: true         # redeploy automatically on git push
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      # Persist settings/tokens on the mounted disk below (survives deploys).
+      - key: NEXUSPRED_DATA_DIR
+        value: /var/data
+      # Protect the public dashboard with HTTP Basic auth — set your own value.
+      - key: DASHBOARD_PASSWORD
+        sync: false
+      # Optional: pre-seed a Tradovate session token instead of credentials.
+      - key: TRADOVATE_ACCESS_TOKEN
+        sync: false
+      - key: TRADOVATE_CHECK_TOKEN
+        sync: false
+    disk:
+      name: nexuspred-data
+      mountPath: /var/data
+      sizeGB: 1

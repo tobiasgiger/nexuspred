@@ -100,6 +100,15 @@ def _run(cmd: list[str]) -> tuple[bool, str]:
 
 async def apply_update() -> dict[str, Any]:
     """Pull the latest code from GitHub and schedule a restart."""
+    # On managed hosts like Render, deploys are driven by git push, not by us.
+    if os.environ.get("RENDER") or os.environ.get("NEXUSPRED_MANAGED_HOST"):
+        return {
+            "success": False,
+            "message": (
+                "Managed host (e.g. Render): updates deploy automatically when you "
+                "push to GitHub, or click Manual Deploy in the host dashboard."
+            ),
+        }
     if not (config.ROOT_DIR / ".git").exists():
         return {
             "success": False,
