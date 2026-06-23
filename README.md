@@ -81,6 +81,10 @@ includes a `render.yaml` blueprint.
 5. Updates deploy automatically on `git push` (the in-app Update button is disabled on
    managed hosts).
 
+> **Build fails compiling `pydantic-core`/`orjson`?** Render chose a too-new Python with
+> no prebuilt wheels. The repo pins **Python 3.11** via `.python-version`; if your service
+> predates it, set `PYTHON_VERSION=3.11.9` and *Clear build cache & deploy*.
+
 > **Persistence & security on any public host:** point `NEXUSPRED_DATA_DIR` at a
 > persistent disk so settings survive deploys, and always set `DASHBOARD_PASSWORD`
 > (HTTP Basic auth on the dashboard + API; the `/webhook/<secret>` and `/healthz` paths

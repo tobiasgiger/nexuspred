@@ -4,6 +4,11 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 1.3.2
+- Pin **Python 3.11** via a `.python-version` file so Render (and other hosts)
+  don't pick Python 3.14, which has no prebuilt wheels for `pydantic-core`/`orjson`
+  and fails the build trying to compile them. Build-troubleshooting notes added.
+
 ## 1.3.1
 - `runner_exit` signal (action `close_all`) — already handled by the action-based
   router; added a Test & Webhook preset and a Simulator scenario for it.

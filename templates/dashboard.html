@@ -402,6 +402,11 @@ DASHBOARD_PASSWORD = <your-password>  # protects the public dashboard</pre>
         </ol>
         <div class="callout warn">🔐 The dashboard is now on the public internet — <strong>always set <code>DASHBOARD_PASSWORD</code></strong>, use a strong <em>Webhook secret</em>, and keep <em>Trading enabled</em> off until you've tested.</div>
         <div class="callout">🖥️ Want to self-host on your own Linux box instead? Follow the steps below. (TradingView still needs 443 — use the Cloudflare Tunnel / ngrok option in step 13.)</div>
+        <div class="callout warn">🛠️ <strong>Build failed compiling <code>pydantic-core</code> / <code>orjson</code>?</strong>
+          Render picked a too-new Python (e.g. 3.14) with no prebuilt wheels. This repo
+          pins <strong>Python 3.11</strong> via a <code>.python-version</code> file — if you
+          created the service before that existed, set env var <code>PYTHON_VERSION=3.11.9</code>
+          and <em>Clear build cache &amp; deploy</em>.</div>
       </div>
 
       <div class="card" id="g-prep">
