@@ -33,6 +33,7 @@
     <button class="tab" data-tab="settings">Settings</button>
     <button class="tab" data-tab="logs">Logs</button>
     <button class="tab" data-tab="test">Test &amp; Webhook</button>
+    <button class="tab" data-tab="guide">Setup Guide</button>
   </nav>
 
   <main>
@@ -195,6 +196,131 @@
           <button class="btn btn-primary" id="sendTestBtn">Send Test Signal</button>
         </div>
         <pre class="result-box hidden" id="testResult"></pre>
+      </div>
+    </section>
+
+    <!-- ============================ SETUP GUIDE ============================ -->
+    <section class="panel" id="tab-guide">
+      <div class="card guide-intro">
+        <h2>Getting started</h2>
+        <p class="hint">
+          This guide walks you from a fresh machine to live signal routing. Work
+          through the steps in order. New here? Stay on a <strong>Demo</strong>
+          account until you've seen test signals fill correctly.
+        </p>
+        <div class="guide-toc">
+          <a href="#g-install">1 · Install</a>
+          <a href="#g-run">2 · Run</a>
+          <a href="#g-tradovate">3 · Tradovate API</a>
+          <a href="#g-connect">4 · Connect</a>
+          <a href="#g-rules">5 · Trading rules</a>
+          <a href="#g-tradingview">6 · TradingView alert</a>
+          <a href="#g-golive">7 · Go live</a>
+          <a href="#g-update">8 · Updates</a>
+        </div>
+      </div>
+
+      <div class="card" id="g-install">
+        <div class="card-head"><h2>1 · Install</h2></div>
+        <p class="hint">Pick your operating system. Each installer creates an
+          isolated environment and a one-click launcher — nothing else on your
+          system is touched.</p>
+        <div class="grid grid-2">
+          <div class="os-card">
+            <div class="os-head"><span class="os-badge">🐧 Linux / macOS</span></div>
+            <ol class="steps">
+              <li><span class="step-num">1</span><div>Download or clone the project, then open a terminal in its folder.</div></li>
+              <li><span class="step-num">2</span><div>Run the installer:
+                <pre class="code">chmod +x install.sh
+./install.sh</pre>
+                <span class="hint">Optional: <code>./install.sh --service</code> auto-starts the bridge on boot (systemd), <code>--port 9000</code> changes the port.</span>
+              </div></li>
+            </ol>
+          </div>
+          <div class="os-card">
+            <div class="os-head"><span class="os-badge">🪟 Windows</span></div>
+            <ol class="steps">
+              <li><span class="step-num">1</span><div>Install <a href="https://www.python.org/downloads/windows/" target="_blank" rel="noopener">Python 3.9+</a> and tick <em>“Add python.exe to PATH”</em>.</div></li>
+              <li><span class="step-num">2</span><div>Double-click <code>install.bat</code> (or run it in a terminal). It builds the environment and creates <code>start.bat</code>.</div></li>
+            </ol>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" id="g-run">
+        <div class="card-head"><h2>2 · Run the bridge</h2></div>
+        <ol class="steps">
+          <li><span class="step-num">1</span><div>Start it:
+            <pre class="code">Linux/macOS:  ./start.sh
+Windows:      start.bat</pre></div></li>
+          <li><span class="step-num">2</span><div>Open <a href="/" target="_blank">http://localhost:8000</a> in your browser — you're looking at the dashboard right now.</div></li>
+        </ol>
+        <div class="callout">💡 The bridge must keep running to receive signals. On Linux use <code>--service</code>; on Windows leave the <code>start.bat</code> window open or add it to startup.</div>
+      </div>
+
+      <div class="card" id="g-tradovate">
+        <div class="card-head"><h2>3 · Get your Tradovate API access</h2></div>
+        <ol class="steps">
+          <li><span class="step-num">1</span><div>Sign in at <a href="https://trader.tradovate.com" target="_blank" rel="noopener">trader.tradovate.com</a>. API access requires the API add-on to be enabled on your account.</div></li>
+          <li><span class="step-num">2</span><div>Create an <strong>API Key</strong> in the Tradovate application settings. Note the <code>cid</code> (key id) and <code>sec</code> (secret).</div></li>
+          <li><span class="step-num">3</span><div>You'll also need your Tradovate <strong>username</strong>, <strong>password</strong> and an <strong>App ID</strong> (any name identifying this app).</div></li>
+        </ol>
+        <div class="callout warn">⚠ Start with the <strong>Demo</strong> environment. Switch to Live only after verifying fills.</div>
+      </div>
+
+      <div class="card" id="g-connect">
+        <div class="card-head"><h2>4 · Connect</h2></div>
+        <ol class="steps">
+          <li><span class="step-num">1</span><div>Open the <strong>Settings</strong> tab and fill in the <em>Tradovate Connection</em> card. Leave <em>Environment</em> on <strong>Demo</strong>.</div></li>
+          <li><span class="step-num">2</span><div>Click <strong>Save Settings</strong>, then <strong>Connect &amp; Verify</strong>. Your account is auto-detected and the header turns <span class="ok-dot">green</span>.</div></li>
+        </ol>
+      </div>
+
+      <div class="card" id="g-rules">
+        <div class="card-head"><h2>5 · Confirm trading rules</h2></div>
+        <p class="hint">Defaults match the strategy in the screenshots. Adjust on the <strong>Settings</strong> tab if needed.</p>
+        <table class="data-table">
+          <thead><tr><th>Signal</th><th>Order</th><th>Type</th><th>Qty</th></tr></thead>
+          <tbody>
+            <tr><td>buy / sell</td><td>Entry</td><td>Market</td><td>3 (default)</td></tr>
+            <tr><td>tp1 / tp2 / tp3</td><td>Take-profit</td><td>Limit</td><td>1 each</td></tr>
+            <tr><td>sl</td><td>Stop-loss</td><td>Stop</td><td>full position</td></tr>
+            <tr><td>move_sl</td><td>Move the stop</td><td>—</td><td>—</td></tr>
+            <tr><td>close_all</td><td>Cancel + flatten</td><td>Market</td><td>full position</td></tr>
+          </tbody>
+        </table>
+        <div class="callout">🔒 <strong>Trading enabled</strong> is OFF by default — a safety switch. Turn it on only when you're ready to send real orders.</div>
+      </div>
+
+      <div class="card" id="g-tradingview">
+        <div class="card-head"><h2>6 · Point TradingView at the bridge</h2></div>
+        <ol class="steps">
+          <li><span class="step-num">1</span><div>In Settings, set a strong <strong>Webhook secret</strong> and copy your URL from the <strong>Test &amp; Webhook</strong> tab. It looks like:
+            <pre class="code" id="guideUrl">http://YOUR_HOST:8000/webhook/YOUR_SECRET</pre>
+            <span class="hint">For TradingView to reach it, the bridge must be on a public address (port-forward, VPS, or a tunnel like ngrok / Cloudflare Tunnel).</span>
+          </div></li>
+          <li><span class="step-num">2</span><div>Create a TradingView alert → <em>Notifications</em> → enable <strong>Webhook URL</strong> and paste the URL above.</div></li>
+          <li><span class="step-num">3</span><div>Set the alert <strong>message</strong> to the strategy JSON, e.g.:
+            <pre class="code">{"event":"entry","action":"sell","symbol":"MNQ1!",
+ "entry":30267,"sl":30285.07,
+ "tp1":30261.58,"tp2":30265.19,"tp3":30247.04}</pre></div></li>
+          <li><span class="step-num">4</span><div>Before going live, open <strong>Test &amp; Webhook</strong>, load a preset and click <strong>Send Test Signal</strong> to watch it flow through.</div></li>
+        </ol>
+      </div>
+
+      <div class="card" id="g-golive">
+        <div class="card-head"><h2>7 · Go live</h2></div>
+        <ol class="steps">
+          <li><span class="step-num">1</span><div>Verify demo fills on the <strong>Monitor</strong> tab (positions, orders) and the <strong>Logs</strong> tab.</div></li>
+          <li><span class="step-num">2</span><div>In Settings, switch <em>Environment</em> to <strong>Live</strong>, re-enter live credentials, <strong>Connect &amp; Verify</strong> again.</div></li>
+          <li><span class="step-num">3</span><div>Flip <strong>Trading enabled</strong> on. You're live. 🚀</div></li>
+        </ol>
+      </div>
+
+      <div class="card" id="g-update">
+        <div class="card-head"><h2>8 · Keep it updated</h2></div>
+        <p class="hint">The bridge checks GitHub for new versions automatically. When one is available, an amber <strong>Update available</strong> button appears in the header — click it to pull the latest code and restart. You can also check on demand from the <em>Updates</em> card in Settings.</p>
+        <div class="callout">🛟 Trouble? The <strong>Logs</strong> tab shows every signal and event with timestamps — the fastest way to see what happened.</div>
       </div>
     </section>
   </main>

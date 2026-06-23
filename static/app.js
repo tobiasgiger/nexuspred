@@ -235,7 +235,10 @@ $("#checkUpdateBtn").addEventListener("click", checkUpdate);
 /* --------------------------------------------------------------- webhook/test */
 function updateWebhookUrl(secret) {
   const s = secret || "your-secret";
-  $("#webhookUrl").textContent = `${location.origin}/webhook/${s}`;
+  const url = `${location.origin}/webhook/${s}`;
+  $("#webhookUrl").textContent = url;
+  const guideUrl = $("#guideUrl");
+  if (guideUrl) guideUrl.textContent = url;
 }
 
 $("#copyUrl").addEventListener("click", () => {

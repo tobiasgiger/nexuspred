@@ -28,14 +28,35 @@ configuration and monitoring, and a built-in GitHub auto-updater.
 
 ## Quick start
 
+### One-click installers (recommended)
+
+The installers create an isolated virtual environment, install dependencies and
+write a launcher — nothing else on your system is touched.
+
+**Linux / macOS**
 ```bash
 git clone https://github.com/tobiasgiger/nexuspred.git
 cd nexuspred
+chmod +x install.sh
+./install.sh            # add --service to auto-start on boot, --port 9000 to change port
+./start.sh
+```
+
+**Windows**
+1. Install [Python 3.9+](https://www.python.org/downloads/windows/) and tick *“Add python.exe to PATH”*.
+2. Download the project, then double-click **`install.bat`**.
+3. Double-click the generated **`start.bat`**.
+
+### Manual install
+
+```bash
 pip install -r requirements.txt
 python run.py
 ```
 
-Open the dashboard at **http://localhost:8000**.
+Open the dashboard at **http://localhost:8000** — then follow the built-in
+**Setup Guide** tab, which walks you through Tradovate API setup, connecting, and
+wiring up your TradingView alert.
 
 1. Go to **Settings** → enter your Tradovate credentials (start in **Demo**).
 2. Click **Connect & Verify** — the account is auto-detected.

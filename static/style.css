@@ -185,3 +185,48 @@ textarea { resize: vertical; font-family: "SF Mono", "Fira Code", Consolas, mono
 .toast.show { opacity: 1; transform: none; }
 .toast.error { border-left-color: var(--red); }
 .toast.success { border-left-color: var(--green); }
+
+/* ---------------------------------------------------------------- guide */
+.guide-intro h2 { margin-bottom: 8px; }
+.guide-toc { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.guide-toc a {
+  text-decoration: none; color: var(--text-dim);
+  background: var(--bg); border: 1px solid var(--border);
+  padding: 6px 12px; border-radius: 999px; font-size: 12.5px; transition: all 0.15s;
+}
+.guide-toc a:hover { color: var(--text); border-color: var(--accent); }
+
+.os-card { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+.os-head { margin-bottom: 12px; }
+.os-badge { font-size: 14px; font-weight: 600; color: var(--text); }
+
+.steps { list-style: none; margin: 0; padding: 0; }
+.steps li { display: flex; gap: 12px; align-items: flex-start; padding: 9px 0; border-bottom: 1px solid rgba(35,44,61,0.4); }
+.steps li:last-child { border-bottom: none; }
+.steps li > div { flex: 1; }
+.step-num {
+  flex: 0 0 24px; width: 24px; height: 24px; border-radius: 50%;
+  background: var(--accent-2); color: #fff; font-size: 12px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center; margin-top: 1px;
+}
+
+.guide-intro a, .panel#tab-guide a:not(.guide-toc a) { color: var(--accent); text-decoration: none; }
+.panel#tab-guide a:hover { text-decoration: underline; }
+
+pre.code {
+  background: var(--bg); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  border-radius: 7px; padding: 10px 12px; margin: 8px 0;
+  font-family: "SF Mono", "Fira Code", Consolas, monospace; font-size: 12.5px;
+  color: var(--text); white-space: pre-wrap; word-break: break-word; overflow-x: auto;
+}
+
+.callout {
+  margin-top: 14px; padding: 11px 14px; border-radius: 8px; font-size: 13px;
+  background: rgba(79,140,255,0.08); border: 1px solid rgba(79,140,255,0.25); color: var(--text);
+}
+.callout.warn { background: rgba(255,180,84,0.08); border-color: rgba(255,180,84,0.3); }
+.ok-dot { color: var(--green); font-weight: 600; }
+.panel#tab-guide code {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 5px;
+  padding: 1px 6px; font-size: 12px; color: var(--accent);
+}
