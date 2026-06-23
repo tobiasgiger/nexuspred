@@ -4,6 +4,14 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 1.2.2
+- Rewrote the in-dashboard **Setup Guide** as a beginner-friendly, 15-step
+  walkthrough with copy-paste **Linux** commands (using `/home/py/nexuspred`):
+  prerequisites, git clone, install, start, run-on-boot (systemd + linger),
+  open dashboard, authenticate, connect/accounts, symbol mapping, safe testing,
+  exposing to TradingView (Cloudflare Tunnel/ngrok), go-live, updates, and a
+  troubleshooting section.
+
 ## 1.2.1
 - Add `connect-git.bat` / `connect-git.sh` to turn a ZIP-downloaded folder into a
   Git checkout so the dashboard **Update** button works; clearer "not a git
