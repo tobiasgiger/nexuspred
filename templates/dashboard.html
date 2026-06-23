@@ -164,11 +164,8 @@
             <label>SL order type
               <select name="sl_order_type"><option>Stop</option><option>StopLimit</option></select>
             </label>
-            <label>Allowed symbols (comma separated)
+            <label>Allowed symbols (comma separated; for unmapped symbols)
               <input name="allowed_symbols" placeholder="MNQ, MES" />
-            </label>
-            <label>Symbol map (JSON: TradingView → root)
-              <textarea name="symbol_map" rows="3">{}</textarea>
             </label>
           </div>
 
@@ -212,6 +209,27 @@
         <div class="form-actions">
           <button class="btn btn-primary" id="saveAccountsBtn">Save Accounts</button>
           <span class="save-hint" id="accountsHint"></span>
+        </div>
+      </div>
+
+      <div class="card" id="symbolMapCard">
+        <div class="card-head">
+          <h2>Current Symbol Mapping</h2>
+          <button class="btn btn-ghost" id="addSymbolRow">+ Add</button>
+        </div>
+        <p class="hint">Maps each TradingView symbol to the exact Tradovate contract used
+          for orders. <strong>Update the contract after each rollover.</strong> Use a dated
+          contract (e.g. <code>MNQU6</code>); a bare root (e.g. <code>MNQ</code>) also works
+          and auto-picks the front month.</p>
+        <table class="data-table" id="symbolMapTable">
+          <thead>
+            <tr><th>TradingView symbol</th><th>Tradovate contract</th><th></th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div class="form-actions">
+          <button class="btn btn-primary" id="saveSymbolMapBtn">Save Mapping</button>
+          <span class="save-hint" id="symbolMapHint"></span>
         </div>
       </div>
     </section>

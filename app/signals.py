@@ -21,6 +21,7 @@ full scenario without credentials or risk.
 from __future__ import annotations
 
 import threading
+import re
 from typing import Any
 
 from . import config, state
@@ -40,14 +41,30 @@ _active: dict[str, dict[str, Any]] = {}
 _sim_active: dict[str, dict[str, Any]] = {}
 
 
-def _root(symbol: str) -> str:
-    """Map a TradingView symbol (e.g. ``MNQ1!``) to its configured root."""
-    s = config.load_settings()
-    mapped = s.get("symbol_map", {}).get(symbol)
+_CONTRACT_RE = re.compile(r"^([A-Z]{1,4})([FGHJKMNQUVXZ])(\d{1,2})$")
+
+
+def _base_root(name: str) -> str:
+    """Reduce a contract/symbol to its root: ``MNQU6`` → ``MNQ``, ``MNQ1!`` → ``MNQ``."""
+    m = _CONTRACT_RE.match(name)
+    if m:
+        return m.group(1)
+    return name.replace("1!", "").strip()
+
+
+def _resolve_symbol(s: dict[str, Any], tv_symbol: str) -> tuple[str, str, bool]:
+    """Return (target_contract, base_root, allowed) for a TradingView symbol.
+
+    The configured mapping (``symbol_map``) is the source of truth: if the symbol
+    is mapped, that exact contract (e.g. ``MNQU6``) is traded and the signal is
+    allowed. Unmapped symbols fall back to the stripped root and are gated by
+    ``allowed_symbols``.
+    """
+    mapped = s.get("symbol_map", {}).get(tv_symbol)
     if mapped:
-        return mapped
-    # Fall back: strip a trailing "1!" continuous-contract suffix.
-    return symbol.replace("1!", "").strip()
+        return mapped, _base_root(mapped), True
+    root = _base_root(tv_symbol)
+    return root, root, root in s.get("allowed_symbols", [])
 
 
 def _opposite(action: str) -> str:
@@ -75,9 +92,9 @@ async def process(payload: dict[str, Any], *, simulate: bool = False) -> dict[st
     if not action or not tv_symbol:
         raise SignalError("Payload missing 'action' or 'symbol'")
 
-    root = _root(tv_symbol)
-    if root not in s.get("allowed_symbols", []):
-        raise SignalError(f"Symbol '{root}' not in allowed list")
+    target, root, allowed = _resolve_symbol(s, tv_symbol)
+    if not allowed:
+        raise SignalError(f"Symbol '{tv_symbol}' not mapped / not in allowed list")
 
     if not simulate and not s.get("trading_enabled"):
         state.log_event(
@@ -90,7 +107,7 @@ async def process(payload: dict[str, Any], *, simulate: bool = False) -> dict[st
         state.log_event("warn", f"No enabled accounts — signal '{action}' ignored")
         return {"status": "skipped", "reason": "no_enabled_accounts", "action": action}
 
-    contract = await exec_client.resolve_contract(root)
+    contract = await exec_client.resolve_contract(target)
     tag = "[SIM] " if simulate else ""
 
     if action in ("buy", "sell"):

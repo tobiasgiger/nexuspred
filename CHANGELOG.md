@@ -4,6 +4,11 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 1.2.0
+- **Current Symbol Mapping** card in Settings: map each TradingView symbol to the
+  exact Tradovate contract (e.g. `MNQ1!` → `MNQU6`) and edit it on rollover.
+  Seeded with NQ/MNQ/ES/MES (U6) and GC/MGC (M6).
+
 ## 1.1.0
 - **Multi-account routing**: enable multiple Tradovate accounts; every signal is
   sent to all enabled accounts (with per-account quantity multiplier).

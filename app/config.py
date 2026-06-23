@@ -58,14 +58,18 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "tp_order_type": "Limit",        # take-profits are resting limit orders
     "sl_order_type": "Stop",         # stop-loss as a protective stop order
 
-    # Symbol mapping: TradingView root -> Tradovate front-month contract symbol.
-    # Tradovate needs the dated contract (e.g. "MNQU5"); leave blank to let the
-    # bridge auto-resolve the front month via the Tradovate contract API.
+    # Current symbol mapping: TradingView symbol -> exact Tradovate contract.
+    # Use the dated contract (e.g. "MNQU6") and update it after each rollover.
+    # A bare root (e.g. "MNQ") still works — the bridge auto-picks the front month.
     "symbol_map": {
-        "MNQ1!": "MNQ",
-        "MES1!": "MES",
+        "NQ1!": "NQU6",
+        "MNQ1!": "MNQU6",
+        "ES1!": "ESU6",
+        "MES1!": "MESU6",
+        "GC1!": "GCM6",
+        "MGC1!": "MGCM6",
     },
-    "allowed_symbols": ["MNQ", "MES"],
+    "allowed_symbols": ["NQ", "MNQ", "ES", "MES", "GC", "MGC"],
 
     # --- Webhook security -----------------------------------------------------
     "webhook_secret": "change-me",   # required in the webhook URL path

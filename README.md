@@ -183,10 +183,22 @@ accounts are configured, the bridge falls back to the single auto-detected accou
 
 ## Symbol mapping
 
-TradingView sends continuous symbols like `MNQ1!`. The bridge maps these to a Tradovate
-root (`MNQ`, `MES`) via **Settings → Symbol map**, then resolves the tradable front-month
-contract automatically through the Tradovate contract API. You can also enter a fully
-dated contract (e.g. `MNQU5`) and it will be used as-is.
+TradingView sends continuous symbols like `MNQ1!`. **Settings → Current Symbol Mapping**
+maps each one to the **exact Tradovate contract** used for orders — update it after every
+rollover. Defaults:
+
+| TradingView | Tradovate |
+|---|---|
+| `NQ1!`  | `NQU6`  |
+| `MNQ1!` | `MNQU6` |
+| `ES1!`  | `ESU6`  |
+| `MES1!` | `MESU6` |
+| `GC1!`  | `GCM6`  |
+| `MGC1!` | `MGCM6` |
+
+You can also enter a bare root (e.g. `MNQ`) instead of a dated contract — the bridge then
+auto-resolves the front month. Symbols not in the mapping fall back to the stripped root
+and are gated by the **Allowed symbols** list.
 
 ---
 

@@ -183,6 +183,7 @@ async function loadSettings() {
     else el.value = val ?? "";
   }
   updateWebhookUrl(s.webhook_secret);
+  renderSymbolMap(s.symbol_map || {});
 }
 
 $("#settingsForm").addEventListener("submit", async (e) => {
@@ -364,6 +365,50 @@ $("#saveAccountsBtn").addEventListener("click", async () => {
     setTimeout(() => ($("#accountsHint").textContent = ""), 2500);
     toast("Accounts saved", "success");
     refreshStatus();
+  } catch (e) { toast(e.message, "error"); }
+});
+
+/* --------------------------------------------------------------- symbol map */
+function symbolRow(tv = "", contract = "") {
+  return `<tr>
+    <td><input class="sm-tv" value="${escapeHtml(tv)}" placeholder="MNQ1!" /></td>
+    <td><input class="sm-contract" value="${escapeHtml(contract)}" placeholder="MNQU6" /></td>
+    <td><button type="button" class="btn btn-ghost sm-del">✕</button></td>
+  </tr>`;
+}
+
+function renderSymbolMap(map) {
+  const tbody = $("#symbolMapTable tbody");
+  const entries = Object.entries(map || {});
+  tbody.innerHTML = entries.length
+    ? entries.map(([tv, c]) => symbolRow(tv, c)).join("")
+    : symbolRow();
+  tbody.querySelectorAll(".sm-del").forEach((b) =>
+    b.addEventListener("click", () => b.closest("tr").remove()));
+}
+
+function collectSymbolMap() {
+  const map = {};
+  $$("#symbolMapTable tbody tr").forEach((tr) => {
+    const tv = tr.querySelector(".sm-tv").value.trim();
+    const c = tr.querySelector(".sm-contract").value.trim();
+    if (tv && c) map[tv] = c;
+  });
+  return map;
+}
+
+$("#addSymbolRow").addEventListener("click", () => {
+  $("#symbolMapTable tbody").insertAdjacentHTML("beforeend", symbolRow());
+  const last = $("#symbolMapTable tbody tr:last-child .sm-del");
+  if (last) last.addEventListener("click", () => last.closest("tr").remove());
+});
+
+$("#saveSymbolMapBtn").addEventListener("click", async () => {
+  try {
+    await api("/api/settings", { method: "POST", body: JSON.stringify({ symbol_map: collectSymbolMap() }) });
+    $("#symbolMapHint").textContent = "Saved ✓";
+    setTimeout(() => ($("#symbolMapHint").textContent = ""), 2500);
+    toast("Symbol mapping saved", "success");
   } catch (e) { toast(e.message, "error"); }
 });
 
