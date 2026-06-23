@@ -4,6 +4,12 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 1.4.2
+- **Proactive token refresh** (adopted from Bridge-Bot-TV): the background loop now
+  force-renews the token *before* it expires — at least 5 min ahead and at least
+  every 25 min — instead of waiting for it to lapse, with a 60 s retry on failure.
+  Adds `proactive_refresh()` and expiry-aware `seconds_until_refresh()`.
+
 ## 1.4.1
 - Added a **standalone Setup Guide page** (`docs/setup-guide.html`, self-contained,
   inline styles) served at **`/guide`** (public, auth-exempt) with a link from the

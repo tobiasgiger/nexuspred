@@ -285,18 +285,32 @@ async def api_health() -> dict[str, Any]:
 
 
 async def _health_loop() -> None:
-    """Periodically verify the Tradovate session and renew the token before expiry."""
+    """Proactively keep the Tradovate token alive (Bridge-Bot-TV style).
+
+    Renews the token well before it expires (≥5 min, and at least every 25 min)
+    rather than waiting for it to lapse, verifies the session, and retries every
+    60 s on failure — so a webhook never hits an expired token.
+    """
     import asyncio
     while True:
-        interval = int(config.load_settings().get("health_check_interval", 60) or 0)
-        if interval <= 0:
+        s = config.load_settings()
+        interval = int(s.get("health_check_interval", 60) or 0)
+        if interval <= 0:                       # background refresh disabled
             await asyncio.sleep(30)
             continue
+        if not client._can_authenticate(s):
+            await client.health_check()         # records "not configured" status
+            await asyncio.sleep(max(30, interval))
+            continue
+        ok = False
         try:
-            await client.health_check()
+            await client.proactive_refresh()    # force-renew so it never expires
+            await client.health_check()         # verify + update status snapshot
+            ok = bool(state.connection.get("connected"))
         except Exception as exc:  # noqa: BLE001 - never let the loop die
-            state.log_event("warn", f"Health check error: {exc}")
-        await asyncio.sleep(interval)
+            state.log_event("warn", f"Token refresh error: {exc}")
+        # Reschedule: just before the next expiry (capped 25 min), or 60 s on failure.
+        await asyncio.sleep(60 if not ok else client.seconds_until_refresh(fallback=interval))
 
 
 @app.on_event("startup")

@@ -132,6 +132,38 @@ class TradovateClient:
             < self._token_expires - timedelta(minutes=buffer_minutes)
         )
 
+    def seconds_until_refresh(self, fallback: int = 60) -> float:
+        """Delay until the next proactive refresh.
+
+        Renew at least 5 minutes before the token expires, and re-check at least
+        every 25 minutes (Bridge-Bot-TV's interval) even if expiry is far off.
+        """
+        if not self._token_expires:
+            return float(fallback)
+        secs = (self._token_expires - datetime.now(timezone.utc)).total_seconds() - 300
+        return max(15.0, min(secs, 25 * 60.0))
+
+    async def proactive_refresh(self) -> None:
+        """Force a token renewal now (access → check token → credentials login),
+        even if the current token is still valid, so it never reaches expiry.
+
+        Mirrors Bridge-Bot-TV's interval-based auto-refresh. Safe re: the lock —
+        _renew/_authenticate use auth=False requests and never re-acquire it.
+        """
+        async with self._lock:
+            self._load_persisted()
+            if not self._token:
+                await self._authenticate()
+                return
+            try:
+                await self._renew()
+            except TradovateError as exc:
+                now = datetime.now(timezone.utc)
+                if self._cooldown_until and now < self._cooldown_until:
+                    raise
+                state.log_event("warn", f"Proactive renew failed, logging in: {exc}")
+                await self._authenticate()
+
     def invalidate(self) -> None:
         """Drop cached tokens so the next call re-reads env/settings (after edits)."""
         self._loaded = False
