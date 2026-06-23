@@ -133,6 +133,47 @@ async def api_connect() -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+# =================================================================== Accounts
+@app.get("/api/accounts")
+async def api_accounts() -> list[dict[str, Any]]:
+    return config.load_settings().get("accounts", [])
+
+
+@app.post("/api/accounts")
+async def api_save_accounts(request: Request) -> list[dict[str, Any]]:
+    """Persist the enable flags / quantity multipliers chosen in the dashboard."""
+    accounts = await request.json()
+    cleaned = [
+        {
+            "id": a.get("id"),
+            "name": a.get("name", ""),
+            "enabled": bool(a.get("enabled")),
+            "qty_multiplier": float(a.get("qty_multiplier", 1) or 1),
+        }
+        for a in accounts
+        if a.get("id") is not None
+    ]
+    config.save_settings({"accounts": cleaned})
+    enabled = [a for a in cleaned if a["enabled"]]
+    state.connection["accounts_total"] = len(cleaned)
+    state.connection["accounts_enabled"] = len(enabled)
+    state.log_event("info", f"Accounts updated — {len(enabled)}/{len(cleaned)} enabled")
+    return cleaned
+
+
+@app.post("/api/accounts/refresh")
+async def api_refresh_accounts() -> list[dict[str, Any]]:
+    """Fetch the account list from Tradovate, preserving existing enable flags."""
+    s = config.load_settings()
+    try:
+        fetched = await client.list_accounts()
+    except TradovateError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    merged = client._merge_accounts(fetched, s)
+    config.save_settings({"accounts": merged})
+    return merged
+
+
 @app.post("/api/webhook-test")
 async def api_webhook_test(request: Request) -> dict[str, Any]:
     """Run a payload through the signal pipeline without an external POST."""

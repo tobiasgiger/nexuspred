@@ -43,6 +43,8 @@ class SimulatedClient:
         order_type: str,
         price: float | None = None,
         stop_price: float | None = None,
+        account_spec: str | None = None,
+        account_id: int | None = None,
     ) -> dict[str, Any]:
         with self._lock:
             self._next_id += 1
@@ -60,9 +62,10 @@ class SimulatedClient:
                 status = "working"
 
         result = {
-            "action": action, "symbol": symbol, "qty": qty,
-            "order_type": order_type, "price": price, "stop_price": stop_price,
-            "order_id": oid, "status": status, "simulated": True,
+            "action": action, "symbol": symbol, "account": account_spec or "SIM",
+            "qty": qty, "order_type": order_type, "price": price,
+            "stop_price": stop_price, "order_id": oid, "status": status,
+            "simulated": True,
         }
         state.log_order(result)
         return result
@@ -100,11 +103,13 @@ class SimulatedClient:
             self._working.pop(order_id, None)
         return {"ok": True, "simulated": True}
 
-    async def working_orders(self) -> list[dict[str, Any]]:
+    async def working_orders(self, account_id: int | None = None) -> list[dict[str, Any]]:
         with self._lock:
             return list(self._working.values())
 
-    async def liquidate_position(self, symbol: str) -> dict[str, Any]:
+    async def liquidate_position(
+        self, symbol: str, account_id: int | None = None
+    ) -> dict[str, Any]:
         with self._lock:
             self._positions[symbol] = {"net": 0.0, "avg": 0.0}
             self._working = {

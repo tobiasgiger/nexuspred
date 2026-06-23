@@ -39,8 +39,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "sec": "",                       # API secret (optional)
     "device_id": "",                 # optional device id
     "use_web_trader_fallback": True,  # try web-trader app ids (no API subscription)
-    "account_spec": "",              # account name, e.g. "DEMO12345"
-    "account_id": 0,                 # numeric account id (auto-filled on connect)
+    "account_spec": "",              # primary account name (legacy / display)
+    "account_id": 0,                 # primary numeric account id (legacy / display)
+
+    # Multi-account routing. Populated from /account/list on connect; each entry:
+    #   {"id": int, "name": str, "enabled": bool, "qty_multiplier": float}
+    # Every signal is sent to all enabled accounts; disabled ones are ignored.
+    "accounts": [],
 
     # Token cache / token-mode input (persisted so it survives restarts).
     "access_token": "",              # API user session token

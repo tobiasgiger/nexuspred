@@ -167,6 +167,20 @@ Token lifecycle (all modes):
   card (status, user, token expiry, last check, last renew, last error). Trigger it on
   demand with **Check now** or `GET /api/health`.
 
+## Multiple accounts
+
+One Tradovate login can hold several accounts. On **Connect** (or **Refresh from
+Tradovate**) the bridge lists them in **Settings → Accounts**, where each account has:
+
+- an **Enabled** toggle — every signal is sent to **all enabled accounts**; disabled
+  ones are ignored;
+- a **quantity multiplier** — scales the contracts for that account (e.g. `2` turns the
+  default 3-contract entry into 6, with TP/SL sized to match).
+
+The same entry/TP/SL/move_sl/close_all logic runs per account, and the **Monitor →
+Active Trades** table shows one row per account with its own SL/TP order ids. If no
+accounts are configured, the bridge falls back to the single auto-detected account.
+
 ## Symbol mapping
 
 TradingView sends continuous symbols like `MNQ1!`. The bridge maps these to a Tradovate
@@ -199,7 +213,9 @@ To cut a new release, bump `VERSION` and tag it (`vX.Y.Z`).
 | `GET/POST` | `/api/settings` | Read / update settings |
 | `GET`  | `/api/orders` `/api/signals` `/api/events` | Rolling logs |
 | `GET`  | `/api/positions` | Live Tradovate positions |
-| `POST` | `/api/connect` | Authenticate & verify account |
+| `POST` | `/api/connect` | Authenticate & verify account(s) |
+| `GET/POST` | `/api/accounts` | List / save account enable flags & multipliers |
+| `POST` | `/api/accounts/refresh` | Re-fetch accounts from Tradovate |
 | `GET`  | `/api/health` | Check connection (renews token if needed) |
 | `POST` | `/api/webhook-test` | Run a payload through the pipeline |
 | `GET`  | `/api/scenarios` | List built-in simulator scenarios |

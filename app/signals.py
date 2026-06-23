@@ -85,13 +85,18 @@ async def process(payload: dict[str, Any], *, simulate: bool = False) -> dict[st
         )
         return {"status": "skipped", "reason": "trading_disabled", "action": action}
 
+    accounts = _target_accounts(s, simulate)
+    if not accounts:
+        state.log_event("warn", f"No enabled accounts — signal '{action}' ignored")
+        return {"status": "skipped", "reason": "no_enabled_accounts", "action": action}
+
     contract = await exec_client.resolve_contract(root)
     tag = "[SIM] " if simulate else ""
 
     if action in ("buy", "sell"):
-        return await _handle_entry(payload, action, root, contract, exec_client, active_map, tag)
+        return await _handle_entry(payload, action, root, contract, exec_client, active_map, tag, accounts)
     if action == "close_all":
-        return await _handle_close_all(root, contract, exec_client, active_map, tag)
+        return await _handle_close_all(root, contract, exec_client, active_map, tag, accounts)
     if action == "move_sl":
         return await _handle_move_sl(payload, root, exec_client, active_map, tag)
     if action == "trail_active":
@@ -101,88 +106,123 @@ async def process(payload: dict[str, Any], *, simulate: bool = False) -> dict[st
     raise SignalError(f"Unknown action '{action}'")
 
 
-async def _handle_entry(payload, action, root, contract, exec_client, active_map, tag):
+def _target_accounts(s: dict[str, Any], simulate: bool) -> list[dict[str, Any]]:
+    """Accounts a signal should be routed to.
+
+    Simulation uses a single synthetic account. Live trading uses every enabled
+    account, falling back to the legacy single account if none are configured.
+    """
+    if simulate:
+        return [{"id": 0, "name": "SIM", "qty_multiplier": 1}]
+    enabled = [a for a in (s.get("accounts") or []) if a.get("enabled")]
+    if enabled:
+        return enabled
+    if s.get("account_spec") and s.get("account_id"):
+        return [{"id": s["account_id"], "name": s["account_spec"], "qty_multiplier": 1}]
+    return []
+
+
+async def _handle_entry(payload, action, root, contract, exec_client, active_map, tag, accounts):
     s = config.load_settings()
-    entry_qty = int(s.get("default_qty", 3))
-    tp_qty = int(s.get("tp_qty", 1))
+    base_qty = int(s.get("default_qty", 3))
+    base_tp_qty = int(s.get("tp_qty", 1))
+    entry_side = "Buy" if action == "buy" else "Sell"
     exit_side = _opposite(action)
 
     orders: list[dict[str, Any]] = []
+    acct_state: dict[Any, dict[str, Any]] = {}
+    summary: list[dict[str, Any]] = []
 
-    # 1) Market entry order.
-    entry = await exec_client.place_order(
-        symbol=contract,
-        action="Buy" if action == "buy" else "Sell",
-        qty=entry_qty,
-        order_type=s.get("entry_order_type", "Market"),
-        price=payload.get("entry"),
-    )
-    orders.append(entry)
+    for acc in accounts:
+        spec, acc_id = acc["name"], acc["id"]
+        mult = acc.get("qty_multiplier", 1) or 1
+        entry_qty = max(1, int(base_qty * mult))
+        tp_qty = max(1, int(base_tp_qty * mult))
 
-    # 2) Take-profit limit orders — one contract each for tp1/tp2/tp3 present.
-    tp_order_ids: list[int] = []
-    for key in ("tp1", "tp2", "tp3"):
-        if payload.get(key) is None:
-            continue
-        tp = await exec_client.place_order(
-            symbol=contract,
-            action=exit_side,
-            qty=tp_qty,
-            order_type=s.get("tp_order_type", "Limit"),
-            price=float(payload[key]),
+        # 1) Market entry.
+        entry = await exec_client.place_order(
+            symbol=contract, action=entry_side, qty=entry_qty,
+            order_type=s.get("entry_order_type", "Market"),
+            price=payload.get("entry"), account_spec=spec, account_id=acc_id,
         )
-        orders.append(tp)
-        if tp.get("order_id"):
-            tp_order_ids.append(tp["order_id"])
+        orders.append(entry)
 
-    # 3) Protective stop-loss covering the full position.
-    sl_order_id = None
-    if payload.get("sl") is not None:
-        sl = await exec_client.place_order(
-            symbol=contract,
-            action=exit_side,
-            qty=entry_qty,
-            order_type=s.get("sl_order_type", "Stop"),
-            stop_price=float(payload["sl"]),
-        )
-        orders.append(sl)
-        sl_order_id = sl.get("order_id")
+        # 2) Take-profit limit orders for each tp present.
+        tp_ids: list[int] = []
+        for key in ("tp1", "tp2", "tp3"):
+            if payload.get(key) is None:
+                continue
+            tp = await exec_client.place_order(
+                symbol=contract, action=exit_side, qty=tp_qty,
+                order_type=s.get("tp_order_type", "Limit"),
+                price=float(payload[key]), account_spec=spec, account_id=acc_id,
+            )
+            orders.append(tp)
+            if tp.get("order_id"):
+                tp_ids.append(tp["order_id"])
+
+        # 3) Protective stop covering the full position.
+        sl_id = None
+        if payload.get("sl") is not None:
+            sl = await exec_client.place_order(
+                symbol=contract, action=exit_side, qty=entry_qty,
+                order_type=s.get("sl_order_type", "Stop"),
+                stop_price=float(payload["sl"]), account_spec=spec, account_id=acc_id,
+            )
+            orders.append(sl)
+            sl_id = sl.get("order_id")
+
+        acct_state[acc_id] = {
+            "name": spec, "qty": entry_qty, "sl_order_id": sl_id, "tp_order_ids": tp_ids,
+        }
+        summary.append({"account": spec, "qty": entry_qty})
 
     with _lock:
         active_map[root] = {
-            "contract": contract,
-            "side": action,
-            "qty": entry_qty,
-            "sl_order_id": sl_order_id,
-            "tp_order_ids": tp_order_ids,
+            "contract": contract, "side": action, "qty": base_qty,
+            "accounts": acct_state,
         }
 
-    state.log_event("info", f"{tag}Entry {action.upper()} {entry_qty} {contract} placed")
+    names = ", ".join(a["name"] for a in accounts)
+    state.log_event(
+        "info", f"{tag}Entry {action.upper()} {contract} placed on {len(accounts)} "
+        f"account(s): {names}"
+    )
     return {"status": "ok", "action": action, "contract": contract,
-            "orders": orders, "simulated": tag != ""}
+            "accounts": summary, "orders": orders, "simulated": tag != ""}
 
 
-async def _handle_close_all(root, contract, exec_client, active_map, tag):
+async def _handle_close_all(root, contract, exec_client, active_map, tag, accounts):
+    # Close in every currently-enabled account plus any still-tracked accounts.
+    with _lock:
+        active = active_map.get(root)
+    targets: dict[Any, str] = {a["id"]: a["name"] for a in accounts}
+    if active:
+        for acc_id, info in active.get("accounts", {}).items():
+            targets.setdefault(acc_id, info.get("name", str(acc_id)))
+
     cancelled = 0
-    try:
-        for order in await exec_client.working_orders():
-            try:
-                await exec_client.cancel_order(order["id"])
-                cancelled += 1
-            except TradovateError:
-                pass
-    except TradovateError as exc:
-        state.log_event("warn", f"{tag}Could not list working orders: {exc}")
+    for acc_id, name in targets.items():
+        try:
+            for order in await exec_client.working_orders(account_id=acc_id):
+                try:
+                    await exec_client.cancel_order(order["id"])
+                    cancelled += 1
+                except TradovateError:
+                    pass
+        except TradovateError as exc:
+            state.log_event("warn", f"{tag}Could not list working orders for {name}: {exc}")
+        await exec_client.liquidate_position(contract, account_id=acc_id)
 
-    await exec_client.liquidate_position(contract)
     with _lock:
         active_map.pop(root, None)
 
     state.log_event(
-        "info", f"{tag}Closed all for {contract} ({cancelled} working orders cancelled)"
+        "info", f"{tag}Closed all for {contract} on {len(targets)} account(s) "
+        f"({cancelled} working orders cancelled)"
     )
-    return {"status": "ok", "action": "close_all", "cancelled": cancelled,
-            "simulated": tag != ""}
+    return {"status": "ok", "action": "close_all", "accounts": len(targets),
+            "cancelled": cancelled, "simulated": tag != ""}
 
 
 async def _handle_move_sl(payload, root, exec_client, active_map, tag):
@@ -192,14 +232,21 @@ async def _handle_move_sl(payload, root, exec_client, active_map, tag):
 
     with _lock:
         active = active_map.get(root)
-    if not active or not active.get("sl_order_id"):
+    if not active or not active.get("accounts"):
         state.log_event("warn", f"{tag}No tracked stop-loss for {root} to move")
         return {"status": "skipped", "reason": "no_active_stop", "action": "move_sl"}
 
-    await exec_client.modify_order(active["sl_order_id"], stop_price=float(new_sl))
-    state.log_event("info", f"{tag}Stop-loss for {root} moved to {new_sl}")
+    moved = 0
+    for info in active["accounts"].values():
+        if info.get("sl_order_id"):
+            await exec_client.modify_order(info["sl_order_id"], stop_price=float(new_sl))
+            moved += 1
+
+    state.log_event(
+        "info", f"{tag}Stop-loss for {root} moved to {new_sl} on {moved} account(s)"
+    )
     return {"status": "ok", "action": "move_sl", "new_sl": float(new_sl),
-            "simulated": tag != ""}
+            "accounts": moved, "simulated": tag != ""}
 
 
 def active_trades(simulate: bool = False) -> dict[str, Any]:

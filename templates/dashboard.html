@@ -87,9 +87,9 @@
         <div class="card-head"><h2>Active Trades (tracked by bridge)</h2></div>
         <table class="data-table" id="activeTable">
           <thead>
-            <tr><th>Symbol</th><th>Contract</th><th>Side</th><th>Qty</th><th>SL Order</th><th>TP Orders</th></tr>
+            <tr><th>Symbol</th><th>Contract</th><th>Side</th><th>Account</th><th>Qty</th><th>SL Order</th><th>TP Orders</th></tr>
           </thead>
-          <tbody><tr><td colspan="6" class="empty">None</td></tr></tbody>
+          <tbody><tr><td colspan="7" class="empty">None</td></tr></tbody>
         </table>
       </div>
 
@@ -212,6 +212,26 @@
           <span class="save-hint" id="saveHint"></span>
         </div>
       </form>
+
+      <div class="card" id="accountsCard">
+        <div class="card-head">
+          <h2>Accounts</h2>
+          <button class="btn btn-ghost" id="refreshAccountsBtn">Refresh from Tradovate</button>
+        </div>
+        <p class="hint">Every signal is sent to <strong>all enabled</strong> accounts;
+          disabled ones are ignored. The quantity multiplier scales the contracts for
+          that account (1 = use the configured default).</p>
+        <table class="data-table" id="accountsTable">
+          <thead>
+            <tr><th>Enabled</th><th>Account</th><th>ID</th><th>Qty ×</th></tr>
+          </thead>
+          <tbody><tr><td colspan="4" class="empty">No accounts — Connect or Refresh from Tradovate</td></tr></tbody>
+        </table>
+        <div class="form-actions">
+          <button class="btn btn-primary" id="saveAccountsBtn">Save Accounts</button>
+          <span class="save-hint" id="accountsHint"></span>
+        </div>
+      </div>
     </section>
 
     <!-- ============================ LOGS ============================ -->

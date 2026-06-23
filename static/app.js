@@ -82,18 +82,22 @@ function fmtDateTime(iso) {
 
 function renderActive(trades) {
   const tbody = $("#activeTable tbody");
-  const keys = Object.keys(trades);
-  if (!keys.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="empty">None</td></tr>';
-    return;
+  const rows = [];
+  for (const [sym, t] of Object.entries(trades)) {
+    const accts = t.accounts || {};
+    const ids = Object.keys(accts);
+    if (!ids.length) continue;
+    for (const id of ids) {
+      const a = accts[id];
+      rows.push(`<tr><td>${sym}</td><td>${t.contract}</td>
+        <td><span class="tag ${t.side}">${(t.side || "").toUpperCase()}</span></td>
+        <td>${a.name || id}</td><td>${a.qty ?? "—"}</td>
+        <td>${a.sl_order_id || "—"}</td>
+        <td>${(a.tp_order_ids || []).join(", ") || "—"}</td></tr>`);
+    }
   }
-  tbody.innerHTML = keys.map((k) => {
-    const t = trades[k];
-    return `<tr><td>${k}</td><td>${t.contract}</td>
-      <td><span class="tag ${t.side}">${t.side.toUpperCase()}</span></td>
-      <td>${t.qty}</td><td>${t.sl_order_id || "—"}</td>
-      <td>${(t.tp_order_ids || []).join(", ") || "—"}</td></tr>`;
-  }).join("");
+  tbody.innerHTML = rows.length ? rows.join("")
+    : '<tr><td colspan="7" class="empty">None</td></tr>';
 }
 
 /* --------------------------------------------------------------- orders */
@@ -239,6 +243,7 @@ $("#connectBtn").addEventListener("click", async () => {
     const r = await api("/api/connect", { method: "POST" });
     toast("Connected: " + (r.account_spec || "ok"), "success");
     loadSettings();
+    loadAccounts();
     refreshStatus();
   } catch (e) { toast("Connect failed: " + e.message, "error"); }
 });
@@ -341,6 +346,53 @@ $("#sendTestBtn").addEventListener("click", async () => {
 
 $("#refreshPositions").addEventListener("click", refreshPositions);
 $("#refreshLogs").addEventListener("click", refreshLogs);
+
+/* --------------------------------------------------------------- accounts */
+async function loadAccounts() {
+  try { renderAccounts(await api("/api/accounts")); } catch (e) { /* ignore */ }
+}
+
+function renderAccounts(accounts) {
+  const tbody = $("#accountsTable tbody");
+  if (!accounts || !accounts.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">No accounts — Connect or Refresh from Tradovate</td></tr>';
+    return;
+  }
+  tbody.innerHTML = accounts.map((a) => `
+    <tr data-id="${a.id}" data-name="${escapeHtml(a.name)}">
+      <td><input type="checkbox" class="switch acc-enabled" ${a.enabled ? "checked" : ""} /></td>
+      <td>${escapeHtml(a.name)}</td>
+      <td>${a.id}</td>
+      <td><input type="number" class="acc-mult" min="0.1" step="0.1" value="${a.qty_multiplier ?? 1}" style="width:80px" /></td>
+    </tr>`).join("");
+}
+
+function collectAccounts() {
+  return [...$$("#accountsTable tbody tr[data-id]")].map((tr) => ({
+    id: Number(tr.dataset.id),
+    name: tr.dataset.name,
+    enabled: tr.querySelector(".acc-enabled").checked,
+    qty_multiplier: Number(tr.querySelector(".acc-mult").value) || 1,
+  }));
+}
+
+$("#refreshAccountsBtn").addEventListener("click", async () => {
+  toast("Fetching accounts…");
+  try {
+    renderAccounts(await api("/api/accounts/refresh", { method: "POST" }));
+    toast("Accounts refreshed", "success");
+  } catch (e) { toast(e.message, "error"); }
+});
+
+$("#saveAccountsBtn").addEventListener("click", async () => {
+  try {
+    await api("/api/accounts", { method: "POST", body: JSON.stringify(collectAccounts()) });
+    $("#accountsHint").textContent = "Saved ✓";
+    setTimeout(() => ($("#accountsHint").textContent = ""), 2500);
+    toast("Accounts saved", "success");
+    refreshStatus();
+  } catch (e) { toast(e.message, "error"); }
+});
 
 $("#healthCheckBtn").addEventListener("click", async () => {
   toast("Checking connection…");
@@ -492,6 +544,7 @@ async function boot() {
   refreshOrders();
   refreshLogs();
   checkUpdate();
+  loadAccounts();
   loadScenarios();
   $("#testPayload").value = JSON.stringify(PRESETS.entry, null, 2);
 

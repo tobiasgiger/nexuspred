@@ -345,12 +345,15 @@ class TradovateClient:
         s = config.load_settings()
         try:
             await self._get_token()
-            accounts = await self._request("GET", "/account/list")
+            accounts = await self.list_accounts()
+            merged = self._merge_accounts(accounts, s)
             account = self._select_account(accounts, s.get("account_spec"))
+            updates: dict[str, Any] = {"accounts": merged}
             if account:
-                config.save_settings(
-                    {"account_spec": account["name"], "account_id": account["id"]}
-                )
+                updates["account_spec"] = account["name"]
+                updates["account_id"] = account["id"]
+            config.save_settings(updates)
+            enabled = [a for a in merged if a["enabled"]]
             state.connection.update(
                 connected=True,
                 environment=s.get("environment", "demo"),
@@ -358,7 +361,12 @@ class TradovateClient:
                 account_id=account["id"] if account else 0,
                 last_error="",
             )
-            state.log_event("info", "Connected to Tradovate")
+            state.connection["accounts_total"] = len(merged)
+            state.connection["accounts_enabled"] = len(enabled)
+            state.log_event(
+                "info",
+                f"Connected to Tradovate — {len(enabled)}/{len(merged)} account(s) enabled",
+            )
             return state.connection
         except Exception as exc:  # noqa: BLE001 - surface any failure to dashboard
             state.connection.update(connected=False, last_error=str(exc))
@@ -415,6 +423,38 @@ class TradovateClient:
                     return acc
         return accounts[0]
 
+    @staticmethod
+    def _merge_accounts(
+        fetched: list[dict[str, Any]], s: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """Merge accounts from /account/list with the stored enable/multiplier flags.
+
+        Existing choices are preserved. On first discovery, the legacy primary
+        account (or the first account, if none) is enabled so behaviour matches the
+        previous single-account default.
+        """
+        existing = {a.get("id"): a for a in (s.get("accounts") or [])}
+        legacy_id = s.get("account_id")
+        merged: list[dict[str, Any]] = []
+        for i, acc in enumerate(fetched):
+            prev = existing.get(acc["id"])
+            if prev is not None:
+                enabled = bool(prev.get("enabled"))
+                mult = prev.get("qty_multiplier", 1)
+            elif legacy_id:
+                enabled = acc["id"] == legacy_id
+                mult = 1
+            else:
+                enabled = i == 0
+                mult = 1
+            merged.append({
+                "id": acc["id"],
+                "name": acc["name"],
+                "enabled": enabled,
+                "qty_multiplier": mult,
+            })
+        return merged
+
     # ------------------------------------------------------------- contracts
     async def resolve_contract(self, root_or_symbol: str) -> str:
         """Return a tradable Tradovate contract symbol for a root like ``MNQ``.
@@ -443,6 +483,9 @@ class TradovateClient:
         candidates.sort(key=lambda c: c.get("expirationDate") or c.get("name", ""))
         return candidates[0]["name"]
 
+    async def list_accounts(self) -> list[dict[str, Any]]:
+        return await self._request("GET", "/account/list") or []
+
     # ---------------------------------------------------------------- orders
     async def place_order(
         self,
@@ -453,11 +496,15 @@ class TradovateClient:
         order_type: str,
         price: float | None = None,
         stop_price: float | None = None,
+        account_spec: str | None = None,
+        account_id: int | None = None,
     ) -> dict[str, Any]:
         s = config.load_settings()
+        spec = account_spec or s.get("account_spec")
+        acct_id = account_id or s.get("account_id")
         body: dict[str, Any] = {
-            "accountSpec": s["account_spec"],
-            "accountId": s["account_id"],
+            "accountSpec": spec,
+            "accountId": acct_id,
             "action": action,            # "Buy" or "Sell"
             "symbol": symbol,
             "orderQty": qty,
@@ -473,6 +520,7 @@ class TradovateClient:
         result = {
             "action": action,
             "symbol": symbol,
+            "account": spec,
             "qty": qty,
             "order_type": order_type,
             "price": price,
@@ -500,21 +548,27 @@ class TradovateClient:
             "POST", "/order/cancelorder", json={"orderId": order_id}
         )
 
-    async def working_orders(self) -> list[dict[str, Any]]:
+    async def working_orders(self, account_id: int | None = None) -> list[dict[str, Any]]:
         orders = await self._request("GET", "/order/list") or []
         active = {"Working", "Pending", "PendingNew", "Suspended"}
-        return [o for o in orders if o.get("ordStatus") in active]
+        result = [o for o in orders if o.get("ordStatus") in active]
+        if account_id is not None:
+            result = [o for o in result if o.get("accountId") == account_id]
+        return result
 
-    async def liquidate_position(self, symbol: str) -> dict[str, Any]:
-        """Flatten the position for ``symbol`` with a market order."""
+    async def liquidate_position(
+        self, symbol: str, account_id: int | None = None
+    ) -> dict[str, Any]:
+        """Flatten the position for ``symbol`` in the given account."""
         s = config.load_settings()
+        acct_id = account_id or s.get("account_id")
         contract = await self._request(
             "GET", "/contract/find", params={"name": symbol}
         )
         if not contract or not contract.get("id"):
             raise TradovateError(f"Cannot resolve contract id for {symbol}")
         body = {
-            "accountId": s["account_id"],
+            "accountId": acct_id,
             "contractId": contract["id"],
             "admin": False,
         }
@@ -523,6 +577,7 @@ class TradovateClient:
             {
                 "action": "Liquidate",
                 "symbol": symbol,
+                "account": acct_id,
                 "qty": 0,
                 "order_type": "Market",
                 "status": "submitted",
