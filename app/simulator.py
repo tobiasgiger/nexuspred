@@ -138,6 +138,28 @@ sim_client = SimulatedClient()
 # the very same pipeline a real TradingView webhook would hit.
 SCENARIOS: list[dict[str, Any]] = [
     {
+        "id": "runner_exit_mnq",
+        "name": "Runner trailed out — SELL MNQ",
+        "description": "Short entry that moves the stop to break-even, trails, and is "
+                       "finally flattened by a runner_exit (close_all) past TP3.",
+        "steps": [
+            {"label": "Entry SELL (market 3 + TP/SL brackets)",
+             "signal": {"event": "entry", "action": "sell", "symbol": "MNQ1!",
+                        "entry": 30267, "sl": 30285.07,
+                        "tp1": 30261.58, "tp2": 30255.19, "tp3": 30247.04}},
+            {"label": "TP1 hit → move stop to break-even",
+             "signal": {"event": "tp1_hit", "action": "move_sl", "symbol": "MNQ1!",
+                        "new_sl": 30267.0}},
+            {"label": "TP2 hit → trailing active",
+             "signal": {"event": "tp2_hit", "action": "trail_active", "symbol": "MNQ1!",
+                        "trail_ema": "ema9", "trail_buffer": 0.15}},
+            {"label": "Runner exit → close everything in profit",
+             "signal": {"event": "runner_exit", "action": "close_all", "symbol": "MNQ1!",
+                        "exit_price": 29761.94756, "realized_R": 1.7,
+                        "message": "Runner trailed out past TP3 — closed in profit"}},
+        ],
+    },
+    {
         "id": "win_sell_mnq",
         "name": "Winning trade — SELL MNQ",
         "description": "Short entry that runs through all three take-profits and "

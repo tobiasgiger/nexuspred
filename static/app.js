@@ -292,6 +292,11 @@ const PRESETS = {
     event: "tp3_hit", action: "close_all", symbol: "MNQ1!",
     exit_price: 30241.70425, pnl: 250.70285, message: "TP3 full kill — close all",
   },
+  runner: {
+    event: "runner_exit", action: "close_all", symbol: "MNQ1!",
+    exit_price: 29761.94756, realized_R: 1.7,
+    message: "Runner trailed out past TP3 — closed in profit",
+  },
 };
 
 $$(".preset").forEach((btn) => {

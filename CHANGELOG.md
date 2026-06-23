@@ -4,6 +4,10 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 1.3.1
+- `runner_exit` signal (action `close_all`) — already handled by the action-based
+  router; added a Test & Webhook preset and a Simulator scenario for it.
+
 ## 1.3.0
 - **Render.com deployment** for TradingView's port-80/443 requirement: added
   `render.yaml` blueprint (web service + persistent disk), `NEXUSPRED_DATA_DIR`
