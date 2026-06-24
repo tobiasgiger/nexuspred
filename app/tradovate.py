@@ -701,7 +701,6 @@ class TradovateClient:
                 "account_id": p.get("accountId"),
                 "netPos": net,
                 "netPrice": p.get("netPrice"),
-                "openPL": p.get("openPL") or 0,
             })
         return out
 
