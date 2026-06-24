@@ -4,6 +4,14 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 1.4.4
+- **Tokens survive redeploys**: the renewed token persisted on disk now wins over a
+  stale `TRADOVATE_ACCESS_TOKEN` env var (the env token is only a seed and expires).
+  The loader picks whichever token has the later expiry.
+- **Credentials via env vars**: `TRADOVATE_USERNAME` / `TRADOVATE_PASSWORD` (and
+  optional `TRADOVATE_CID/SEC/APP_ID/DEVICE_ID/ENVIRONMENT`) — set once on the host
+  and the bridge logs in fresh after every deploy, no manual token entry.
+
 ## 1.4.3
 - **Fix `move_sl` 400 error**: `/order/modifyorder` now sends the required
   `orderQty` and `orderType` (it was failing with “missing required field orderQty”).

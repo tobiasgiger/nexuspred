@@ -91,6 +91,31 @@ def _decode_jwt_exp(token: str) -> datetime | None:
     return None
 
 
+# Auth fields that can be supplied via environment variables (handy on managed
+# hosts like Render, where they persist across deploys). Env overrides the stored
+# value. Credentials (username/password) never expire — unlike an access token —
+# so they're the durable way to stay logged in across redeploys.
+_ENV_FIELDS = {
+    "username": "TRADOVATE_USERNAME",
+    "password": "TRADOVATE_PASSWORD",
+    "cid": "TRADOVATE_CID",
+    "sec": "TRADOVATE_SEC",
+    "app_id": "TRADOVATE_APP_ID",
+    "device_id": "TRADOVATE_DEVICE_ID",
+    "environment": "TRADOVATE_ENVIRONMENT",
+}
+
+
+def _auth_settings() -> dict[str, Any]:
+    """Stored settings overlaid with any auth env vars (env wins)."""
+    s = dict(config.load_settings())
+    for key, env in _ENV_FIELDS.items():
+        val = os.getenv(env)
+        if val:
+            s[key] = val
+    return s
+
+
 class TradovateClient:
     def __init__(self) -> None:
         self._token: str | None = None          # API user session token
@@ -104,8 +129,8 @@ class TradovateClient:
     # ------------------------------------------------------------------ helpers
     @staticmethod
     def _base_url() -> str:
-        s = config.load_settings()
-        return LIVE_BASE if s.get("environment") == "live" else DEMO_BASE
+        env = os.getenv("TRADOVATE_ENVIRONMENT") or config.load_settings().get("environment")
+        return LIVE_BASE if env == "live" else DEMO_BASE
 
     async def _request(
         self, method: str, path: str, *, auth: bool = True, **kwargs: Any
@@ -174,41 +199,43 @@ class TradovateClient:
         self._auth_fails = 0
 
     def _load_persisted(self) -> None:
-        """Hydrate tokens once, mirroring Bridge-Bot-TV's startup behaviour.
+        """Hydrate tokens once from the env vars and/or stored settings.
 
-        Priority: the ``TRADOVATE_ACCESS_TOKEN`` / ``TRADOVATE_CHECK_TOKEN``
-        environment variables, then the values stored in settings. Expiry is read
-        from the JWT ``exp`` claim (falling back to ``now + 75 min``).
+        Both the ``TRADOVATE_ACCESS_TOKEN`` env var and the token persisted on disk
+        (the result of earlier renewals) are considered, and the one with the
+        **later expiry wins**. This is the key to surviving a redeploy: a static
+        env token goes stale, so the freshly-renewed token on the persistent disk
+        must take precedence over it.
         """
         if self._loaded:
             return
         s = config.load_settings()
+        very_old = datetime.min.replace(tzinfo=timezone.utc)
 
+        candidates: list[tuple[str, str | None, datetime]] = []
         env_access = os.getenv("TRADOVATE_ACCESS_TOKEN", "").strip()
-        env_check = os.getenv("TRADOVATE_CHECK_TOKEN", "").strip()
+        if env_access:
+            candidates.append((
+                env_access, os.getenv("TRADOVATE_CHECK_TOKEN", "").strip() or None,
+                _decode_jwt_exp(env_access) or very_old,
+            ))
+        stored = s.get("access_token")
+        if stored:
+            exp = _decode_jwt_exp(stored)
+            if not exp and s.get("token_expires"):
+                try:
+                    exp = datetime.fromisoformat(s["token_expires"])
+                except ValueError:
+                    exp = None
+            candidates.append((stored, s.get("md_token") or None, exp or very_old))
 
-        access = env_access or self._token or s.get("access_token") or None
-        check = env_check or self._md_token or s.get("md_token") or None
-        self._token = access
-        self._md_token = check
-
-        if access and not self._token_expires:
-            # Env-provided tokens: derive expiry from the JWT (Bridge-Bot parity).
-            if env_access:
-                self._token_expires = _decode_jwt_exp(access) or (
-                    datetime.now(timezone.utc) + timedelta(minutes=75)
-                )
-            else:
-                exp = s.get("token_expires")
-                if exp:
-                    try:
-                        self._token_expires = datetime.fromisoformat(exp)
-                    except ValueError:
-                        self._token_expires = _decode_jwt_exp(access)
-                else:
-                    self._token_expires = _decode_jwt_exp(access)
-        if self._token_expires:
-            state.connection["token_expires"] = self._token_expires.isoformat()
+        if candidates:
+            token, check, exp = max(candidates, key=lambda c: c[2])
+            self._token = token
+            self._md_token = check
+            self._token_expires = None if exp == very_old else exp
+            if self._token_expires:
+                state.connection["token_expires"] = self._token_expires.isoformat()
         self._loaded = True
 
     async def _get_token(self) -> str:
@@ -339,11 +366,11 @@ class TradovateClient:
 
     async def _authenticate(self) -> None:
         """Full credentials login (the fallback when no/expired token is available)."""
-        s = config.load_settings()
+        s = _auth_settings()
         if not s.get("username") or not s.get("password"):
             raise TradovateError(
                 "No usable token and no username/password — set TRADOVATE_ACCESS_TOKEN "
-                "or credentials"
+                "or credentials (TRADOVATE_USERNAME / TRADOVATE_PASSWORD)"
             )
 
         last_err = "no app configuration succeeded"
@@ -371,7 +398,7 @@ class TradovateClient:
 
     async def connect(self) -> dict[str, Any]:
         """Authenticate and resolve the trading account; update status snapshot."""
-        s = config.load_settings()
+        s = _auth_settings()
         try:
             await self._get_token()
             accounts = await self.list_accounts()
@@ -408,7 +435,10 @@ class TradovateClient:
             self._token or s.get("access_token")
             or os.getenv("TRADOVATE_ACCESS_TOKEN")
         )
-        has_creds = bool(s.get("username") and s.get("password"))
+        has_creds = bool(
+            (s.get("username") or os.getenv("TRADOVATE_USERNAME"))
+            and (s.get("password") or os.getenv("TRADOVATE_PASSWORD"))
+        )
         return has_token or has_creds
 
     async def health_check(self) -> dict[str, Any]:
@@ -418,7 +448,7 @@ class TradovateClient:
         Safe to call on a timer — never raises; failures are recorded on the
         connection state so the dashboard can show them.
         """
-        s = config.load_settings()
+        s = _auth_settings()
         self._load_persisted()
         if not self._can_authenticate(s):
             state.connection.update(
