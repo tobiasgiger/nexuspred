@@ -86,16 +86,24 @@ class SimulatedClient:
             pos["avg"] = 0.0
 
     async def modify_order(
-        self, order_id: int, *, price: float | None = None,
-        stop_price: float | None = None,
+        self, order_id: int, *, qty: int | None = None, order_type: str | None = None,
+        price: float | None = None, stop_price: float | None = None,
     ) -> dict[str, Any]:
         with self._lock:
             o = self._working.get(order_id)
             if o:
+                if qty is not None:
+                    o["qty"] = qty
                 if price is not None:
                     o["price"] = price
                 if stop_price is not None:
                     o["stop_price"] = stop_price
+        state.log_order({
+            "action": "Modify", "symbol": (o or {}).get("symbol", ""), "qty": qty,
+            "order_type": order_type or (o or {}).get("order_type"),
+            "price": price, "stop_price": stop_price, "order_id": order_id,
+            "status": "modified", "simulated": True,
+        })
         return {"ok": True, "simulated": True}
 
     async def cancel_order(self, order_id: int) -> dict[str, Any]:

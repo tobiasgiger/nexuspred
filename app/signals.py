@@ -42,6 +42,13 @@ _sim_active: dict[str, dict[str, Any]] = {}
 
 
 _CONTRACT_RE = re.compile(r"^([A-Z]{1,4})([FGHJKMNQUVXZ])(\d{1,2})$")
+_TP_RE = re.compile(r"tp(\d)", re.IGNORECASE)
+
+
+def _tp_index_from_event(payload: dict[str, Any]) -> int | None:
+    """How many take-profits have filled, parsed from the event (e.g. ``tp2_hit`` → 2)."""
+    m = _TP_RE.search(str(payload.get("event", "")))
+    return int(m.group(1)) if m else None
 
 
 def _base_root(name: str) -> str:
@@ -117,8 +124,7 @@ async def process(payload: dict[str, Any], *, simulate: bool = False) -> dict[st
     if action == "move_sl":
         return await _handle_move_sl(payload, root, exec_client, active_map, tag)
     if action == "trail_active":
-        state.log_event("info", f"{tag}Trailing active for {root} (handled by strategy)")
-        return {"status": "ok", "action": action, "note": "acknowledged", "simulated": simulate}
+        return await _handle_trail_active(payload, root, exec_client, active_map, tag)
 
     raise SignalError(f"Unknown action '{action}'")
 
@@ -190,7 +196,14 @@ async def _handle_entry(payload, action, root, contract, exec_client, active_map
             sl_id = sl.get("order_id")
 
         acct_state[acc_id] = {
-            "name": spec, "qty": entry_qty, "sl_order_id": sl_id, "tp_order_ids": tp_ids,
+            "name": spec,
+            "entry_qty": entry_qty,          # original position size
+            "tp_qty": tp_qty,                # contracts per TP
+            "qty": entry_qty,                # current remaining (SL size)
+            "sl_order_id": sl_id,
+            "sl_type": s.get("sl_order_type", "Stop"),
+            "sl_stop": float(payload["sl"]) if payload.get("sl") is not None else None,
+            "tp_order_ids": tp_ids,
         }
         summary.append({"account": spec, "qty": entry_qty})
 
@@ -242,6 +255,13 @@ async def _handle_close_all(root, contract, exec_client, active_map, tag, accoun
             "cancelled": cancelled, "simulated": tag != ""}
 
 
+def _remaining_qty(info: dict[str, Any], tp_index: int | None) -> int:
+    """Position left after ``tp_index`` take-profits filled (1 contract each by default)."""
+    if tp_index is None:
+        return int(info.get("qty") or info.get("entry_qty", 1))
+    return max(1, int(info["entry_qty"]) - tp_index * int(info["tp_qty"]))
+
+
 async def _handle_move_sl(payload, root, exec_client, active_map, tag):
     new_sl = payload.get("new_sl", payload.get("sl"))
     if new_sl is None:
@@ -253,17 +273,56 @@ async def _handle_move_sl(payload, root, exec_client, active_map, tag):
         state.log_event("warn", f"{tag}No tracked stop-loss for {root} to move")
         return {"status": "skipped", "reason": "no_active_stop", "action": "move_sl"}
 
+    tp_index = _tp_index_from_event(payload)   # e.g. tp1_hit -> 1 contract gone -> qty 2
     moved = 0
     for info in active["accounts"].values():
-        if info.get("sl_order_id"):
-            await exec_client.modify_order(info["sl_order_id"], stop_price=float(new_sl))
-            moved += 1
+        if not info.get("sl_order_id"):
+            continue
+        qty = _remaining_qty(info, tp_index)
+        info["qty"] = qty
+        info["sl_stop"] = float(new_sl)
+        await exec_client.modify_order(
+            info["sl_order_id"], qty=qty,
+            order_type=info.get("sl_type", "Stop"), stop_price=float(new_sl),
+        )
+        moved += 1
 
     state.log_event(
-        "info", f"{tag}Stop-loss for {root} moved to {new_sl} on {moved} account(s)"
+        "info", f"{tag}Stop-loss for {root} moved to {new_sl} (qty→remaining) "
+        f"on {moved} account(s)"
     )
     return {"status": "ok", "action": "move_sl", "new_sl": float(new_sl),
             "accounts": moved, "simulated": tag != ""}
+
+
+async def _handle_trail_active(payload, root, exec_client, active_map, tag):
+    """TP2 (trail_active): resize the stop to the remaining position; price unchanged."""
+    with _lock:
+        active = active_map.get(root)
+    tp_index = _tp_index_from_event(payload)
+    if not active or not active.get("accounts") or tp_index is None:
+        state.log_event("info", f"{tag}Trailing active for {root} (handled by strategy)")
+        return {"status": "ok", "action": "trail_active", "note": "acknowledged",
+                "simulated": tag != ""}
+
+    resized = 0
+    for info in active["accounts"].values():
+        if not info.get("sl_order_id"):
+            continue
+        qty = _remaining_qty(info, tp_index)
+        info["qty"] = qty
+        await exec_client.modify_order(
+            info["sl_order_id"], qty=qty,
+            order_type=info.get("sl_type", "Stop"), stop_price=info.get("sl_stop"),
+        )
+        resized += 1
+
+    state.log_event(
+        "info", f"{tag}Trailing active for {root} — stop-loss qty→remaining "
+        f"on {resized} account(s)"
+    )
+    return {"status": "ok", "action": "trail_active", "accounts": resized,
+            "simulated": tag != ""}
 
 
 def active_trades(simulate: bool = False) -> dict[str, Any]:

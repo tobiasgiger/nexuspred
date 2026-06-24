@@ -4,6 +4,14 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 1.4.3
+- **Fix `move_sl` 400 error**: `/order/modifyorder` now sends the required
+  `orderQty` and `orderType` (it was failing with “missing required field orderQty”).
+- **Stop-loss size now tracks the remaining position**: after TP1 the SL shrinks to
+  2 contracts, after TP2 to 1 (scaled by each account's multiplier). The remaining
+  qty is derived from the signal's event (`tp1_hit`/`tp2_hit`); `trail_active` (TP2)
+  also resizes the stop.
+
 ## 1.4.2
 - **Proactive token refresh** (adopted from Bridge-Bot-TV): the background loop now
   force-renews the token *before* it expires — at least 5 min ahead and at least

@@ -580,15 +580,25 @@ class TradovateClient:
         return result
 
     async def modify_order(
-        self, order_id: int, *, price: float | None = None,
-        stop_price: float | None = None,
+        self, order_id: int, *, qty: int, order_type: str,
+        price: float | None = None, stop_price: float | None = None,
     ) -> dict[str, Any]:
-        body: dict[str, Any] = {"orderId": order_id}
-        if price is not None:
+        # Tradovate's /order/modifyorder requires orderQty and orderType (not just
+        # the changed field), so we always send the full order shape.
+        body: dict[str, Any] = {
+            "orderId": order_id, "orderQty": qty, "orderType": order_type,
+        }
+        if order_type in ("Limit", "StopLimit") and price is not None:
             body["price"] = price
-        if stop_price is not None:
+        if order_type in ("Stop", "StopLimit") and stop_price is not None:
             body["stopPrice"] = stop_price
-        return await self._request("POST", "/order/modifyorder", json=body)
+        data = await self._request("POST", "/order/modifyorder", json=body)
+        state.log_order({
+            "action": "Modify", "symbol": "", "qty": qty, "order_type": order_type,
+            "price": body.get("price"), "stop_price": body.get("stopPrice"),
+            "order_id": order_id, "status": "modified", "raw": data,
+        })
+        return data
 
     async def cancel_order(self, order_id: int) -> dict[str, Any]:
         return await self._request(
