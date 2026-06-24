@@ -200,6 +200,7 @@ async def _handle_entry(payload, action, root, contract, exec_client, active_map
             "entry_qty": entry_qty,          # original position size
             "tp_qty": tp_qty,                # contracts per TP
             "qty": entry_qty,                # current remaining (SL size)
+            "entry_price": payload.get("entry"),   # for break-even moves
             "sl_order_id": sl_id,
             "sl_type": s.get("sl_order_type", "Stop"),
             "sl_stop": float(payload["sl"]) if payload.get("sl") is not None else None,
@@ -262,10 +263,15 @@ def _remaining_qty(info: dict[str, Any], tp_index: int | None) -> int:
     return max(1, int(info["entry_qty"]) - tp_index * int(info["tp_qty"]))
 
 
+def _is_breakeven_move(payload: dict[str, Any], tp_index: int | None) -> bool:
+    """A move_sl that means 'go to break-even' (TP1, or a breakeven message)."""
+    msg = str(payload.get("message", "")).lower()
+    return tp_index == 1 or "breakeven" in msg or "break-even" in msg
+
+
 async def _handle_move_sl(payload, root, exec_client, active_map, tag):
+    s = config.load_settings()
     new_sl = payload.get("new_sl", payload.get("sl"))
-    if new_sl is None:
-        raise SignalError("move_sl signal missing 'new_sl'")
 
     with _lock:
         active = active_map.get(root)
@@ -274,25 +280,41 @@ async def _handle_move_sl(payload, root, exec_client, active_map, tag):
         return {"status": "skipped", "reason": "no_active_stop", "action": "move_sl"}
 
     tp_index = _tp_index_from_event(payload)   # e.g. tp1_hit -> 1 contract gone -> qty 2
+    # Break-even = the original entry price (configurable); trailing moves use new_sl.
+    use_entry = bool(s.get("breakeven_to_entry", True)) and _is_breakeven_move(payload, tp_index)
+    if not use_entry and new_sl is None:
+        raise SignalError("move_sl signal missing 'new_sl'")
+
     moved = 0
+    last_stop = None
     for info in active["accounts"].values():
         if not info.get("sl_order_id"):
             continue
+        entry_price = info.get("entry_price")
+        if use_entry and entry_price is not None:
+            stop = float(entry_price)
+        elif new_sl is not None:
+            stop = float(new_sl)
+        else:
+            state.log_event("warn", f"{tag}move_sl for {root}: no stop price available")
+            continue
         qty = _remaining_qty(info, tp_index)
         info["qty"] = qty
-        info["sl_stop"] = float(new_sl)
+        info["sl_stop"] = stop
+        last_stop = stop
         await exec_client.modify_order(
             info["sl_order_id"], qty=qty,
-            order_type=info.get("sl_type", "Stop"), stop_price=float(new_sl),
+            order_type=info.get("sl_type", "Stop"), stop_price=stop,
         )
         moved += 1
 
+    where = "break-even/entry" if use_entry else "new_sl"
     state.log_event(
-        "info", f"{tag}Stop-loss for {root} moved to {new_sl} (qty→remaining) "
-        f"on {moved} account(s)"
+        "info", f"{tag}Stop-loss for {root} moved to {last_stop} ({where}, "
+        f"qty→remaining) on {moved} account(s)"
     )
-    return {"status": "ok", "action": "move_sl", "new_sl": float(new_sl),
-            "accounts": moved, "simulated": tag != ""}
+    return {"status": "ok", "action": "move_sl", "new_sl": last_stop,
+            "breakeven_to_entry": use_entry, "accounts": moved, "simulated": tag != ""}
 
 
 async def _handle_trail_active(payload, root, exec_client, active_map, tag):

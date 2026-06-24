@@ -4,6 +4,12 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 1.4.6
+- **Break-even = entry price**: a TP1 `move_sl` (or any "breakeven" message) now sets
+  the stop to the original **entry price** of the initial buy/sell signal, instead of
+  the signal's `new_sl` (which is net-of-fees and slightly off). Trailing `move_sl`
+  updates still use `new_sl`. Toggle via *Trading Rules → “Break-even = entry price”*.
+
 ## 1.4.5
 - Removed the **Open P&L** column from Open Positions. Tradovate's position feed
   has no live P&L (it needs a market-data subscription), so it only ever showed

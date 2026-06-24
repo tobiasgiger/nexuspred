@@ -164,6 +164,10 @@
             <label>SL order type
               <select name="sl_order_type"><option>Stop</option><option>StopLimit</option></select>
             </label>
+            <label class="switch-row">
+              <span>Break-even = entry price (on TP1 move_sl)</span>
+              <input type="checkbox" name="breakeven_to_entry" class="switch" />
+            </label>
             <label>Allowed symbols (comma separated; for unmapped symbols)
               <input name="allowed_symbols" placeholder="MNQ, MES" />
             </label>

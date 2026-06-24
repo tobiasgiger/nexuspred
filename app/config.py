@@ -61,6 +61,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "entry_order_type": "Market",    # initial buy/sell are market orders
     "tp_order_type": "Limit",        # take-profits are resting limit orders
     "sl_order_type": "Stop",         # stop-loss as a protective stop order
+    # On a break-even move_sl (TP1 / "breakeven" message), set the stop to the
+    # original entry price instead of the signal's new_sl. Trailing move_sl
+    # updates still use the signal's new_sl.
+    "breakeven_to_entry": True,
 
     # Current symbol mapping: TradingView symbol -> exact Tradovate contract.
     # Use the dated contract (e.g. "MNQU6") and update it after each rollover.
