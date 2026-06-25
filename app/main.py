@@ -14,7 +14,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import config, signals, state, updater
 from .simulator import SCENARIOS, sim_client
-from .tradovate import TradovateError, client
+from .tradovate import TradovateError, manager
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -128,7 +128,8 @@ async def _parse_payload(request: Request) -> dict[str, Any]:
 async def api_status() -> dict[str, Any]:
     return {
         "version": config.get_version(),
-        "connection": state.connection,
+        "connection": state.aggregate_connection(),
+        "sessions": state.session_statuses(),
         "active_trades": signals.active_trades(),
         "trading_enabled": config.load_settings().get("trading_enabled", False),
     }
@@ -146,15 +147,8 @@ async def api_save_settings(request: Request) -> dict[str, Any]:
     for field in config.SECRET_FIELDS:
         if updates.get(field) == "********":
             updates.pop(field, None)
+    updates.pop("token_accounts", None)  # managed via /api/token-accounts
     config.save_settings(updates)
-    # If anything auth-related changed, drop cached tokens so the new values apply.
-    auth_keys = {
-        "environment", "username", "password", "cid", "sec", "app_id",
-        "app_version", "device_id", "use_web_trader_fallback",
-        "access_token", "md_token",
-    }
-    if auth_keys & set(updates):
-        client.invalidate()
     state.log_event("info", "Settings updated")
     return config.public_settings()
 
@@ -176,59 +170,58 @@ async def api_events() -> list[dict[str, Any]]:
 
 @app.get("/api/positions")
 async def api_positions() -> Any:
-    try:
-        return await client.positions()
-    except TradovateError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    out: list[dict[str, Any]] = []
+    for sess in manager.enabled():
+        try:
+            out.extend(await sess.positions())
+        except TradovateError:
+            pass
+    return out
 
 
 @app.post("/api/connect")
 async def api_connect() -> dict[str, Any]:
-    try:
-        return await client.connect()
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    """Connect & verify all configured accounts (in parallel)."""
+    manager.reload()
+    import asyncio
+    sessions = manager.all()
+    await asyncio.gather(*(s.connect() for s in sessions), return_exceptions=True)
+    return {"sessions": state.session_statuses()}
 
 
-# =================================================================== Accounts
-@app.get("/api/accounts")
-async def api_accounts() -> list[dict[str, Any]]:
-    return config.load_settings().get("accounts", [])
+# =============================================================== Token accounts
+@app.get("/api/token-accounts")
+async def api_token_accounts() -> list[dict[str, Any]]:
+    return config.public_settings().get("token_accounts", [])
 
 
-@app.post("/api/accounts")
-async def api_save_accounts(request: Request) -> list[dict[str, Any]]:
-    """Persist the enable flags / quantity multipliers chosen in the dashboard."""
-    accounts = await request.json()
-    cleaned = [
-        {
-            "id": a.get("id"),
-            "name": a.get("name", ""),
+@app.post("/api/token-accounts")
+async def api_save_token_accounts(request: Request) -> list[dict[str, Any]]:
+    """Save the per-account token list. Masked tokens ('********') keep the stored
+    value, so editing other fields doesn't wipe the tokens."""
+    incoming = await request.json()
+    existing = config.load_settings().get("token_accounts") or []
+    cleaned: list[dict[str, Any]] = []
+    for i, a in enumerate(incoming):
+        prev = existing[i] if i < len(existing) else {}
+        access = a.get("access_token", "")
+        md = a.get("md_token", "")
+        cleaned.append({
+            "name": (a.get("name") or f"account {i + 1}").strip(),
+            "environment": "live" if a.get("environment") == "live" else "demo",
+            "access_token": prev.get("access_token", "") if access == "********" else access.strip(),
+            "md_token": prev.get("md_token", "") if md == "********" else md.strip(),
             "enabled": bool(a.get("enabled")),
             "qty_multiplier": float(a.get("qty_multiplier", 1) or 1),
-        }
-        for a in accounts
-        if a.get("id") is not None
-    ]
-    config.save_settings({"accounts": cleaned})
-    enabled = [a for a in cleaned if a["enabled"]]
-    state.connection["accounts_total"] = len(cleaned)
-    state.connection["accounts_enabled"] = len(enabled)
-    state.log_event("info", f"Accounts updated — {len(enabled)}/{len(cleaned)} enabled")
-    return cleaned
-
-
-@app.post("/api/accounts/refresh")
-async def api_refresh_accounts() -> list[dict[str, Any]]:
-    """Fetch the account list from Tradovate, preserving existing enable flags."""
-    s = config.load_settings()
-    try:
-        fetched = await client.list_accounts()
-    except TradovateError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    merged = client._merge_accounts(fetched, s)
-    config.save_settings({"accounts": merged})
-    return merged
+            "account_spec": a.get("account_spec") or prev.get("account_spec", ""),
+            "account_id": a.get("account_id") or prev.get("account_id", 0),
+            "token_expires": prev.get("token_expires", ""),
+        })
+    config.save_settings({"token_accounts": cleaned})
+    manager.reload()
+    enabled = sum(1 for a in cleaned if a["enabled"])
+    state.log_event("info", f"Token accounts updated — {enabled}/{len(cleaned)} enabled")
+    return config.public_settings().get("token_accounts", [])
 
 
 @app.post("/api/webhook-test")
@@ -290,43 +283,47 @@ async def api_update_apply() -> dict[str, Any]:
 
 @app.get("/api/health")
 async def api_health() -> dict[str, Any]:
-    """On-demand connection health check (also runs periodically in the background)."""
-    return await client.health_check()
+    """On-demand health check of every configured account."""
+    import asyncio
+    await asyncio.gather(*(s.health_check() for s in manager.all()), return_exceptions=True)
+    return {"sessions": state.session_statuses()}
+
+
+async def _refresh_session(sess) -> float:
+    """Proactively renew one session's token and verify it; return next-check delay."""
+    interval = int(config.load_settings().get("health_check_interval", 60) or 60)
+    try:
+        if sess.has_token():
+            await sess.proactive_refresh()    # renew well before expiry (never lapse)
+        await sess.health_check()
+        ok = bool(state.session_status(sess.name).get("connected"))
+    except Exception as exc:  # noqa: BLE001 - never let the loop die
+        state.log_event("warn", f"[{sess.name}] refresh error: {exc}")
+        ok = False
+    return sess.seconds_until_refresh(fallback=interval) if ok else 60.0
 
 
 async def _health_loop() -> None:
-    """Proactively keep the Tradovate token alive (Bridge-Bot-TV style).
-
-    Renews the token well before it expires (≥5 min, and at least every 25 min)
-    rather than waiting for it to lapse, verifies the session, and retries every
-    60 s on failure — so a webhook never hits an expired token.
-    """
+    """Keep every account's token alive proactively (Bridge-Bot-TV style), in parallel."""
     import asyncio
     while True:
-        s = config.load_settings()
-        interval = int(s.get("health_check_interval", 60) or 0)
+        interval = int(config.load_settings().get("health_check_interval", 60) or 0)
         if interval <= 0:                       # background refresh disabled
             await asyncio.sleep(30)
             continue
-        if not client._can_authenticate(s):
-            await client.health_check()         # records "not configured" status
+        sessions = manager.all()
+        if not sessions:
             await asyncio.sleep(max(30, interval))
             continue
-        ok = False
-        try:
-            await client.proactive_refresh()    # force-renew so it never expires
-            await client.health_check()         # verify + update status snapshot
-            ok = bool(state.connection.get("connected"))
-        except Exception as exc:  # noqa: BLE001 - never let the loop die
-            state.log_event("warn", f"Token refresh error: {exc}")
-        # Reschedule: just before the next expiry (capped 25 min), or 60 s on failure.
-        await asyncio.sleep(60 if not ok else client.seconds_until_refresh(fallback=interval))
+        delays = await asyncio.gather(*(_refresh_session(s) for s in sessions),
+                                      return_exceptions=True)
+        ok_delays = [d for d in delays if isinstance(d, (int, float))]
+        await asyncio.sleep(min(ok_delays) if ok_delays else 60.0)
 
 
 @app.on_event("startup")
 async def _startup() -> None:
     import asyncio
-    s = config.load_settings()
-    state.connection["environment"] = s.get("environment", "demo")
+    manager.reload()
     state.log_event("info", f"Bridge started (v{config.get_version()})")
     asyncio.create_task(_health_loop())

@@ -21,9 +21,12 @@ configuration and monitoring, and a built-in GitHub auto-updater.
 - **Trade simulator** that runs full scenarios (winning trade, losing trade, manual
   close…) through the *real* signal logic with an in-memory executor — no credentials,
   no broker calls. Run a whole scenario or step through it.
-- **Token refresh & health monitoring**: authenticates once for an API user session
-  token, then renews it via `/auth/renewaccesstoken` before expiry (no password resend),
-  and a background loop continuously verifies the connection is up.
+- **Token-only, multi-account**: each Tradovate account is authenticated by its own
+  access token (no username/password). Every signal fans out to all enabled accounts in
+  parallel, each with its own quantity multiplier.
+- **Token refresh & health monitoring**: renews each account's token via
+  `/auth/renewaccesstoken` before expiry (access token → check token, no password), and a
+  background loop continuously verifies every connection is up.
 - **Dark-themed dashboard** to manage settings, watch positions/orders, and read logs.
 - **Auto-updater** that checks the GitHub repo and shows an **Update** button when a new
   version is available — one click pulls the latest code and restarts.
@@ -90,8 +93,9 @@ includes a `render.yaml` blueprint.
 > (HTTP Basic auth on the dashboard + API; the `/webhook/<secret>` and `/healthz` paths
 > stay open). `GET /healthz` is an unauthenticated liveness probe.
 
-1. Go to **Settings** → enter your Tradovate credentials (start in **Demo**).
-2. Click **Connect & Verify** — the account is auto-detected.
+1. Go to **Settings → Token Accounts** → add one row per Tradovate account with its own
+   access token (start in **Demo**).
+2. Click **Connect & Verify** — each account is resolved and its token validated.
 3. Set a strong **Webhook secret**.
 4. Flip **Trading enabled** on when you're ready to go live.
 5. Copy your **Webhook URL** from the *Test & Webhook* tab into your TradingView alert.
@@ -166,46 +170,32 @@ Each step runs through the exact same logic as a live webhook, but orders are fi
 an in-memory account shown alongside (simulated positions + working orders). Simulated
 orders are tagged **SIM** in the Monitor. No credentials or `trading_enabled` required.
 
-## Connection, tokens & health
+## Accounts, tokens & health
 
-Authentication mirrors Bridge-Bot-TV — a token is used whenever one is available,
-otherwise the bridge logs in with credentials:
+**Token-only, multi-account.** There is no username/password — each account is its own
+session authenticated by its **own Tradovate access token**. Add accounts under
+**Settings → Token Accounts**, one row each:
 
-1. **Access token** — set the `TRADOVATE_ACCESS_TOKEN` (and optional
-   `TRADOVATE_CHECK_TOKEN`) environment variables, or paste them in
-   *Settings → Use an existing access token*. The token's expiry is read from its
-   **JWT `exp` claim** (fallback `now + 75 min`). Env vars take precedence over the
-   pasted/stored values.
-2. **Username & password** — used to log in when no usable token is present (and as
-   the final fallback when a token can't be renewed). Without a paid API key it falls
-   back to the **web-trader app identities** (cid 8/2…), so it works **without an API
-   subscription**; supply your own `cid`/`sec` under *Advanced* to use those first.
+- **Name**, **Environment** (Demo/Live), **Access token** (and optional **Check token**),
+  **Enabled**, and a **quantity multiplier** (e.g. `2` turns the default 3-contract entry
+  into 6, with TP/SL sized to match).
+- Click **Connect & Verify** to resolve each account and confirm the token works.
+
+Every signal is sent to **all enabled accounts in parallel**; disabled ones are ignored.
+The **Monitor → Connection Health** table shows each account's status and token expiry;
+**Active Trades** shows one row per account with its own SL/TP order ids.
 
 Token lifecycle:
 
-- Before expiry the token is **renewed without a password** via `renewaccesstoken`,
-  trying the **access token first, then the check token** — then falling back to a
-  credentials login (the exact chain Bridge-Bot-TV uses).
-- Repeated login failures trigger an **exponential backoff** (and `p-ticket` time
-  penalties are honored) so the bridge won't trip Tradovate's IP lockout.
-- A background **health check** (default every 60s, configurable; `0` disables) verifies
-  the session with `/auth/me`, renews as needed, and updates the **Connection Health**
-  card (status, user, token expiry, last check, last renew, last error). Trigger it on
-  demand with **Check now** or `GET /api/health`.
-
-## Multiple accounts
-
-One Tradovate login can hold several accounts. On **Connect** (or **Refresh from
-Tradovate**) the bridge lists them in **Settings → Accounts**, where each account has:
-
-- an **Enabled** toggle — every signal is sent to **all enabled accounts**; disabled
-  ones are ignored;
-- a **quantity multiplier** — scales the contracts for that account (e.g. `2` turns the
-  default 3-contract entry into 6, with TP/SL sized to match).
-
-The same entry/TP/SL/move_sl/close_all logic runs per account, and the **Monitor →
-Active Trades** table shows one row per account with its own SL/TP order ids. If no
-accounts are configured, the bridge falls back to the single auto-detected account.
+- Each account's token expiry is read from its **JWT `exp` claim** (fallback `now + 75 min`).
+- A background loop **proactively renews** every token before it expires (≥5 min ahead,
+  at least every 25 min) via `renewaccesstoken` — trying the **access token, then the
+  check token**. There is no password fallback: if a token can't be renewed, paste a fresh
+  one for that account.
+- Renewed tokens are **persisted** (best-effort) so they survive a redeploy when a
+  persistent disk is attached.
+- Configure the loop with *health-check interval* (default 60s; `0` disables). Trigger a
+  check on demand with **Check now** or `GET /api/health`.
 
 ## Symbol mapping
 
@@ -263,10 +253,9 @@ the dashboard **Update** button works.
 | `GET/POST` | `/api/settings` | Read / update settings |
 | `GET`  | `/api/orders` `/api/signals` `/api/events` | Rolling logs |
 | `GET`  | `/api/positions` | Live Tradovate positions |
-| `POST` | `/api/connect` | Authenticate & verify account(s) |
-| `GET/POST` | `/api/accounts` | List / save account enable flags & multipliers |
-| `POST` | `/api/accounts/refresh` | Re-fetch accounts from Tradovate |
-| `GET`  | `/api/health` | Check connection (renews token if needed) |
+| `POST` | `/api/connect` | Reload sessions & verify every token account |
+| `GET/POST` | `/api/token-accounts` | List / save per-account tokens, enable flags & multipliers |
+| `GET`  | `/api/health` | Check every connection (renews tokens if needed) |
 | `POST` | `/api/webhook-test` | Run a payload through the pipeline |
 | `GET`  | `/api/scenarios` | List built-in simulator scenarios |
 | `POST` | `/api/simulate` | Run a signal in simulation (no broker) |

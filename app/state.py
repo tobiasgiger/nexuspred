@@ -17,19 +17,34 @@ _signals: Deque[dict[str, Any]] = deque(maxlen=_MAX)
 _orders: Deque[dict[str, Any]] = deque(maxlen=_MAX)
 _events: Deque[dict[str, Any]] = deque(maxlen=_MAX)
 
-# Connection status snapshot updated by the Tradovate client.
-connection: dict[str, Any] = {
-    "connected": False,
-    "environment": "demo",
-    "account_spec": "",
-    "account_id": 0,
-    "user": "",
-    "last_error": "",
-    "last_auth": None,
-    "last_renew": None,
-    "last_check": None,
-    "token_expires": None,
-}
+# Per-session connection status, keyed by account name.
+sessions: dict[str, dict[str, Any]] = {}
+
+
+def set_session_status(name: str, **fields: Any) -> None:
+    with _lock:
+        s = sessions.setdefault(name, {"name": name, "connected": False})
+        s.update(fields)
+        s["name"] = name
+
+
+def session_status(name: str) -> dict[str, Any]:
+    with _lock:
+        return dict(sessions.get(name, {"name": name, "connected": False}))
+
+
+def session_statuses() -> list[dict[str, Any]]:
+    with _lock:
+        return [dict(v) for v in sessions.values()]
+
+
+def aggregate_connection() -> dict[str, Any]:
+    with _lock:
+        vals = list(sessions.values())
+    total = len(vals)
+    connected = sum(1 for v in vals if v.get("connected"))
+    return {"connected": connected > 0, "accounts_total": total,
+            "accounts_connected": connected}
 
 
 def _now() -> str:
@@ -61,7 +76,7 @@ def snapshot() -> dict[str, Any]:
             "signals": list(_signals),
             "orders": list(_orders),
             "events": list(_events),
-            "connection": dict(connection),
+            "sessions": [dict(v) for v in sessions.values()],
         }
 
 

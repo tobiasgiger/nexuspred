@@ -57,17 +57,15 @@
 
       <div class="card">
         <div class="card-head">
-          <h2>Connection Health</h2>
+          <h2>Connection Health (per account)</h2>
           <button class="btn btn-ghost" id="healthCheckBtn">Check now</button>
         </div>
-        <div class="grid grid-3 health-grid">
-          <div><span class="kv-label">Status</span><span class="kv-value" id="hStatus">—</span></div>
-          <div><span class="kv-label">User</span><span class="kv-value" id="hUser">—</span></div>
-          <div><span class="kv-label">Token expires</span><span class="kv-value" id="hExpires">—</span></div>
-          <div><span class="kv-label">Last check</span><span class="kv-value" id="hCheck">—</span></div>
-          <div><span class="kv-label">Last token renew</span><span class="kv-value" id="hRenew">—</span></div>
-          <div><span class="kv-label">Last error</span><span class="kv-value" id="hError">—</span></div>
-        </div>
+        <table class="data-table" id="sessionsTable">
+          <thead>
+            <tr><th>Account</th><th>Env</th><th>Status</th><th>Token expires</th><th>Last renew</th><th>Last error</th></tr>
+          </thead>
+          <tbody><tr><td colspan="6" class="empty">No accounts configured</td></tr></tbody>
+        </table>
       </div>
 
       <div class="card">
@@ -109,42 +107,14 @@
       <form id="settingsForm">
         <div class="grid grid-2">
           <div class="card">
-            <div class="card-head"><h2>Tradovate Connection</h2></div>
-            <label>Environment
-              <select name="environment">
-                <option value="demo">Demo</option>
-                <option value="live">Live</option>
-              </select>
-            </label>
-            <label>Username <input name="username" autocomplete="off" /></label>
-            <label>Password <input name="password" type="password" autocomplete="off" /></label>
-            <label class="switch-row">
-              <span>Use web-trader fallback (no API subscription)</span>
-              <input type="checkbox" name="use_web_trader_fallback" class="switch" />
-            </label>
-            <details class="auth-advanced">
-              <summary>Advanced: own API key</summary>
-              <label>App ID <input name="app_id" autocomplete="off" /></label>
-              <label>App Version <input name="app_version" /></label>
-              <label>API Key (cid) <input name="cid" autocomplete="off" /></label>
-              <label>API Secret (sec) <input name="sec" type="password" autocomplete="off" /></label>
-              <label>Device ID <input name="device_id" /></label>
-            </details>
-            <details class="auth-advanced">
-              <summary>Use an existing access token instead of credentials</summary>
-              <label>Access token <textarea name="access_token" rows="3" placeholder="paste accessToken (or set TRADOVATE_ACCESS_TOKEN)"></textarea></label>
-              <label>Check token (optional) <textarea name="md_token" rows="2" placeholder="or set TRADOVATE_CHECK_TOKEN"></textarea></label>
-              <p class="hint">If set, the token is used first and auto-renewed via
-                renewaccesstoken (access token → check token), falling back to a
-                credentials login. The <code>TRADOVATE_ACCESS_TOKEN</code> /
-                <code>TRADOVATE_CHECK_TOKEN</code> environment variables take precedence.</p>
-            </details>
-
-            <label>Account Spec <input name="account_spec" placeholder="auto-detected on connect" /></label>
+            <div class="card-head"><h2>Connection</h2></div>
+            <p class="hint">nexuspred connects to Tradovate using <strong>one access
+              token per account</strong> (no username/password). Add your accounts in the
+              <strong>Token Accounts</strong> card below, then click <em>Connect &amp; Verify</em>.</p>
             <label>Health check / token refresh interval (seconds)
               <input name="health_check_interval" type="number" min="0" placeholder="60 (0 = off)" />
             </label>
-            <button type="button" class="btn btn-secondary" id="connectBtn">Connect &amp; Verify</button>
+            <button type="button" class="btn btn-secondary" id="connectBtn">Connect &amp; Verify all</button>
           </div>
 
           <div class="card">
@@ -202,23 +172,25 @@
         </div>
       </form>
 
-      <div class="card" id="accountsCard">
+      <div class="card" id="tokenAccountsCard">
         <div class="card-head">
-          <h2>Accounts</h2>
-          <button class="btn btn-ghost" id="refreshAccountsBtn">Refresh from Tradovate</button>
+          <h2>Token Accounts</h2>
+          <button class="btn btn-ghost" id="addTokenRow">+ Add account</button>
         </div>
-        <p class="hint">Every signal is sent to <strong>all enabled</strong> accounts;
-          disabled ones are ignored. The quantity multiplier scales the contracts for
-          that account (1 = use the configured default).</p>
-        <table class="data-table" id="accountsTable">
+        <p class="hint">Each row is one Tradovate account with its <strong>own access
+          token</strong> (paste from the Tradovate API). Every signal is sent to all
+          <strong>enabled</strong> accounts in parallel; the qty multiplier scales the
+          contracts for that account (1 = configured default). Tokens are auto-renewed.</p>
+        <table class="data-table" id="tokenAccountsTable">
           <thead>
-            <tr><th>Enabled</th><th>Account</th><th>ID</th><th>Qty ×</th></tr>
+            <tr><th>On</th><th>Name</th><th>Env</th><th>Access token</th><th>Check token</th><th>Qty ×</th><th></th></tr>
           </thead>
-          <tbody><tr><td colspan="4" class="empty">No accounts — Connect or Refresh from Tradovate</td></tr></tbody>
+          <tbody></tbody>
         </table>
         <div class="form-actions">
-          <button class="btn btn-primary" id="saveAccountsBtn">Save Accounts</button>
-          <span class="save-hint" id="accountsHint"></span>
+          <button class="btn btn-primary" id="saveTokenAccountsBtn">Save Accounts</button>
+          <button class="btn btn-secondary" id="connectTokenBtn">Connect &amp; Verify</button>
+          <span class="save-hint" id="tokenAccountsHint"></span>
         </div>
       </div>
 
@@ -395,7 +367,6 @@
             <tr><td><code>NEXUSPRED_DATA_DIR</code></td><td><code>/var/data</code></td><td>Store settings/tokens on the disk (must match A4's mount path)</td></tr>
             <tr><td><code>DASHBOARD_PASSWORD</code></td><td>your password</td><td>Protects the public dashboard (HTTP Basic auth)</td></tr>
             <tr><td><code>PYTHON_VERSION</code></td><td><code>3.11.9</code></td><td>Avoids a too-new Python with no prebuilt wheels (build fails otherwise)</td></tr>
-            <tr><td><code>TRADOVATE_ACCESS_TOKEN</code></td><td><em>optional</em></td><td>Pre-seed a session token instead of using username/password</td></tr>
           </tbody>
         </table>
         <span class="hint">Do <strong>not</strong> set <code>PORT</code> — Render injects it and the app binds it automatically.</span>
@@ -540,12 +511,15 @@ $ ngrok http 9000</pre>
       </div>
 
       <div class="card">
-        <div class="card-head"><h2>C2 · Authenticate with Tradovate</h2></div>
-        <p class="hint">Settings → <em>Tradovate Connection</em>. Leave <strong>Environment = Demo</strong> for now. Choose one:</p>
+        <div class="card-head"><h2>C2 · Add your Tradovate token accounts</h2></div>
+        <p class="hint">nexuspred is <strong>token-only</strong> — there is no username/password. Each
+          account is authenticated by its own Tradovate <strong>access token</strong>. Go to
+          Settings → <em>Token Accounts</em> and add one row per account:</p>
         <ol class="steps">
-          <li><span class="step-num">1</span><div><strong>Username &amp; password</strong> (easiest) — enter your Tradovate login; keep <em>“Use web-trader fallback”</em> ON so it works without a paid API subscription. (Have an API key? Open <em>Advanced</em> and add <code>cid</code>/<code>sec</code>.)</div></li>
-          <li><span class="step-num">2</span><div><strong>Access token</strong> (optional) — paste an <code>accessToken</code> under <em>“Use an existing access token”</em>, or set <code>TRADOVATE_ACCESS_TOKEN</code> (and optionally <code>TRADOVATE_CHECK_TOKEN</code>) as env vars. It's auto-renewed; if renewal ever fails it falls back to your username/password.</div></li>
-          <li><span class="step-num">3</span><div>Click <strong>Save Settings</strong>.</div></li>
+          <li><span class="step-num">1</span><div>Click <strong>Add account</strong>. Give it a <strong>Name</strong>, pick the <strong>Environment</strong> (<em>Demo</em> for now), and toggle <strong>On</strong>.</div></li>
+          <li><span class="step-num">2</span><div>Paste the account's <code>accessToken</code> into <strong>Access token</strong> (and optionally its <code>mdAccessToken</code> into <strong>Check token</strong>). Tokens are auto-renewed via <code>renewaccesstoken</code> — no password is ever needed.</div></li>
+          <li><span class="step-num">3</span><div>Optionally set a <strong>Qty ×</strong> multiplier per account (e.g. <code>2</code> doubles every order size on that account).</div></li>
+          <li><span class="step-num">4</span><div>Repeat for each account you want to mirror to, then click <strong>Save</strong>. Every signal is sent to all enabled accounts in parallel.</div></li>
         </ol>
       </div>
 

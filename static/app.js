@@ -46,31 +46,37 @@ async function refreshStatus() {
 
     const conn = s.connection || {};
     $("#connDot").className = "dot" + (conn.connected ? " on" : "");
-    $("#connText").textContent = conn.connected ? "Connected" : "Disconnected";
+    const total = conn.accounts_total || 0;
+    const con = conn.accounts_connected || 0;
+    $("#connText").textContent = total ? `${con}/${total} connected` : "Disconnected";
 
     const trading = s.trading_enabled;
     const te = $("#statTrading");
     te.textContent = trading ? "ENABLED" : "DISABLED";
     te.className = "stat-value " + (trading ? "on" : "off");
-    $("#statEnv").textContent = (conn.environment || "—").toUpperCase();
-    $("#statAccount").textContent = conn.account_spec || "—";
+    $("#statEnv").textContent = total ? `${total} acct${total === 1 ? "" : "s"}` : "—";
+    $("#statAccount").textContent = `${con}/${total}`;
 
-    renderHealth(conn);
+    renderSessions(s.sessions || []);
     renderActive(s.active_trades || {});
   } catch (e) { /* status polling is best-effort */ }
 }
 
-function renderHealth(conn) {
-  const st = $("#hStatus");
-  st.textContent = conn.connected ? "Connected" : "Disconnected";
-  st.className = "kv-value " + (conn.connected ? "on" : "off");
-  $("#hUser").textContent = conn.user || conn.account_spec || "—";
-  $("#hExpires").textContent = fmtDateTime(conn.token_expires);
-  $("#hCheck").textContent = fmtDateTime(conn.last_check);
-  $("#hRenew").textContent = fmtDateTime(conn.last_renew);
-  const err = $("#hError");
-  err.textContent = conn.last_error || "—";
-  err.className = "kv-value " + (conn.last_error ? "off" : "");
+function renderSessions(sessions) {
+  const tbody = $("#sessionsTable tbody");
+  if (!sessions.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">No accounts configured</td></tr>';
+    return;
+  }
+  tbody.innerHTML = sessions.map((x) => {
+    const ok = !!x.connected;
+    return `<tr><td>${escapeHtml(x.name || "—")}</td>
+      <td>${(x.environment || "—").toUpperCase()}</td>
+      <td class="${ok ? "pos" : "neg"}">${ok ? "Connected" : "Disconnected"}</td>
+      <td>${fmtDateTime(x.token_expires)}</td>
+      <td>${fmtDateTime(x.last_renew)}</td>
+      <td class="${x.last_error ? "neg" : ""}">${escapeHtml(x.last_error || "—")}</td></tr>`;
+  }).join("");
 }
 
 function fmtDateTime(iso) {
@@ -209,16 +215,19 @@ $("#settingsForm").addEventListener("submit", async (e) => {
   } catch (err) { toast(err.message, "error"); }
 });
 
-$("#connectBtn").addEventListener("click", async () => {
+async function connectAll() {
   toast("Connecting…");
   try {
     const r = await api("/api/connect", { method: "POST" });
-    toast("Connected: " + (r.account_spec || "ok"), "success");
-    loadSettings();
-    loadAccounts();
+    const ok = (r.sessions || []).filter((x) => x.connected).length;
+    toast(`Connected ${ok}/${(r.sessions || []).length} account(s)`,
+      ok ? "success" : "error");
+    renderSessions(r.sessions || []);
     refreshStatus();
   } catch (e) { toast("Connect failed: " + e.message, "error"); }
-});
+}
+$("#connectBtn").addEventListener("click", connectAll);
+$("#connectTokenBtn").addEventListener("click", connectAll);
 
 /* --------------------------------------------------------------- updates */
 async function checkUpdate() {
@@ -324,49 +333,59 @@ $("#sendTestBtn").addEventListener("click", async () => {
 $("#refreshPositions").addEventListener("click", refreshPositions);
 $("#refreshLogs").addEventListener("click", refreshLogs);
 
-/* --------------------------------------------------------------- accounts */
-async function loadAccounts() {
-  try { renderAccounts(await api("/api/accounts")); } catch (e) { /* ignore */ }
+/* ----------------------------------------------------------- token accounts */
+async function loadTokenAccounts() {
+  try { renderTokenAccounts(await api("/api/token-accounts")); } catch (e) { /* ignore */ }
 }
 
-function renderAccounts(accounts) {
-  const tbody = $("#accountsTable tbody");
-  if (!accounts || !accounts.length) {
-    tbody.innerHTML = '<tr><td colspan="4" class="empty">No accounts — Connect or Refresh from Tradovate</td></tr>';
-    return;
-  }
-  tbody.innerHTML = accounts.map((a) => `
-    <tr data-id="${a.id}" data-name="${escapeHtml(a.name)}">
-      <td><input type="checkbox" class="switch acc-enabled" ${a.enabled ? "checked" : ""} /></td>
-      <td>${escapeHtml(a.name)}</td>
-      <td>${a.id}</td>
-      <td><input type="number" class="acc-mult" min="0.1" step="0.1" value="${a.qty_multiplier ?? 1}" style="width:80px" /></td>
-    </tr>`).join("");
+function tokenRow(a = {}) {
+  const env = a.environment === "live" ? "live" : "demo";
+  return `<tr>
+    <td><input type="checkbox" class="switch ta-enabled" ${a.enabled ? "checked" : ""} /></td>
+    <td><input class="ta-name" value="${escapeHtml(a.name || "")}" placeholder="Account 1" style="width:120px" /></td>
+    <td><select class="ta-env">
+      <option value="demo" ${env === "demo" ? "selected" : ""}>Demo</option>
+      <option value="live" ${env === "live" ? "selected" : ""}>Live</option>
+    </select></td>
+    <td><input class="ta-access" value="${escapeHtml(a.access_token || "")}" placeholder="access token" type="password" autocomplete="off" /></td>
+    <td><input class="ta-md" value="${escapeHtml(a.md_token || "")}" placeholder="check token (optional)" type="password" autocomplete="off" /></td>
+    <td><input type="number" class="ta-mult" min="0.1" step="0.1" value="${a.qty_multiplier ?? 1}" style="width:70px" /></td>
+    <td><button type="button" class="btn btn-ghost ta-del">✕</button></td>
+  </tr>`;
 }
 
-function collectAccounts() {
-  return [...$$("#accountsTable tbody tr[data-id]")].map((tr) => ({
-    id: Number(tr.dataset.id),
-    name: tr.dataset.name,
-    enabled: tr.querySelector(".acc-enabled").checked,
-    qty_multiplier: Number(tr.querySelector(".acc-mult").value) || 1,
-  }));
+function renderTokenAccounts(accounts) {
+  const tbody = $("#tokenAccountsTable tbody");
+  const list = accounts && accounts.length ? accounts : [{}];
+  tbody.innerHTML = list.map(tokenRow).join("");
+  tbody.querySelectorAll(".ta-del").forEach((b) =>
+    b.addEventListener("click", () => b.closest("tr").remove()));
 }
 
-$("#refreshAccountsBtn").addEventListener("click", async () => {
-  toast("Fetching accounts…");
-  try {
-    renderAccounts(await api("/api/accounts/refresh", { method: "POST" }));
-    toast("Accounts refreshed", "success");
-  } catch (e) { toast(e.message, "error"); }
+function collectTokenAccounts() {
+  return [...$$("#tokenAccountsTable tbody tr")].map((tr) => ({
+    enabled: tr.querySelector(".ta-enabled").checked,
+    name: tr.querySelector(".ta-name").value.trim(),
+    environment: tr.querySelector(".ta-env").value,
+    access_token: tr.querySelector(".ta-access").value.trim(),
+    md_token: tr.querySelector(".ta-md").value.trim(),
+    qty_multiplier: Number(tr.querySelector(".ta-mult").value) || 1,
+  })).filter((a) => a.name || a.access_token);
+}
+
+$("#addTokenRow").addEventListener("click", () => {
+  $("#tokenAccountsTable tbody").insertAdjacentHTML("beforeend", tokenRow());
+  const last = $("#tokenAccountsTable tbody tr:last-child .ta-del");
+  if (last) last.addEventListener("click", () => last.closest("tr").remove());
 });
 
-$("#saveAccountsBtn").addEventListener("click", async () => {
+$("#saveTokenAccountsBtn").addEventListener("click", async () => {
   try {
-    await api("/api/accounts", { method: "POST", body: JSON.stringify(collectAccounts()) });
-    $("#accountsHint").textContent = "Saved ✓";
-    setTimeout(() => ($("#accountsHint").textContent = ""), 2500);
-    toast("Accounts saved", "success");
+    await api("/api/token-accounts", { method: "POST", body: JSON.stringify(collectTokenAccounts()) });
+    $("#tokenAccountsHint").textContent = "Saved ✓";
+    setTimeout(() => ($("#tokenAccountsHint").textContent = ""), 2500);
+    toast("Token accounts saved", "success");
+    loadTokenAccounts();
     refreshStatus();
   } catch (e) { toast(e.message, "error"); }
 });
@@ -416,12 +435,12 @@ $("#saveSymbolMapBtn").addEventListener("click", async () => {
 });
 
 $("#healthCheckBtn").addEventListener("click", async () => {
-  toast("Checking connection…");
+  toast("Checking connections…");
   try {
-    const conn = await api("/api/health", { method: "GET" });
-    renderHealth(conn);
-    toast(conn.connected ? "Connection healthy" : "Disconnected: " + (conn.last_error || ""),
-      conn.connected ? "success" : "error");
+    const r = await api("/api/health", { method: "GET" });
+    renderSessions(r.sessions || []);
+    const ok = (r.sessions || []).filter((x) => x.connected).length;
+    toast(`${ok}/${(r.sessions || []).length} account(s) healthy`, ok ? "success" : "error");
   } catch (e) { toast(e.message, "error"); }
 });
 
@@ -565,7 +584,7 @@ async function boot() {
   refreshOrders();
   refreshLogs();
   checkUpdate();
-  loadAccounts();
+  loadTokenAccounts();
   loadScenarios();
   $("#testPayload").value = JSON.stringify(PRESETS.entry, null, 2);
 

@@ -4,6 +4,24 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 2.0.0
+- **Token-only, multiple Tradovate accounts** (breaking change). Username/password
+  login is removed entirely — there is no more single-login "Accounts" model. Each
+  account is now its own session authenticated by its **own access token**, configured
+  under **Settings → Token Accounts** (Name, Environment, Access token, optional Check
+  token, Enabled, Qty × multiplier).
+- Every signal fans out to **all enabled accounts in parallel**; each account resolves
+  its own contract, places its own bracket, and tracks its own SL/TP order ids.
+- Per-account **token refresh & health**: each token is renewed independently
+  (access token → check token, no password fallback) and persisted best-effort so it
+  survives redeploys. The Monitor shows one status row per account.
+- Removed the `TRADOVATE_ACCESS_TOKEN` / `TRADOVATE_CHECK_TOKEN` /
+  `TRADOVATE_USERNAME` / `TRADOVATE_PASSWORD` (and `CID/SEC/APP_ID/DEVICE_ID`) env
+  vars and the single-login `/api/accounts` endpoints. New `/api/token-accounts`
+  manages per-account tokens (secrets masked on read, merged on save).
+- **Migration**: re-add each account under Settings → Token Accounts with its access
+  token; old credential settings are ignored.
+
 ## 1.5.0
 - **No more TradingView timeouts on alert bursts**: the webhook now acknowledges
   instantly (HTTP 202) and processes the signal in the background, so many alerts

@@ -28,31 +28,15 @@ GITHUB_BRANCH = os.environ.get("NEXUSPRED_BRANCH", "main")
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     # --- Tradovate connection -------------------------------------------------
-    # Token acquisition (mirrors Bridge-Bot-TV): a token is used if available —
-    # from the TRADOVATE_ACCESS_TOKEN / TRADOVATE_CHECK_TOKEN env vars, or pasted
-    # below — and renewed via renewaccesstoken (access token, then check token).
-    # If no usable token is present, the bridge logs in with username/password.
-    "environment": "demo",          # "demo" or "live"
-    "username": "",
-    "password": "",
-    "app_id": "",
-    "app_version": "1.0",
-    "cid": "",                       # API key id (optional)
-    "sec": "",                       # API secret (optional)
-    "device_id": "",                 # optional device id
-    "use_web_trader_fallback": True,  # try web-trader app ids (no API subscription)
-    "account_spec": "",              # primary account name (legacy / display)
-    "account_id": 0,                 # primary numeric account id (legacy / display)
-
-    # Multi-account routing. Populated from /account/list on connect; each entry:
-    #   {"id": int, "name": str, "enabled": bool, "qty_multiplier": float}
-    # Every signal is sent to all enabled accounts; disabled ones are ignored.
-    "accounts": [],
-
-    # Token cache / pasted token (env vars take precedence; persisted across restarts).
-    "access_token": "",              # API user session token
-    "md_token": "",                  # check (market-data) token, used as renew fallback
-    "token_expires": "",             # ISO expiry of the cached access token
+    # --- Tradovate connection -------------------------------------------------
+    # Token-only, multi-account. Each entry is an independent Tradovate session
+    # with its OWN access token, renewed via /auth/renewaccesstoken (access token,
+    # then check token). No username/password. Every signal is sent to all enabled
+    # accounts in parallel; disabled ones are ignored. Each entry:
+    #   {"name": str, "environment": "demo"|"live", "access_token": str,
+    #    "md_token": str, "enabled": bool, "qty_multiplier": float,
+    #    "account_spec": str, "account_id": int, "token_expires": str}
+    "token_accounts": [],
 
     # --- Trading behaviour ----------------------------------------------------
     "trading_enabled": False,        # master kill switch (safety: off by default)
@@ -168,10 +152,10 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
 
 
 # Fields that must never be returned to the browser in plain text.
-SECRET_FIELDS = {
-    "password", "sec", "webhook_passphrase", "access_token", "md_token",
-    "dashboard_password",
-}
+SECRET_FIELDS = {"webhook_passphrase", "dashboard_password"}
+
+# Per-entry secret fields inside the token_accounts list.
+_TOKEN_SECRETS = ("access_token", "md_token")
 
 
 def public_settings() -> dict[str, Any]:
@@ -179,8 +163,26 @@ def public_settings() -> dict[str, Any]:
     s = load_settings()
     out = dict(s)
     for field in SECRET_FIELDS:
-        if out.get(field):
-            out[field] = "********"
-        else:
-            out[field] = ""
+        out[field] = "********" if out.get(field) else ""
+    # Mask the tokens inside each token-account entry.
+    out["token_accounts"] = [
+        {**a, **{f: ("********" if a.get(f) else "") for f in _TOKEN_SECRETS}}
+        for a in (s.get("token_accounts") or [])
+    ]
     return out
+
+
+def update_token_account(idx: int, **fields: Any) -> None:
+    """Persist fields (e.g. a renewed token) into token_accounts[idx]. Best-effort,
+    thread-safe read-modify-write so concurrent session renewals don't clobber."""
+    with _lock:
+        current = load_settings(force=True)
+        accounts = list(current.get("token_accounts") or [])
+        if 0 <= idx < len(accounts):
+            accounts[idx] = {**accounts[idx], **fields}
+            current["token_accounts"] = accounts
+            _ensure_data_dir()
+            SETTINGS_FILE.write_text(json.dumps(current, indent=2), encoding="utf-8")
+            global _cache
+            _cache = current
+

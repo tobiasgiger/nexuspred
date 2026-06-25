@@ -139,7 +139,6 @@
           <tr><td><code>NEXUSPRED_DATA_DIR</code></td><td><code>/var/data</code></td><td>Store settings/tokens on the disk (must match A4's mount path)</td></tr>
           <tr><td><code>DASHBOARD_PASSWORD</code></td><td>your password</td><td>Protects the public dashboard (HTTP Basic auth)</td></tr>
           <tr><td><code>PYTHON_VERSION</code></td><td><code>3.11.9</code></td><td>Avoids a too-new Python with no prebuilt wheels (build fails otherwise)</td></tr>
-          <tr><td><code>TRADOVATE_ACCESS_TOKEN</code></td><td><em>optional</em></td><td>Pre-seed a session token instead of using username/password</td></tr>
         </tbody>
       </table>
       <span class="hint">Do <strong>not</strong> set <code>PORT</code> — Render injects it and the app binds it automatically.</span>
@@ -284,12 +283,15 @@ $ ngrok http 9000</pre>
     </div>
 
     <div class="card">
-      <div class="card-head"><h2>C2 · Authenticate with Tradovate</h2></div>
-      <p class="hint">Settings → <em>Tradovate Connection</em>. Leave <strong>Environment = Demo</strong> for now. Choose one:</p>
+      <div class="card-head"><h2>C2 · Add your Tradovate token accounts</h2></div>
+      <p class="hint">nexuspred is <strong>token-only</strong> — there is no username/password. Each
+        account is authenticated by its own Tradovate <strong>access token</strong>. Go to
+        Settings → <em>Token Accounts</em> and add one row per account:</p>
       <ol class="steps">
-        <li><span class="step-num">1</span><div><strong>Username &amp; password</strong> (easiest) — enter your Tradovate login; keep <em>“Use web-trader fallback”</em> ON so it works without a paid API subscription. (Have an API key? Open <em>Advanced</em> and add <code>cid</code>/<code>sec</code>.)</div></li>
-        <li><span class="step-num">2</span><div><strong>Access token</strong> (optional) — paste an <code>accessToken</code> under <em>“Use an existing access token”</em>, or set <code>TRADOVATE_ACCESS_TOKEN</code> (and optionally <code>TRADOVATE_CHECK_TOKEN</code>) as env vars. It's auto-renewed; if renewal ever fails it falls back to your username/password.</div></li>
-        <li><span class="step-num">3</span><div>Click <strong>Save Settings</strong>.</div></li>
+        <li><span class="step-num">1</span><div>Click <strong>Add account</strong>. Give it a <strong>Name</strong>, pick the <strong>Environment</strong> (<em>Demo</em> for now), and toggle <strong>On</strong>.</div></li>
+        <li><span class="step-num">2</span><div>Paste the account's <code>accessToken</code> into <strong>Access token</strong> (and optionally its <code>mdAccessToken</code> into <strong>Check token</strong>). Tokens are auto-renewed via <code>renewaccesstoken</code> — no password is ever needed.</div></li>
+        <li><span class="step-num">3</span><div>Optionally set a <strong>Qty ×</strong> multiplier per account (e.g. <code>2</code> doubles every order size on that account).</div></li>
+        <li><span class="step-num">4</span><div>Repeat for each account you want to mirror to, then click <strong>Save</strong>. Every signal is sent to all enabled accounts in parallel.</div></li>
       </ol>
     </div>
 

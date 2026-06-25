@@ -16,6 +16,10 @@ from . import state
 class SimulatedClient:
     """Drop-in stand-in for ``TradovateClient`` that fills orders in memory."""
 
+    # Acts as a session-like executor in simulation mode.
+    name = "SIM"
+    qty_multiplier = 1
+
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._next_id = 1000

@@ -21,11 +21,9 @@ services:
       # Protect the public dashboard with HTTP Basic auth — set your own value.
       - key: DASHBOARD_PASSWORD
         sync: false
-      # Optional: pre-seed a Tradovate session token instead of credentials.
-      - key: TRADOVATE_ACCESS_TOKEN
-        sync: false
-      - key: TRADOVATE_CHECK_TOKEN
-        sync: false
+      # Tradovate accounts are token-only and configured in the dashboard under
+      # Settings → Token Accounts (one access token per account). No credential
+      # or token env vars are needed; tokens persist on the disk below.
     disk:
       name: nexuspred-data
       mountPath: /var/data
