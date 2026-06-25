@@ -77,27 +77,37 @@ async def dashboard(request: Request) -> HTMLResponse:
 
 
 # ===================================================================== Webhook
+async def _process_signal_bg(payload: dict[str, Any]) -> None:
+    """Run the signal pipeline in the background so the webhook returns instantly."""
+    try:
+        result = await signals.process(payload)
+        state.log_signal(payload, result=result.get("status", "ok"))
+    except (signals.SignalError, TradovateError) as exc:
+        state.log_event("error", f"Signal error: {exc}", payload=payload)
+        state.log_signal(payload, result=f"error: {exc}")
+    except Exception as exc:  # noqa: BLE001 - never let a background task die silently
+        state.log_event("error", f"Signal failed: {exc}", payload=payload)
+        state.log_signal(payload, result=f"error: {exc}")
+
+
 @app.post("/webhook/{secret}")
 async def webhook(secret: str, request: Request) -> JSONResponse:
     """Receive a TradingView alert and route it to Tradovate.
 
-    The ``secret`` path segment must match ``webhook_secret`` in settings.
+    The ``secret`` path segment must match ``webhook_secret`` in settings. The
+    alert is acknowledged immediately (HTTP 202) and processed in the background,
+    so bursts of alerts can't make TradingView time out ("request took too long").
     """
+    import asyncio
+
     s = config.load_settings()
     if secret != s.get("webhook_secret"):
         raise HTTPException(status_code=403, detail="Invalid webhook secret")
 
     payload = await _parse_payload(request)
     state.log_signal(payload, result="received")
-
-    try:
-        result = await signals.process(payload)
-        state.log_signal(payload, result=result.get("status", "ok"))
-        return JSONResponse(result)
-    except (signals.SignalError, TradovateError) as exc:
-        state.log_event("error", f"Signal error: {exc}", payload=payload)
-        state.log_signal(payload, result=f"error: {exc}")
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    asyncio.create_task(_process_signal_bg(payload))
+    return JSONResponse({"status": "accepted"}, status_code=202)
 
 
 async def _parse_payload(request: Request) -> dict[str, Any]:

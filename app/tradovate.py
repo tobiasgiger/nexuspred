@@ -125,6 +125,7 @@ class TradovateClient:
         self._auth_fails = 0
         self._loaded = False
         self._lock = asyncio.Lock()
+        self._contract_cache: dict[str, tuple[str, datetime]] = {}
 
     # ------------------------------------------------------------------ helpers
     @staticmethod
@@ -520,7 +521,17 @@ class TradovateClient:
 
         If a fully dated symbol is supplied (e.g. ``MNQU5``) it is verified and
         returned as-is; otherwise the nearest (front-month) contract is chosen.
+        Results are cached for an hour so bursts of alerts don't re-query.
         """
+        cached = self._contract_cache.get(root_or_symbol)
+        if cached and datetime.now(timezone.utc) - cached[1] < timedelta(hours=1):
+            return cached[0]
+
+        resolved = await self._resolve_contract_uncached(root_or_symbol)
+        self._contract_cache[root_or_symbol] = (resolved, datetime.now(timezone.utc))
+        return resolved
+
+    async def _resolve_contract_uncached(self, root_or_symbol: str) -> str:
         # Already a dated contract? verify it exists. Tradovate answers /contract/find
         # with HTTP 404 when the name isn't an exact contract, so treat that as
         # "not found" and fall through to /contract/suggest.

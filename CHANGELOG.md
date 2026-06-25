@@ -4,6 +4,16 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 1.5.0
+- **No more TradingView timeouts on alert bursts**: the webhook now acknowledges
+  instantly (HTTP 202) and processes the signal in the background, so many alerts
+  firing within milliseconds are handled concurrently instead of blocking.
+- **Parallel account execution**: orders for all enabled accounts are placed
+  simultaneously (`asyncio.gather`) instead of one-by-one; within an account the
+  TP/SL bracket is also placed in parallel. move_sl / trail_active / close_all
+  fan out across accounts in parallel too.
+- **Contract resolution cached** (1 h) so bursts don't repeat `/contract/find`.
+
 ## 1.4.6
 - **Break-even = entry price**: a TP1 `move_sl` (or any "breakeven" message) now sets
   the stop to the original **entry price** of the initial buy/sell signal, instead of

@@ -20,6 +20,7 @@ full scenario without credentials or risk.
 """
 from __future__ import annotations
 
+import asyncio
 import threading
 import re
 from typing import Any
@@ -151,68 +152,81 @@ async def _handle_entry(payload, action, root, contract, exec_client, active_map
     base_tp_qty = int(s.get("tp_qty", 1))
     entry_side = "Buy" if action == "buy" else "Sell"
     exit_side = _opposite(action)
+    sl_type = s.get("sl_order_type", "Stop")
 
-    orders: list[dict[str, Any]] = []
-    acct_state: dict[Any, dict[str, Any]] = {}
-    summary: list[dict[str, Any]] = []
-
-    for acc in accounts:
+    async def place_for(acc: dict[str, Any]):
         spec, acc_id = acc["name"], acc["id"]
         mult = acc.get("qty_multiplier", 1) or 1
         entry_qty = max(1, int(base_qty * mult))
         tp_qty = max(1, int(base_tp_qty * mult))
 
-        # 1) Market entry.
+        # 1) Market entry first (so the position exists before the brackets).
         entry = await exec_client.place_order(
             symbol=contract, action=entry_side, qty=entry_qty,
             order_type=s.get("entry_order_type", "Market"),
             price=payload.get("entry"), account_spec=spec, account_id=acc_id,
         )
-        orders.append(entry)
+        acc_orders = [entry]
 
-        # 2) Take-profit limit orders for each tp present.
-        tp_ids: list[int] = []
+        # 2) TP limit orders + protective stop, placed in parallel.
+        bracket: list[tuple[str, Any]] = []
         for key in ("tp1", "tp2", "tp3"):
-            if payload.get(key) is None:
-                continue
-            tp = await exec_client.place_order(
-                symbol=contract, action=exit_side, qty=tp_qty,
-                order_type=s.get("tp_order_type", "Limit"),
-                price=float(payload[key]), account_spec=spec, account_id=acc_id,
-            )
-            orders.append(tp)
-            if tp.get("order_id"):
-                tp_ids.append(tp["order_id"])
-
-        # 3) Protective stop covering the full position.
-        sl_id = None
+            if payload.get(key) is not None:
+                bracket.append(("tp", exec_client.place_order(
+                    symbol=contract, action=exit_side, qty=tp_qty,
+                    order_type=s.get("tp_order_type", "Limit"),
+                    price=float(payload[key]), account_spec=spec, account_id=acc_id)))
         if payload.get("sl") is not None:
-            sl = await exec_client.place_order(
+            bracket.append(("sl", exec_client.place_order(
                 symbol=contract, action=exit_side, qty=entry_qty,
-                order_type=s.get("sl_order_type", "Stop"),
-                stop_price=float(payload["sl"]), account_spec=spec, account_id=acc_id,
-            )
-            orders.append(sl)
-            sl_id = sl.get("order_id")
+                order_type=sl_type, stop_price=float(payload["sl"]),
+                account_spec=spec, account_id=acc_id)))
 
-        acct_state[acc_id] = {
-            "name": spec,
-            "entry_qty": entry_qty,          # original position size
-            "tp_qty": tp_qty,                # contracts per TP
-            "qty": entry_qty,                # current remaining (SL size)
-            "entry_price": payload.get("entry"),   # for break-even moves
-            "sl_order_id": sl_id,
-            "sl_type": s.get("sl_order_type", "Stop"),
+        tp_ids: list[int] = []
+        sl_id = None
+        if bracket:
+            kinds = [k for k, _ in bracket]
+            results = await asyncio.gather(*(c for _, c in bracket), return_exceptions=True)
+            for kind, res in zip(kinds, results):
+                if isinstance(res, Exception):
+                    state.log_event("warn", f"{tag}{kind} order failed for {spec}: {res}")
+                    continue
+                acc_orders.append(res)
+                if kind == "tp" and res.get("order_id"):
+                    tp_ids.append(res["order_id"])
+                elif kind == "sl":
+                    sl_id = res.get("order_id")
+
+        info = {
+            "name": spec, "entry_qty": entry_qty, "tp_qty": tp_qty, "qty": entry_qty,
+            "entry_price": payload.get("entry"), "sl_order_id": sl_id,
+            "sl_type": sl_type,
             "sl_stop": float(payload["sl"]) if payload.get("sl") is not None else None,
             "tp_order_ids": tp_ids,
         }
-        summary.append({"account": spec, "qty": entry_qty})
+        return acc_id, info, acc_orders
 
-    with _lock:
-        active_map[root] = {
-            "contract": contract, "side": action, "qty": base_qty,
-            "accounts": acct_state,
-        }
+    # All enabled accounts execute simultaneously.
+    results = await asyncio.gather(*(place_for(a) for a in accounts), return_exceptions=True)
+
+    orders: list[dict[str, Any]] = []
+    acct_state: dict[Any, dict[str, Any]] = {}
+    summary: list[dict[str, Any]] = []
+    for acc, res in zip(accounts, results):
+        if isinstance(res, Exception):
+            state.log_event("error", f"{tag}Entry failed for {acc['name']}: {res}")
+            continue
+        acc_id, info, acc_orders = res
+        acct_state[acc_id] = info
+        orders.extend(acc_orders)
+        summary.append({"account": info["name"], "qty": info["entry_qty"]})
+
+    if acct_state:
+        with _lock:
+            active_map[root] = {
+                "contract": contract, "side": action, "qty": base_qty,
+                "accounts": acct_state,
+            }
 
     names = ", ".join(a["name"] for a in accounts)
     state.log_event(
@@ -232,8 +246,8 @@ async def _handle_close_all(root, contract, exec_client, active_map, tag, accoun
         for acc_id, info in active.get("accounts", {}).items():
             targets.setdefault(acc_id, info.get("name", str(acc_id)))
 
-    cancelled = 0
-    for acc_id, name in targets.items():
+    async def close_account(acc_id: Any, name: str) -> int:
+        cancelled = 0
         try:
             for order in await exec_client.working_orders(account_id=acc_id):
                 try:
@@ -244,6 +258,14 @@ async def _handle_close_all(root, contract, exec_client, active_map, tag, accoun
         except TradovateError as exc:
             state.log_event("warn", f"{tag}Could not list working orders for {name}: {exc}")
         await exec_client.liquidate_position(contract, account_id=acc_id)
+        return cancelled
+
+    # Flatten every target account in parallel.
+    results = await asyncio.gather(
+        *(close_account(aid, name) for aid, name in targets.items()),
+        return_exceptions=True,
+    )
+    cancelled = sum(r for r in results if isinstance(r, int))
 
     with _lock:
         active_map.pop(root, None)
@@ -285,11 +307,9 @@ async def _handle_move_sl(payload, root, exec_client, active_map, tag):
     if not use_entry and new_sl is None:
         raise SignalError("move_sl signal missing 'new_sl'")
 
-    moved = 0
-    last_stop = None
-    for info in active["accounts"].values():
+    async def move_account(info: dict[str, Any]):
         if not info.get("sl_order_id"):
-            continue
+            return None
         entry_price = info.get("entry_price")
         if use_entry and entry_price is not None:
             stop = float(entry_price)
@@ -297,16 +317,25 @@ async def _handle_move_sl(payload, root, exec_client, active_map, tag):
             stop = float(new_sl)
         else:
             state.log_event("warn", f"{tag}move_sl for {root}: no stop price available")
-            continue
+            return None
         qty = _remaining_qty(info, tp_index)
         info["qty"] = qty
         info["sl_stop"] = stop
-        last_stop = stop
         await exec_client.modify_order(
             info["sl_order_id"], qty=qty,
             order_type=info.get("sl_type", "Stop"), stop_price=stop,
         )
-        moved += 1
+        return stop
+
+    results = await asyncio.gather(
+        *(move_account(i) for i in active["accounts"].values()), return_exceptions=True
+    )
+    stops = [r for r in results if isinstance(r, (int, float))]
+    moved = len(stops)
+    last_stop = stops[-1] if stops else None
+    for r in results:
+        if isinstance(r, Exception):
+            state.log_event("warn", f"{tag}move_sl modify failed for {root}: {r}")
 
     where = "break-even/entry" if use_entry else "new_sl"
     state.log_event(
@@ -327,17 +356,21 @@ async def _handle_trail_active(payload, root, exec_client, active_map, tag):
         return {"status": "ok", "action": "trail_active", "note": "acknowledged",
                 "simulated": tag != ""}
 
-    resized = 0
-    for info in active["accounts"].values():
+    async def resize_account(info: dict[str, Any]) -> bool:
         if not info.get("sl_order_id"):
-            continue
+            return False
         qty = _remaining_qty(info, tp_index)
         info["qty"] = qty
         await exec_client.modify_order(
             info["sl_order_id"], qty=qty,
             order_type=info.get("sl_type", "Stop"), stop_price=info.get("sl_stop"),
         )
-        resized += 1
+        return True
+
+    results = await asyncio.gather(
+        *(resize_account(i) for i in active["accounts"].values()), return_exceptions=True
+    )
+    resized = sum(1 for r in results if r is True)
 
     state.log_event(
         "info", f"{tag}Trailing active for {root} — stop-loss qty→remaining "
