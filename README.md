@@ -172,18 +172,26 @@ orders are tagged **SIM** in the Monitor. No credentials or `trading_enabled` re
 
 ## Accounts, tokens & health
 
-**Token-only, multi-account.** There is no username/password — each account is its own
-session authenticated by its **own Tradovate access token**. Add accounts under
+**Token-only, multi-account.** There is no username/password — each **login** is
+authenticated by its **own Tradovate access token**. Add logins under
 **Settings → Token Accounts**, one row each:
 
 - **Name**, **Environment** (Demo/Live), **Access token** (and optional **Check token**),
-  **Enabled**, and a **quantity multiplier** (e.g. `2` turns the default 3-contract entry
-  into 6, with TP/SL sized to match).
-- Click **Connect & Verify** to resolve each account and confirm the token works.
+  **Enabled** (master switch for that login), and a default **quantity multiplier**.
+- Click **Connect & Verify** to authenticate and **discover the trade accounts** under
+  that login.
 
-Every signal is sent to **all enabled accounts in parallel**; disabled ones are ignored.
-The **Monitor → Connection Health** table shows each account's status and token expiry;
-**Active Trades** shows one row per account with its own SL/TP order ids.
+**Multiple trade accounts per login + per-account execution toggle.** A single token
+often grants access to several trade accounts. After connecting, every discovered account
+appears in **Settings → Trade Accounts**, where you switch **execution on/off per account**
+and set a per-account **Qty ×** (e.g. `2` turns the default 3-contract entry into 6, with
+TP/SL sized to match). Each signal fans out to **all accounts switched on, in parallel**.
+
+- Newly discovered accounts default to **off** (except the first on a brand-new login), so
+  an account never starts trading without an explicit opt-in.
+- The **Monitor** header shows *Logins connected* and *Accounts executing*;
+  **Connection Health** shows each login's token expiry, and **Active Trades** shows one
+  row per executing account with its own SL/TP order ids.
 
 Token lifecycle:
 
@@ -254,7 +262,8 @@ the dashboard **Update** button works.
 | `GET`  | `/api/orders` `/api/signals` `/api/events` | Rolling logs |
 | `GET`  | `/api/positions` | Live Tradovate positions |
 | `POST` | `/api/connect` | Reload sessions & verify every token account |
-| `GET/POST` | `/api/token-accounts` | List / save per-account tokens, enable flags & multipliers |
+| `GET/POST` | `/api/token-accounts` | List / save logins (tokens, enable flags & default multipliers) |
+| `GET/POST` | `/api/trade-accounts` | Overview / save per-account execution on-off & multipliers |
 | `GET`  | `/api/health` | Check every connection (renews tokens if needed) |
 | `POST` | `/api/webhook-test` | Run a payload through the pipeline |
 | `GET`  | `/api/scenarios` | List built-in simulator scenarios |

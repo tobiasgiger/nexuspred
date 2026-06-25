@@ -46,11 +46,11 @@
           <div class="stat-value" id="statTrading">—</div>
         </div>
         <div class="card stat">
-          <div class="stat-label">Environment</div>
+          <div class="stat-label">Logins connected</div>
           <div class="stat-value" id="statEnv">—</div>
         </div>
         <div class="card stat">
-          <div class="stat-label">Account</div>
+          <div class="stat-label">Accounts executing</div>
           <div class="stat-value" id="statAccount">—</div>
         </div>
       </div>
@@ -191,6 +191,28 @@
           <button class="btn btn-primary" id="saveTokenAccountsBtn">Save Accounts</button>
           <button class="btn btn-secondary" id="connectTokenBtn">Connect &amp; Verify</button>
           <span class="save-hint" id="tokenAccountsHint"></span>
+        </div>
+      </div>
+
+      <div class="card" id="tradeAccountsCard">
+        <div class="card-head">
+          <h2>Trade Accounts — Execution On/Off</h2>
+          <button type="button" class="btn btn-secondary" id="refreshTradeAccounts">Discover / Refresh</button>
+        </div>
+        <p class="hint">Every Tradovate trade account found under your logins above — one
+          login can hold <strong>several accounts</strong>. Switch <strong>execution</strong>
+          on/off per account: each signal is sent to every account switched <strong>on</strong>.
+          <em>Qty ×</em> scales the contracts for that account. Click <strong>Discover /
+          Refresh</strong> (connects &amp; verifies) to load the accounts under each login.</p>
+        <table class="data-table" id="tradeAccountsTable">
+          <thead>
+            <tr><th>Execute</th><th>Login</th><th>Account</th><th>Env</th><th>Qty ×</th><th>Status</th></tr>
+          </thead>
+          <tbody><tr><td colspan="6" class="empty">No accounts yet — add a token above, then Discover / Refresh</td></tr></tbody>
+        </table>
+        <div class="form-actions">
+          <button type="button" class="btn btn-primary" id="saveTradeAccountsBtn">Save Execution Settings</button>
+          <span class="save-hint" id="tradeAccountsHint"></span>
         </div>
       </div>
 
@@ -518,8 +540,8 @@ $ ngrok http 9000</pre>
         <ol class="steps">
           <li><span class="step-num">1</span><div>Click <strong>Add account</strong>. Give it a <strong>Name</strong>, pick the <strong>Environment</strong> (<em>Demo</em> for now), and toggle <strong>On</strong>.</div></li>
           <li><span class="step-num">2</span><div>Paste the account's <code>accessToken</code> into <strong>Access token</strong> (and optionally its <code>mdAccessToken</code> into <strong>Check token</strong>). Tokens are auto-renewed via <code>renewaccesstoken</code> — no password is ever needed.</div></li>
-          <li><span class="step-num">3</span><div>Optionally set a <strong>Qty ×</strong> multiplier per account (e.g. <code>2</code> doubles every order size on that account).</div></li>
-          <li><span class="step-num">4</span><div>Repeat for each account you want to mirror to, then click <strong>Save</strong>. Every signal is sent to all enabled accounts in parallel.</div></li>
+          <li><span class="step-num">3</span><div>Click <strong>Connect &amp; Verify</strong>. The bridge authenticates and <strong>discovers every trade account</strong> under that login.</div></li>
+          <li><span class="step-num">4</span><div>Open <strong>Settings → Trade Accounts</strong>. One login can hold several accounts — switch <strong>execution on/off per account</strong> and set a per-account <strong>Qty ×</strong>, then <strong>Save</strong>. Each signal fans out to all accounts switched on, in parallel.</div></li>
         </ol>
       </div>
 

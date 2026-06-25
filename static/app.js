@@ -54,8 +54,11 @@ async function refreshStatus() {
     const te = $("#statTrading");
     te.textContent = trading ? "ENABLED" : "DISABLED";
     te.className = "stat-value " + (trading ? "on" : "off");
-    $("#statEnv").textContent = total ? `${total} acct${total === 1 ? "" : "s"}` : "—";
-    $("#statAccount").textContent = `${con}/${total}`;
+    $("#statEnv").textContent = total ? `${con}/${total} login${total === 1 ? "" : "s"}` : "—";
+
+    const ta = s.trade_accounts || [];
+    const taOn = ta.filter((a) => a.enabled).length;
+    $("#statAccount").textContent = ta.length ? `${taOn}/${ta.length} on` : "—";
 
     renderSessions(s.sessions || []);
     renderActive(s.active_trades || {});
@@ -223,6 +226,7 @@ async function connectAll() {
     toast(`Connected ${ok}/${(r.sessions || []).length} account(s)`,
       ok ? "success" : "error");
     renderSessions(r.sessions || []);
+    loadTradeAccounts();   // connect discovers the trade accounts under each login
     refreshStatus();
   } catch (e) { toast("Connect failed: " + e.message, "error"); }
 }
@@ -389,6 +393,55 @@ $("#saveTokenAccountsBtn").addEventListener("click", async () => {
     refreshStatus();
   } catch (e) { toast(e.message, "error"); }
 });
+
+/* --------------------------------------------------- trade accounts (on/off) */
+async function loadTradeAccounts() {
+  try { renderTradeAccounts(await api("/api/trade-accounts")); } catch (e) { /* ignore */ }
+}
+
+function renderTradeAccounts(accounts) {
+  const tbody = $("#tradeAccountsTable tbody");
+  if (!accounts || !accounts.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">No accounts yet — add a token above, then Discover / Refresh</td></tr>';
+    return;
+  }
+  tbody.innerHTML = accounts.map((a) => {
+    const conn = a.connected;
+    const status = conn
+      ? '<span class="pos">Connected</span>'
+      : '<span class="neg">Not connected</span>';
+    return `<tr data-token-idx="${a.token_idx}" data-spec="${escapeHtml(a.spec)}" data-id="${a.id}">
+      <td><input type="checkbox" class="switch ta-exec" ${a.enabled ? "checked" : ""} /></td>
+      <td>${escapeHtml(a.token_name || "—")}</td>
+      <td>${escapeHtml(a.spec || "—")}</td>
+      <td>${(a.environment || "—").toUpperCase()}</td>
+      <td><input type="number" class="ta-execmult" min="0.1" step="0.1" value="${a.qty_multiplier ?? 1}" style="width:70px" /></td>
+      <td>${status}</td></tr>`;
+  }).join("");
+}
+
+function collectTradeAccounts() {
+  return [...$$("#tradeAccountsTable tbody tr[data-spec]")].map((tr) => ({
+    token_idx: Number(tr.dataset.tokenIdx),
+    spec: tr.dataset.spec,
+    id: Number(tr.dataset.id) || 0,
+    enabled: tr.querySelector(".ta-exec").checked,
+    qty_multiplier: Number(tr.querySelector(".ta-execmult").value) || 1,
+  }));
+}
+
+$("#saveTradeAccountsBtn").addEventListener("click", async () => {
+  try {
+    renderTradeAccounts(await api("/api/trade-accounts",
+      { method: "POST", body: JSON.stringify(collectTradeAccounts()) }));
+    $("#tradeAccountsHint").textContent = "Saved ✓";
+    setTimeout(() => ($("#tradeAccountsHint").textContent = ""), 2500);
+    toast("Execution settings saved", "success");
+    refreshStatus();
+  } catch (e) { toast(e.message, "error"); }
+});
+
+$("#refreshTradeAccounts").addEventListener("click", connectAll);
 
 /* --------------------------------------------------------------- symbol map */
 function symbolRow(tv = "", contract = "") {
@@ -585,6 +638,7 @@ async function boot() {
   refreshLogs();
   checkUpdate();
   loadTokenAccounts();
+  loadTradeAccounts();
   loadScenarios();
   $("#testPayload").value = JSON.stringify(PRESETS.entry, null, 2);
 

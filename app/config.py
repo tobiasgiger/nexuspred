@@ -29,13 +29,16 @@ GITHUB_BRANCH = os.environ.get("NEXUSPRED_BRANCH", "main")
 DEFAULT_SETTINGS: dict[str, Any] = {
     # --- Tradovate connection -------------------------------------------------
     # --- Tradovate connection -------------------------------------------------
-    # Token-only, multi-account. Each entry is an independent Tradovate session
-    # with its OWN access token, renewed via /auth/renewaccesstoken (access token,
-    # then check token). No username/password. Every signal is sent to all enabled
-    # accounts in parallel; disabled ones are ignored. Each entry:
+    # Token-only, multi-account. Each entry is one Tradovate login with its OWN
+    # access token, renewed via /auth/renewaccesstoken (access token, then check
+    # token). No username/password. A single login can expose several trade
+    # accounts; each is independently toggled for execution. Every signal is sent
+    # to all enabled trade accounts in parallel. Each entry:
     #   {"name": str, "environment": "demo"|"live", "access_token": str,
     #    "md_token": str, "enabled": bool, "qty_multiplier": float,
-    #    "account_spec": str, "account_id": int, "token_expires": str}
+    #    "account_spec": str, "account_id": int, "token_expires": str,
+    #    "accounts": [{"spec": str, "id": int, "enabled": bool,
+    #                  "qty_multiplier": float}]}  # discovered on Connect & Verify
     "token_accounts": [],
 
     # --- Trading behaviour ----------------------------------------------------

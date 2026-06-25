@@ -290,8 +290,8 @@ $ ngrok http 9000</pre>
       <ol class="steps">
         <li><span class="step-num">1</span><div>Click <strong>Add account</strong>. Give it a <strong>Name</strong>, pick the <strong>Environment</strong> (<em>Demo</em> for now), and toggle <strong>On</strong>.</div></li>
         <li><span class="step-num">2</span><div>Paste the account's <code>accessToken</code> into <strong>Access token</strong> (and optionally its <code>mdAccessToken</code> into <strong>Check token</strong>). Tokens are auto-renewed via <code>renewaccesstoken</code> — no password is ever needed.</div></li>
-        <li><span class="step-num">3</span><div>Optionally set a <strong>Qty ×</strong> multiplier per account (e.g. <code>2</code> doubles every order size on that account).</div></li>
-        <li><span class="step-num">4</span><div>Repeat for each account you want to mirror to, then click <strong>Save</strong>. Every signal is sent to all enabled accounts in parallel.</div></li>
+        <li><span class="step-num">3</span><div>Click <strong>Connect &amp; Verify</strong>. The bridge authenticates and <strong>discovers every trade account</strong> under that login.</div></li>
+        <li><span class="step-num">4</span><div>Open <strong>Settings → Trade Accounts</strong>. One login can hold several accounts — switch <strong>execution on/off per account</strong> and set a per-account <strong>Qty ×</strong>, then <strong>Save</strong>. Each signal fans out to all accounts switched on, in parallel.</div></li>
       </ol>
     </div>
 

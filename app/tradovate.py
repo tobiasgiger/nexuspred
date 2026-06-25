@@ -86,6 +86,9 @@ class TradovateSession:
         self.qty_multiplier = entry.get("qty_multiplier", 1) or 1
         self.account_spec = entry.get("account_spec") or ""
         self.account_id = entry.get("account_id") or 0
+        # One token (login) can expose several Tradovate trade accounts. Each is
+        # independently toggleable for execution. See _normalize_accounts.
+        self.accounts = self._normalize_accounts(entry)
         self._token = entry.get("access_token") or None
         self._md_token = entry.get("md_token") or None
         self._token_expires = _parse_iso(entry.get("token_expires")) or _decode_jwt_exp(self._token)
@@ -93,6 +96,26 @@ class TradovateSession:
         self._contract_cache: dict[str, tuple[str, datetime]] = {}
         if self._token_expires:
             state.set_session_status(self.name, token_expires=self._token_expires.isoformat())
+
+    def _normalize_accounts(self, entry: dict[str, Any]) -> list[dict[str, Any]]:
+        """Build the per-login list of trade accounts with their execution toggles.
+
+        Falls back to a single implicit account (from account_spec/account_id) for
+        configs saved before multi-account support, so behaviour is preserved until
+        the next Connect & Verify discovers the full list.
+        """
+        raw = entry.get("accounts")
+        if raw:
+            return [{
+                "spec": a.get("spec") or a.get("account_spec") or "",
+                "id": a.get("id") or a.get("account_id") or 0,
+                "enabled": bool(a.get("enabled", True)),
+                "qty_multiplier": float(a.get("qty_multiplier", self.qty_multiplier) or 1),
+            } for a in raw]
+        if self.account_spec or self.account_id:
+            return [{"spec": self.account_spec, "id": self.account_id,
+                     "enabled": True, "qty_multiplier": self.qty_multiplier}]
+        return []
 
     # ------------------------------------------------------------------ http
     def _base_url(self) -> str:
@@ -188,30 +211,58 @@ class TradovateSession:
     async def list_accounts(self) -> list[dict[str, Any]]:
         return await self._request("GET", "/account/list") or []
 
+    def _merge_accounts(self, discovered: list[dict[str, Any]]) -> None:
+        """Merge the accounts returned by Tradovate with the stored toggles.
+
+        Existing on/off and qty-multiplier choices are preserved by account spec.
+        Newly discovered accounts default to enabled only if none existed before
+        (so adding a fresh login starts trading), otherwise they are added disabled
+        so a new account never starts trading without an explicit opt-in.
+        """
+        prev = {a["spec"]: a for a in self.accounts if a.get("spec")}
+        first_time = not prev
+        merged: list[dict[str, Any]] = []
+        for i, a in enumerate(discovered):
+            spec = a.get("name") or ""
+            old = prev.get(spec)
+            if old is not None:
+                enabled = bool(old.get("enabled", True))
+                mult = float(old.get("qty_multiplier", self.qty_multiplier) or 1)
+            else:
+                enabled = first_time and i == 0
+                mult = self.qty_multiplier
+            merged.append({"spec": spec, "id": a.get("id") or 0,
+                           "enabled": enabled, "qty_multiplier": mult})
+        self.accounts = merged
+
     async def connect(self) -> dict[str, Any]:
         try:
             await self._get_token()
-            accounts = await self.list_accounts()
-            account = None
-            if self.account_spec:
-                account = next((a for a in accounts if a.get("name") == self.account_spec), None)
-            account = account or (accounts[0] if accounts else None)
-            if account:
-                self.account_spec = account["name"]
-                self.account_id = account["id"]
-                try:
-                    config.update_token_account(
-                        self.idx, account_spec=self.account_spec, account_id=self.account_id)
-                except OSError:
-                    pass
+            discovered = await self.list_accounts()
+            self._merge_accounts(discovered)
+            primary = next((a for a in self.accounts if a.get("enabled")), None) \
+                or (self.accounts[0] if self.accounts else None)
+            if primary:
+                self.account_spec = primary["spec"]
+                self.account_id = primary["id"]
+            try:
+                config.update_token_account(
+                    self.idx, accounts=self.accounts,
+                    account_spec=self.account_spec, account_id=self.account_id)
+            except OSError:
+                pass
             me = await self._request("GET", "/auth/me")
+            enabled_n = sum(1 for a in self.accounts if a.get("enabled"))
             state.set_session_status(
                 self.name, connected=True, environment=self.environment,
                 account_spec=self.account_spec, account_id=self.account_id,
+                accounts_total=len(self.accounts), accounts_enabled=enabled_n,
                 user=(me or {}).get("name", ""), last_error="",
                 last_check=datetime.now(timezone.utc).isoformat(),
             )
-            state.log_event("info", f"[{self.name}] connected ({self.account_spec})")
+            state.log_event(
+                "info", f"[{self.name}] connected — {len(self.accounts)} account(s), "
+                f"{enabled_n} enabled for execution")
         except Exception as exc:  # noqa: BLE001
             state.set_session_status(self.name, connected=False, last_error=str(exc),
                                      last_check=datetime.now(timezone.utc).isoformat())
@@ -265,9 +316,14 @@ class TradovateSession:
 
     # ---------------------------------------------------------------- orders
     async def place_order(self, *, symbol: str, action: str, qty: int, order_type: str,
-                          price: float | None = None, stop_price: float | None = None) -> dict[str, Any]:
+                          price: float | None = None, stop_price: float | None = None,
+                          account_spec: str | None = None, account_id: int | None = None,
+                          account_name: str | None = None) -> dict[str, Any]:
+        spec = account_spec or self.account_spec
+        aid = account_id or self.account_id
+        name = account_name or self.name
         body: dict[str, Any] = {
-            "accountSpec": self.account_spec, "accountId": self.account_id,
+            "accountSpec": spec, "accountId": aid,
             "action": action, "symbol": symbol, "orderQty": qty,
             "orderType": order_type, "isAutomated": True,
         }
@@ -279,7 +335,7 @@ class TradovateSession:
             body["stopPrice"] = sent_stop
         data = await self._request("POST", "/order/placeorder", json=body)
         result = {
-            "action": action, "symbol": symbol, "account": self.name, "qty": qty,
+            "action": action, "symbol": symbol, "account": name, "qty": qty,
             "order_type": order_type, "price": sent_price, "stop_price": sent_stop,
             "order_id": (data or {}).get("orderId"),
             "status": "submitted" if data and data.get("orderId") else "rejected",
@@ -289,15 +345,16 @@ class TradovateSession:
         return result
 
     async def modify_order(self, order_id: int, *, qty: int, order_type: str,
-                           price: float | None = None, stop_price: float | None = None) -> dict[str, Any]:
+                           price: float | None = None, stop_price: float | None = None,
+                           account_name: str | None = None) -> dict[str, Any]:
         body: dict[str, Any] = {"orderId": order_id, "orderQty": qty, "orderType": order_type}
         if order_type in ("Limit", "StopLimit") and price is not None:
             body["price"] = price
         if order_type in ("Stop", "StopLimit") and stop_price is not None:
             body["stopPrice"] = stop_price
         data = await self._request("POST", "/order/modifyorder", json=body)
-        state.log_order({"action": "Modify", "symbol": "", "account": self.name, "qty": qty,
-                         "order_type": order_type, "price": body.get("price"),
+        state.log_order({"action": "Modify", "symbol": "", "account": account_name or self.name,
+                         "qty": qty, "order_type": order_type, "price": body.get("price"),
                          "stop_price": body.get("stopPrice"), "order_id": order_id,
                          "status": "modified", "raw": data})
         return data
@@ -305,46 +362,101 @@ class TradovateSession:
     async def cancel_order(self, order_id: int) -> dict[str, Any]:
         return await self._request("POST", "/order/cancelorder", json={"orderId": order_id})
 
-    async def working_orders(self) -> list[dict[str, Any]]:
+    async def working_orders(self, account_id: int | None = None) -> list[dict[str, Any]]:
+        aid = account_id or self.account_id
         orders = await self._request("GET", "/order/list") or []
         active = {"Working", "Pending", "PendingNew", "Suspended"}
         return [o for o in orders
-                if o.get("ordStatus") in active and o.get("accountId") == self.account_id]
+                if o.get("ordStatus") in active and o.get("accountId") == aid]
 
-    async def liquidate_position(self, symbol: str) -> dict[str, Any]:
+    async def liquidate_position(self, symbol: str, *, account_id: int | None = None,
+                                 account_name: str | None = None) -> dict[str, Any]:
+        aid = account_id or self.account_id
         contract = await self._request("GET", "/contract/find", params={"name": symbol})
         if not contract or not contract.get("id"):
             raise TradovateError(f"Cannot resolve contract id for {symbol}")
         data = await self._request("POST", "/order/liquidateposition",
-                                   json={"accountId": self.account_id,
+                                   json={"accountId": aid,
                                          "contractId": contract["id"], "admin": False})
-        state.log_order({"action": "Liquidate", "symbol": symbol, "account": self.name,
+        state.log_order({"action": "Liquidate", "symbol": symbol,
+                         "account": account_name or self.name,
                          "qty": 0, "order_type": "Market", "status": "submitted", "raw": data})
         return data
 
-    async def positions(self) -> list[dict[str, Any]]:
+    async def positions(self, *, account_id: int | None = None,
+                        account_name: str | None = None) -> list[dict[str, Any]]:
+        aid = account_id or self.account_id
+        name = account_name or self.name
         raw = await self._request("GET", "/position/list") or []
         names: dict[int, str] = {}
         out: list[dict[str, Any]] = []
         for p in raw:
-            if p.get("accountId") != self.account_id or not (p.get("netPos") or 0):
+            if p.get("accountId") != aid or not (p.get("netPos") or 0):
                 continue
             cid = p.get("contractId")
-            name = names.get(cid)
-            if name is None:
+            cname = names.get(cid)
+            if cname is None:
                 try:
                     item = await self._request("GET", "/contract/item", params={"id": cid})
-                    name = (item or {}).get("name") or str(cid)
+                    cname = (item or {}).get("name") or str(cid)
                 except TradovateError:
-                    name = str(cid)
-                names[cid] = name
-            out.append({"symbol": name, "account": self.name, "netPos": p.get("netPos"),
+                    cname = str(cid)
+                names[cid] = cname
+            out.append({"symbol": cname, "account": name, "netPos": p.get("netPos"),
                         "netPrice": p.get("netPrice")})
         return out
 
 
+class AccountExecutor:
+    """One trade account inside a :class:`TradovateSession`, used as an order target.
+
+    Exposes the same interface the signal engine expects (``name``,
+    ``qty_multiplier``, ``resolve_contract``, ``place_order`` …) but binds every
+    call to a specific Tradovate account, so a single login can mirror orders to
+    several accounts. The underlying session is shared (one token, one contract
+    cache, one renewal loop).
+    """
+
+    def __init__(self, session: "TradovateSession", account: dict[str, Any]) -> None:
+        self.session = session
+        self.spec = account.get("spec") or session.account_spec
+        self.id = account.get("id") or session.account_id
+        self.qty_multiplier = account.get("qty_multiplier", 1) or 1
+        # Unique per trade account (Tradovate specs are unique); used to key the
+        # bridge's active-trade tracking and per-account order results.
+        self.name = self.spec or session.name
+
+    async def resolve_contract(self, root_or_symbol: str) -> str:
+        return await self.session.resolve_contract(root_or_symbol)
+
+    async def place_order(self, **kw: Any) -> dict[str, Any]:
+        return await self.session.place_order(
+            account_spec=self.spec, account_id=self.id, account_name=self.name, **kw)
+
+    async def modify_order(self, order_id: int, **kw: Any) -> dict[str, Any]:
+        return await self.session.modify_order(order_id, account_name=self.name, **kw)
+
+    async def cancel_order(self, order_id: int) -> dict[str, Any]:
+        return await self.session.cancel_order(order_id)
+
+    async def working_orders(self) -> list[dict[str, Any]]:
+        return await self.session.working_orders(account_id=self.id)
+
+    async def liquidate_position(self, symbol: str) -> dict[str, Any]:
+        return await self.session.liquidate_position(
+            symbol, account_id=self.id, account_name=self.name)
+
+    async def positions(self) -> list[dict[str, Any]]:
+        return await self.session.positions(account_id=self.id, account_name=self.name)
+
+
 class SessionManager:
-    """Builds and tracks one TradovateSession per configured token account."""
+    """Builds and tracks one TradovateSession per configured token (login).
+
+    Each login can expose several trade accounts; ``enabled`` flattens those into
+    per-account executors so every signal can fan out to all accounts that are
+    switched on for execution.
+    """
 
     def __init__(self) -> None:
         self._sessions: list[TradovateSession] | None = None
@@ -358,8 +470,20 @@ class SessionManager:
             self.reload()
         return list(self._sessions or [])
 
-    def enabled(self) -> list[TradovateSession]:
-        return [s for s in self.all() if s.enabled]
+    def all_accounts(self) -> list[tuple["TradovateSession", dict[str, Any]]]:
+        """Every (session, account) pair across all logins — for the overview."""
+        return [(s, a) for s in self.all() for a in s.accounts]
+
+    def enabled(self) -> list[AccountExecutor]:
+        """Executors for every trade account switched on under an enabled login."""
+        out: list[AccountExecutor] = []
+        for s in self.all():
+            if not s.enabled:
+                continue
+            for a in s.accounts:
+                if a.get("enabled"):
+                    out.append(AccountExecutor(s, a))
+        return out
 
 
 manager = SessionManager()

@@ -4,6 +4,18 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 2.1.0
+- **Multiple trade accounts per login, with per-account execution on/off.** One
+  Tradovate access token often grants access to several trade accounts. Click
+  **Connect & Verify** (or *Discover / Refresh*) and the bridge now lists **every**
+  account under each login in the new **Settings → Trade Accounts** card. Switch
+  execution on/off per account and set a per-account **Qty ×** — each signal fans
+  out to exactly the accounts you switched on.
+  - The Monitor header now shows *Logins connected* and *Accounts executing*.
+  - Newly discovered accounts default to **off** (except the very first on a fresh
+    login), so an account never starts trading without an explicit opt-in.
+  - Existing single-account setups keep working unchanged until you refresh.
+
 ## 2.0.1
 - **Fix: dashboard buttons dead after the v2.0.0 upgrade** (e.g. "+ Add account"
   did nothing). The browser was serving the cached v1.5.0 `app.js` against the new
