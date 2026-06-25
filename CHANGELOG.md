@@ -4,6 +4,12 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 2.0.1
+- **Fix: dashboard buttons dead after the v2.0.0 upgrade** (e.g. "+ Add account"
+  did nothing). The browser was serving the cached v1.5.0 `app.js` against the new
+  HTML. Static assets are now cache-busted with `?v=<version>`, so the dashboard JS
+  and CSS always match the deployed version. (If you still see it, hard-refresh once.)
+
 ## 2.0.0
 - **Token-only, multiple Tradovate accounts** (breaking change). Username/password
   login is removed entirely — there is no more single-login "Accounts" model. Each

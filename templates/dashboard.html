@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Tradovate Webhook Bridge</title>
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/style.css?v={{ version }}" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
 </head>
 <body>
@@ -672,6 +672,6 @@ $ ngrok http 9000</pre>
   </main>
 
   <div id="toast" class="toast"></div>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v={{ version }}"></script>
 </body>
 </html>
