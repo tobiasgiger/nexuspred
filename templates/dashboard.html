@@ -280,6 +280,12 @@
         <label>Webhook <select id="testWebhookSelect"></select></label>
         <p class="hint">Point this strategy's TradingView alert to this URL (POST, JSON body):</p>
         <div class="url-box"><code id="webhookUrl">—</code><button class="btn btn-ghost" id="copyUrl">Copy</button></div>
+        <div class="card-head" style="margin-top:14px">
+          <span class="hint">Alert message — paste into the TradingView alert's "Message" box</span>
+          <button type="button" class="btn btn-ghost" id="copyTemplate">Copy</button>
+        </div>
+        <pre class="code" id="alertTemplate"></pre>
+        <p class="hint" id="alertTemplateHint"></p>
       </div>
       <div class="card">
         <div class="card-head"><h2>Send Test Signal</h2></div>

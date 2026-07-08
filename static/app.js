@@ -286,6 +286,52 @@ $("#copyUrl").addEventListener("click", () => {
   toast("Webhook URL copied", "success");
 });
 
+/**
+ * TradingView alert-message JSON for a given strategy type, using TradingView's
+ * own placeholders ({{strategy.order.action}}, {{strategy.order.contracts}},
+ * {{ticker}}, {{strategy.order.price}}) so it can be pasted straight into the
+ * alert's Message box. Numeric fields are unquoted so the substituted value
+ * stays a JSON number, not a string.
+ */
+function alertMessageTemplate(strategy) {
+  if (strategy === "bracket") {
+    const json = JSON.stringify({
+      action: "{{strategy.order.action}}",
+      symbol: "{{ticker}}",
+      entry: "{{strategy.order.price}}",
+      sl: 0, tp1: 0, tp2: 0, tp3: 0,
+    }, null, 2).replace('"{{strategy.order.price}}"', "{{strategy.order.price}}");
+    return {
+      json,
+      hint: "action/symbol/entry are filled in automatically by TradingView. There's no "
+        + "built-in placeholder for sl/tp1/tp2/tp3 — replace those 0s with your own "
+        + "strategy's stop/target levels (e.g. {{plot(\"SL\")}} if you plot them in Pine), "
+        + "or drop any tp you don't use.",
+    };
+  }
+  const json = JSON.stringify({
+    action: "{{strategy.order.action}}",
+    symbol: "{{ticker}}",
+    qty: "{{strategy.order.contracts}}",
+  }, null, 2).replace('"{{strategy.order.contracts}}"', "{{strategy.order.contracts}}");
+  return {
+    json,
+    hint: "action, symbol and qty are filled in automatically by TradingView from the "
+      + "strategy order — nothing to edit.",
+  };
+}
+
+function renderAlertTemplate(webhook, preEl, hintEl) {
+  if (!webhook) {
+    preEl.textContent = "—";
+    hintEl.textContent = "";
+    return;
+  }
+  const t = alertMessageTemplate(webhook.strategy);
+  preEl.textContent = t.json;
+  hintEl.textContent = t.hint;
+}
+
 function selectedTestWebhook() {
   const sel = $("#testWebhookSelect");
   return WEBHOOKS.find((w) => w.id === sel.value) || null;
@@ -296,6 +342,7 @@ async function populateTestWebhookSelect() {
   if (!WEBHOOKS.length) {
     sel.innerHTML = '<option value="">No webhooks — create one in the Webhooks tab</option>';
     updateWebhookUrl("");
+    renderAlertTemplate(null, $("#alertTemplate"), $("#alertTemplateHint"));
     return;
   }
   const prev = sel.value;
@@ -303,10 +350,17 @@ async function populateTestWebhookSelect() {
     `<option value="${w.id}">${escapeHtml(w.name)} (${w.strategy})</option>`).join("");
   sel.value = WEBHOOKS.some((w) => w.id === prev) ? prev : WEBHOOKS[0].id;
   updateWebhookUrl(selectedTestWebhook()?.token);
+  renderAlertTemplate(selectedTestWebhook(), $("#alertTemplate"), $("#alertTemplateHint"));
 }
 
 $("#testWebhookSelect").addEventListener("change", () => {
   updateWebhookUrl(selectedTestWebhook()?.token);
+  renderAlertTemplate(selectedTestWebhook(), $("#alertTemplate"), $("#alertTemplateHint"));
+});
+
+$("#copyTemplate").addEventListener("click", () => {
+  navigator.clipboard.writeText($("#alertTemplate").textContent);
+  toast("Alert message copied", "success");
 });
 
 const PRESETS = {
@@ -511,6 +565,7 @@ function webhookAccountRows(webhook) {
 
 function webhookCard(w) {
   const url = `${location.origin}/webhook/${w.token}`;
+  const tmpl = alertMessageTemplate(w.strategy);
   return `
   <div class="card wh-card" data-id="${w.id}">
     <div class="card-head">
@@ -539,6 +594,12 @@ function webhookCard(w) {
       <code class="wh-url">${url}</code>
       <button type="button" class="btn btn-ghost wh-copy">Copy</button>
     </div>
+    <div class="card-head" style="margin-top:14px">
+      <span class="hint">Alert message — paste into the TradingView alert's "Message" box</span>
+      <button type="button" class="btn btn-ghost wh-copy-template">Copy</button>
+    </div>
+    <pre class="code wh-template">${escapeHtml(tmpl.json)}</pre>
+    <p class="hint wh-template-hint">${tmpl.hint}</p>
     <table class="data-table wh-accounts-table">
       <thead><tr><th>Enabled</th><th>Login</th><th>Account</th><th>Env</th><th>Qty ×</th></tr></thead>
       <tbody>${webhookAccountRows(w)}</tbody>
@@ -568,6 +629,14 @@ function wireWebhookCard(card) {
   const tpLabel = card.querySelector(".wh-tp-qty-label");
   strategySel.addEventListener("change", () => {
     tpLabel.style.display = strategySel.value === "bracket" ? "" : "none";
+    const t = alertMessageTemplate(strategySel.value);
+    card.querySelector(".wh-template").textContent = t.json;
+    card.querySelector(".wh-template-hint").textContent = t.hint;
+  });
+
+  card.querySelector(".wh-copy-template").addEventListener("click", () => {
+    navigator.clipboard.writeText(card.querySelector(".wh-template").textContent);
+    toast("Alert message copied", "success");
   });
 
   card.querySelector(".wh-copy").addEventListener("click", () => {

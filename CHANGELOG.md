@@ -4,6 +4,14 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 2.2.1
+- **Ready-to-paste alert template** below each webhook's URL (Webhooks tab and
+  Test & Webhook tab): TradingView JSON built from its own placeholders
+  (`{{strategy.order.action}}`, `{{strategy.order.contracts}}`, `{{ticker}}`,
+  `{{strategy.order.price}}`) matching that webhook's strategy — `simple` gets
+  action/symbol/qty, `bracket` gets action/symbol/entry plus sl/tp1/tp2/tp3
+  placeholders to fill in from the strategy's own levels. One click to copy.
+
 ## 2.2.0
 - **Multi-webhook routing, one URL per strategy.** New **Webhooks** tab:
   create/edit/delete a dedicated `/webhook/<token>` per strategy, each with its
