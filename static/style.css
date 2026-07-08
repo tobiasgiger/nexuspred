@@ -115,6 +115,16 @@ main { padding: 24px; max-width: 1200px; margin: 0 auto; }
 .card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
 .card h2 { font-size: 14px; margin: 0; color: var(--text); font-weight: 600; letter-spacing: 0.2px; }
 
+/* Collapsible cards: click the head to expand/collapse; starts collapsed. */
+.card.collapsible > .card-head { cursor: pointer; user-select: none; }
+.card.collapsible.collapsed > .card-head { margin-bottom: 0; }
+.card.collapsible.collapsed > .card-body { display: none; }
+.card-toggle {
+  flex: 0 0 auto; margin-left: 10px; color: var(--text-dim); font-size: 11px;
+  transition: transform 0.15s ease; display: inline-block;
+}
+.card.collapsible:not(.collapsed) > .card-head .card-toggle { transform: rotate(90deg); }
+
 .stat { text-align: left; }
 .stat-label { color: var(--text-dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px; }
 .stat-value { font-size: 22px; font-weight: 600; margin-top: 6px; }

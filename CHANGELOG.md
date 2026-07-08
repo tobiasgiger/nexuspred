@@ -4,6 +4,16 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 2.3.0
+- **Collapsible cards, collapsed by default.** Every card across all tabs
+  (Monitor, Webhooks, Settings, Logs, Test & Webhook, Simulator, Setup Guide)
+  is now an accordion you expand by clicking its header — a much shorter page
+  to scan. Small stat tiles, the guide's part dividers, and its intro/TOC card
+  are left as-is (nothing to collapse). Clicking a table-of-contents link
+  auto-expands the card it jumps to. Buttons, toggles, and inputs inside a
+  card header (e.g. "Refresh", the webhook Enabled switch) still work
+  normally and don't trigger the collapse.
+
 ## 2.2.1
 - **Ready-to-paste alert template** below each webhook's URL (Webhooks tab and
   Test & Webhook tab): TradingView JSON built from its own placeholders

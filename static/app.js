@@ -38,6 +38,49 @@ $$(".tab").forEach((tab) => {
   });
 });
 
+/* ----------------------------------------------------- collapsible cards */
+// Every .card becomes an accordion (collapsed by default) except small stat
+// tiles, the guide's section dividers, and its intro card (holds the TOC).
+// Safe to call repeatedly (e.g. after re-rendering the Webhooks list) —
+// already-wired cards are skipped via the collapsibleInit marker.
+function makeCardsCollapsible(root = document) {
+  root.querySelectorAll(".card").forEach((card) => {
+    if (card.dataset.collapsibleInit) return;
+    if (card.classList.contains("stat") || card.classList.contains("part-divider")
+      || card.classList.contains("guide-intro")) return;
+    const head = card.querySelector(":scope > .card-head");
+    if (!head) return;
+    card.dataset.collapsibleInit = "1";
+    card.classList.add("collapsible", "collapsed");
+
+    const body = document.createElement("div");
+    body.className = "card-body";
+    while (head.nextSibling) body.appendChild(head.nextSibling);
+    card.appendChild(body);
+
+    const toggle = document.createElement("span");
+    toggle.className = "card-toggle";
+    toggle.textContent = "▸";
+    head.appendChild(toggle);
+
+    head.addEventListener("click", (e) => {
+      if (e.target.closest("button, a, input, select, textarea, label")) return;
+      card.classList.toggle("collapsed");
+    });
+  });
+}
+
+// Jumping to an anchor (e.g. the guide's table of contents) should expand
+// whatever collapsed card it lands in, not just scroll to a closed card.
+$$('a[href^="#"]').forEach((a) => {
+  a.addEventListener("click", () => {
+    const target = document.getElementById(a.getAttribute("href").slice(1));
+    if (target) target.classList.remove("collapsed");
+  });
+});
+
+makeCardsCollapsible();
+
 /* --------------------------------------------------------------- status */
 async function refreshStatus() {
   try {
@@ -621,6 +664,7 @@ function renderWebhooks() {
   }
   list.innerHTML = WEBHOOKS.map(webhookCard).join("");
   list.querySelectorAll(".wh-card").forEach(wireWebhookCard);
+  makeCardsCollapsible(list);
 }
 
 function wireWebhookCard(card) {
