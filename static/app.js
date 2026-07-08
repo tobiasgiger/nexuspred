@@ -39,10 +39,13 @@ $$(".tab").forEach((tab) => {
 });
 
 /* ----------------------------------------------------- collapsible cards */
-// Every .card becomes an accordion (collapsed by default) except small stat
-// tiles, the guide's section dividers, and its intro card (holds the TOC).
-// Safe to call repeatedly (e.g. after re-rendering the Webhooks list) —
-// already-wired cards are skipped via the collapsibleInit marker.
+// Only the Webhooks, Settings and Setup Guide tabs get the accordion
+// treatment (they're the ones with many stacked cards) — Monitor, Logs,
+// Test & Webhook and Simulator stay as always-open cards. Within a treated
+// tab, every .card collapses by default except small stat tiles, the guide's
+// section dividers, and its intro card (holds the TOC). Safe to call
+// repeatedly (e.g. after re-rendering the Webhooks list) — already-wired
+// cards are skipped via the collapsibleInit marker.
 function makeCardsCollapsible(root = document) {
   root.querySelectorAll(".card").forEach((card) => {
     if (card.dataset.collapsibleInit) return;
@@ -79,7 +82,7 @@ $$('a[href^="#"]').forEach((a) => {
   });
 });
 
-makeCardsCollapsible();
+["#tab-webhooks", "#tab-settings", "#tab-guide"].forEach((sel) => makeCardsCollapsible($(sel)));
 
 /* --------------------------------------------------------------- status */
 async function refreshStatus() {

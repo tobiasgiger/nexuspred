@@ -4,6 +4,11 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 2.3.1
+- Scope the collapsible-cards treatment (2.3.0) to just **Webhooks**,
+  **Settings** and **Setup Guide** — the tabs with several stacked cards.
+  Monitor, Logs, Test & Webhook and Simulator go back to always-open cards.
+
 ## 2.3.0
 - **Collapsible cards, collapsed by default.** Every card across all tabs
   (Monitor, Webhooks, Settings, Logs, Test & Webhook, Simulator, Setup Guide)
