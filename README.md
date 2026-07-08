@@ -36,6 +36,9 @@ configuration and monitoring, and a built-in GitHub auto-updater.
   entry + tp1/tp2/tp3/sl flow described above).
 - **Safety first**: trading is **disabled by default**, every webhook URL has its own
   unguessable secret token, and an optional passphrase can be enforced in the alert body.
+- **Alerts** (Settings → Alerts): Discord webhook and/or email, each independently
+  toggled, for connection lost/restored (which account + broker) and trade executed
+  (which accounts + strategy, Discord only).
 
 ---
 
@@ -235,6 +238,30 @@ Token lifecycle:
   persistent disk is attached.
 - Configure the loop with *health-check interval* (default 60s; `0` disables). Trigger a
   check on demand with **Check now** or `GET /api/health`.
+
+## Alerts
+
+**Settings → Alerts** — two channels, each with its own on/off switch:
+
+- **Discord** — a webhook URL (Discord channel → *Edit Channel → Integrations → Webhooks*).
+  Optionally prefixes every message with `@everyone`.
+- **Email** — SMTP, defaults to Gmail (`smtp.gmail.com:587`). Use a Gmail **App Password**
+  under your Google Account's security settings, not your normal login password (Gmail
+  rejects plain passwords for SMTP). Notify address defaults to your own.
+
+Three triggers, each independently toggled:
+
+| Trigger | Channels | Detail included |
+|---|---|---|
+| Connection lost | Discord + email | which account, environment (demo/live) and error |
+| Connection restored | Discord + email | which account and environment |
+| Trade executed | Discord only | which webhook/strategy, action, contract, accounts |
+
+Connection lost/restored only fires on the actual transition (never on the first
+observation of a session, and never twice in a row for the same state) — so you get one
+alert when it drops and one when it comes back, not a repeat every health check. A failed
+Discord POST or SMTP send is logged as a warning and never blocks a health check or a
+trade.
 
 ## Symbol mapping
 

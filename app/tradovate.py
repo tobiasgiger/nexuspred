@@ -16,7 +16,7 @@ from typing import Any
 
 import httpx
 
-from . import config, state
+from . import alerts, config, state
 
 LIVE_BASE = "https://live.tradovateapi.com/v1"
 DEMO_BASE = "https://demo.tradovateapi.com/v1"
@@ -235,6 +235,18 @@ class TradovateSession:
                            "enabled": enabled, "qty_multiplier": mult})
         self.accounts = merged
 
+    async def _set_connected(self, connected: bool, **fields: Any) -> None:
+        """Update connection status, firing a connection lost/restored alert on
+        transition. The very first observation of a session is never alerted
+        on (there's no prior state to have transitioned from)."""
+        had_prior = self.name in state.sessions
+        was_connected = state.session_status(self.name).get("connected") if had_prior else None
+        state.set_session_status(self.name, connected=connected, **fields)
+        if had_prior and was_connected and not connected:
+            await alerts.connection_lost(self.name, self.environment, fields.get("last_error", ""))
+        elif had_prior and not was_connected and connected:
+            await alerts.connection_restored(self.name, self.environment)
+
     async def connect(self) -> dict[str, Any]:
         try:
             await self._get_token()
@@ -253,8 +265,8 @@ class TradovateSession:
                 pass
             me = await self._request("GET", "/auth/me")
             enabled_n = sum(1 for a in self.accounts if a.get("enabled"))
-            state.set_session_status(
-                self.name, connected=True, environment=self.environment,
+            await self._set_connected(
+                True, environment=self.environment,
                 account_spec=self.account_spec, account_id=self.account_id,
                 accounts_total=len(self.accounts), accounts_enabled=enabled_n,
                 user=(me or {}).get("name", ""), last_error="",
@@ -264,25 +276,25 @@ class TradovateSession:
                 "info", f"[{self.name}] connected — {len(self.accounts)} account(s), "
                 f"{enabled_n} enabled for execution")
         except Exception as exc:  # noqa: BLE001
-            state.set_session_status(self.name, connected=False, last_error=str(exc),
-                                     last_check=datetime.now(timezone.utc).isoformat())
+            await self._set_connected(False, last_error=str(exc),
+                                      last_check=datetime.now(timezone.utc).isoformat())
             state.log_event("error", f"[{self.name}] connect failed: {exc}")
             raise
         return state.session_status(self.name)
 
     async def health_check(self) -> dict[str, Any]:
         if not self._token:
-            state.set_session_status(self.name, connected=False, last_error="No token set",
-                                     last_check=datetime.now(timezone.utc).isoformat())
+            await self._set_connected(False, last_error="No token set",
+                                      last_check=datetime.now(timezone.utc).isoformat())
             return state.session_status(self.name)
         try:
             await self._get_token()
             me = await self._request("GET", "/auth/me")
-            state.set_session_status(self.name, connected=True, environment=self.environment,
-                                     account_spec=self.account_spec, user=(me or {}).get("name", ""),
-                                     last_error="")
+            await self._set_connected(True, environment=self.environment,
+                                      account_spec=self.account_spec, user=(me or {}).get("name", ""),
+                                      last_error="")
         except Exception as exc:  # noqa: BLE001
-            state.set_session_status(self.name, connected=False, last_error=str(exc))
+            await self._set_connected(False, last_error=str(exc))
         state.set_session_status(self.name, last_check=datetime.now(timezone.utc).isoformat())
         return state.session_status(self.name)
 

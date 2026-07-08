@@ -4,6 +4,24 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 2.4.0
+- **Alerts** (new Settings card): Discord webhook and/or email notifications,
+  each channel and each trigger independently toggled.
+  - **Connection lost** — which account and broker, sent to Discord + email.
+  - **Connection restored** — sent to Discord + email.
+  - **Trade executed** — which accounts and strategy, sent to Discord only.
+  - Discord messages can tag `@everyone`; email goes out via SMTP (defaults
+    to Gmail — use an App Password, not your login password). A failed send
+    is logged and never breaks a health check or a trade.
+  - Connection lost/restored is edge-triggered (fires once on the actual
+    transition, never on the first observation or while state is unchanged).
+- **UI**: expanding one card in a two-column row (e.g. Settings → Connection)
+  now expands its row-mate too, instead of leaving it collapsed-but-stretched
+  and empty-looking. Header buttons/switches (e.g. "+ Add account",
+  "Discover / Refresh") are now grouped flush right next to the
+  expand/collapse chevron instead of floating mid-row. Added breathing room
+  below "Save Settings" and other form-action rows.
+
 ## 2.3.1
 - Scope the collapsible-cards treatment (2.3.0) to just **Webhooks**,
   **Settings** and **Setup Guide** — the tabs with several stacked cards.

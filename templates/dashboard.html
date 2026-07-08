@@ -186,6 +186,60 @@
           </div>
         </div>
 
+        <div class="card" id="alertsCard">
+          <div class="card-head"><h2>Alerts</h2></div>
+          <p class="hint">Notify a Discord channel and/or an email address when something
+            happens. Each channel and each trigger below has its own on/off switch.</p>
+          <div class="grid grid-2">
+            <div>
+              <h3 class="sim-sub">Discord</h3>
+              <label class="switch-row">
+                <span>Discord alerts enabled</span>
+                <input type="checkbox" name="alert_discord_enabled" class="switch" />
+              </label>
+              <label>Webhook URL
+                <input name="alert_discord_webhook_url" type="password" autocomplete="off"
+                  placeholder="https://discord.com/api/webhooks/…" />
+              </label>
+              <label class="switch-row">
+                <span>Tag @everyone</span>
+                <input type="checkbox" name="alert_discord_mention_everyone" class="switch" />
+              </label>
+            </div>
+            <div>
+              <h3 class="sim-sub">Email</h3>
+              <label class="switch-row">
+                <span>Email alerts enabled</span>
+                <input type="checkbox" name="alert_email_enabled" class="switch" />
+              </label>
+              <label>Notify email <input name="alert_email_to" placeholder="you@example.com" /></label>
+              <details class="auth-advanced">
+                <summary>SMTP settings (e.g. Gmail with an App Password)</summary>
+                <label>SMTP host <input name="alert_smtp_host" placeholder="smtp.gmail.com" /></label>
+                <label>SMTP port <input name="alert_smtp_port" type="number" placeholder="587" /></label>
+                <label>SMTP username <input name="alert_smtp_username" autocomplete="off" placeholder="you@gmail.com" /></label>
+                <label>SMTP password
+                  <input name="alert_smtp_password" type="password" autocomplete="off"
+                    placeholder="Gmail App Password, not your login password" />
+                </label>
+              </details>
+            </div>
+          </div>
+          <h3 class="sim-sub">Triggers</h3>
+          <label class="switch-row">
+            <span>Connection lost (which account + broker) — Discord + email</span>
+            <input type="checkbox" name="alert_on_connection_lost" class="switch" />
+          </label>
+          <label class="switch-row">
+            <span>Connection restored — Discord + email</span>
+            <input type="checkbox" name="alert_on_connection_restored" class="switch" />
+          </label>
+          <label class="switch-row">
+            <span>Trade executed (which accounts + strategy) — Discord only</span>
+            <input type="checkbox" name="alert_on_trade_executed" class="switch" />
+          </label>
+        </div>
+
         <div class="form-actions">
           <button type="submit" class="btn btn-primary">Save Settings</button>
           <span class="save-hint" id="saveHint"></span>

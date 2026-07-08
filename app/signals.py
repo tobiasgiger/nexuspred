@@ -27,7 +27,7 @@ import threading
 import re
 from typing import Any
 
-from . import config, state
+from . import alerts, config, state
 from .simulator import sim_client
 from .tradovate import TradovateError, manager
 
@@ -245,6 +245,8 @@ async def _handle_simple_entry(payload, action, root, target, executors, active_
         "info", f"{tag}[{webhook.get('name', '?')}] {action.upper()} {contract} on "
         f"{len(acct_state)}/{len(executors)} account(s): {', '.join(acct_state)}"
     )
+    if acct_state and not tag:
+        await alerts.trade_executed(webhook.get("name", "?"), action, contract, list(acct_state))
     return {"status": "ok", "action": action, "contract": contract,
             "accounts": summary, "orders": orders, "simulated": tag != ""}
 
@@ -335,6 +337,8 @@ async def _handle_entry(payload, action, root, target, executors, active_map, ta
         "info", f"{tag}[{webhook.get('name', '?')}] Entry {action.upper()} {contract} "
         f"placed on {len(acct_state)}/{len(executors)} account(s): {', '.join(acct_state)}"
     )
+    if acct_state and not tag:
+        await alerts.trade_executed(webhook.get("name", "?"), action, contract, list(acct_state))
     return {"status": "ok", "action": action, "contract": contract,
             "accounts": summary, "orders": orders, "simulated": tag != ""}
 

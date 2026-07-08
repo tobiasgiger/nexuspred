@@ -61,14 +61,37 @@ function makeCardsCollapsible(root = document) {
     while (head.nextSibling) body.appendChild(head.nextSibling);
     card.appendChild(body);
 
+    // Group any existing header controls (e.g. "+ Add", the webhook Enabled
+    // switch) together with the toggle chevron so they sit flush at the
+    // right edge, instead of floating in the middle of the header.
+    const actions = document.createElement("div");
+    actions.className = "card-head-actions";
+    while (head.children.length > 1) actions.appendChild(head.children[1]);
+    head.appendChild(actions);
+
     const toggle = document.createElement("span");
     toggle.className = "card-toggle";
     toggle.textContent = "▸";
-    head.appendChild(toggle);
+    actions.appendChild(toggle);
 
     head.addEventListener("click", (e) => {
       if (e.target.closest("button, a, input, select, textarea, label")) return;
+      const wasCollapsed = card.classList.contains("collapsed");
+      // Expanding a card next to a still-collapsed sibling in the same grid
+      // row left the sibling stretched to match height but empty-looking
+      // (CSS grid rows share a height). Expand row-mates together instead.
+      let rowMates = [];
+      if (wasCollapsed) {
+        const grid = card.parentElement;
+        if (grid && grid.classList.contains("grid")) {
+          const myTop = card.getBoundingClientRect().top;
+          rowMates = [...grid.children].filter((c) =>
+            c !== card && c.classList.contains("collapsible") &&
+            Math.abs(c.getBoundingClientRect().top - myTop) < 2);
+        }
+      }
       card.classList.toggle("collapsed");
+      rowMates.forEach((c) => c.classList.remove("collapsed"));
     });
   });
 }

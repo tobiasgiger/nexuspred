@@ -89,6 +89,23 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # The /webhook/<secret> endpoint is never behind this (TradingView can't auth).
     "dashboard_password": "",
 
+    # --- Alerts -----------------------------------------------------------------
+    # Two channels (each independently toggled) and three triggers (each with
+    # its own on/off switch). Trade-executed is Discord-only by design; the
+    # other two also go to email.
+    "alert_discord_enabled": False,
+    "alert_discord_webhook_url": "",       # Discord "Webhook URL" from channel settings
+    "alert_discord_mention_everyone": True,  # prefix messages with @everyone
+    "alert_email_enabled": False,
+    "alert_email_to": "speckbrigade@gmail.com",
+    "alert_smtp_host": "smtp.gmail.com",
+    "alert_smtp_port": 587,
+    "alert_smtp_username": "",             # e.g. your Gmail address
+    "alert_smtp_password": "",             # Gmail: use an App Password, not your login password
+    "alert_on_connection_lost": True,
+    "alert_on_connection_restored": True,
+    "alert_on_trade_executed": True,
+
     # --- Auto-updater ---------------------------------------------------------
     "auto_check_updates": True,
 
@@ -224,7 +241,10 @@ def new_webhook(
 
 
 # Fields that must never be returned to the browser in plain text.
-SECRET_FIELDS = {"webhook_passphrase", "dashboard_password"}
+SECRET_FIELDS = {
+    "webhook_passphrase", "dashboard_password",
+    "alert_discord_webhook_url", "alert_smtp_password",
+}
 
 # Per-entry secret fields inside the token_accounts list.
 _TOKEN_SECRETS = ("access_token", "md_token")

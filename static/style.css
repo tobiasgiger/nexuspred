@@ -119,8 +119,15 @@ main { padding: 24px; max-width: 1200px; margin: 0 auto; }
 .card.collapsible > .card-head { cursor: pointer; user-select: none; }
 .card.collapsible.collapsed > .card-head { margin-bottom: 0; }
 .card.collapsible.collapsed > .card-body { display: none; }
+/* A collapsed card shouldn't stretch to match an expanded sibling's height
+   in the same CSS grid row (the JS also expands row-mates together, but
+   this keeps things sane if that ever doesn't apply, e.g. narrow layouts). */
+.grid > .card.collapsible.collapsed { align-self: start; }
+/* Header controls (buttons, switches) + the toggle chevron, grouped flush
+   right instead of floating wherever space-between happens to land them. */
+.card-head-actions { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
 .card-toggle {
-  flex: 0 0 auto; margin-left: 10px; color: var(--text-dim); font-size: 11px;
+  flex: 0 0 auto; color: var(--text-dim); font-size: 11px;
   transition: transform 0.15s ease; display: inline-block;
 }
 .card.collapsible:not(.collapsed) > .card-head .card-toggle { transform: rotate(90deg); }
@@ -157,7 +164,7 @@ textarea { resize: vertical; font-family: "SF Mono", "Fira Code", Consolas, mono
 .switch::after { content: ""; position: absolute; width: 18px; height: 18px; border-radius: 50%; background: #fff; top: 3px; left: 3px; transition: left 0.2s; }
 .switch:checked::after { left: 23px; }
 
-.form-actions { display: flex; align-items: center; gap: 14px; margin-top: 8px; }
+.form-actions { display: flex; align-items: center; gap: 14px; margin-top: 8px; margin-bottom: 24px; }
 .save-hint { color: var(--green); font-size: 13px; }
 
 /* ---------------------------------------------------------------- tables */
