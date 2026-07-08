@@ -304,10 +304,12 @@ $ ngrok http 9000</pre>
     </div>
 
     <div class="card">
-      <div class="card-head"><h2>C4 · Enable accounts</h2></div>
+      <div class="card-head"><h2>C4 · Create a webhook per strategy</h2></div>
+      <p class="hint">Open the <strong>Webhooks</strong> tab and click <strong>+ Add
+        Webhook</strong> for each strategy you run — one dedicated URL per strategy.</p>
       <ol class="steps">
-        <li><span class="step-num">1</span><div>Settings → <strong>Accounts</strong>. Tick <strong>Enabled</strong> for every account to trade — each signal goes to <em>all</em> enabled accounts; disabled ones are ignored.</div></li>
-        <li><span class="step-num">2</span><div>(Optional) Set a <strong>Qty ×</strong> multiplier per account, then <strong>Save Accounts</strong>.</div></li>
+        <li><span class="step-num">1</span><div>Pick a <strong>strategy type</strong>: <code>simple</code> (just buy/sell the qty in the alert, no TP/SL) or <code>bracket</code> (TP/SL from tp1/tp2/tp3/sl in the payload).</div></li>
+        <li><span class="step-num">2</span><div>In that webhook's card, tick <strong>Enabled</strong> for every trade account this strategy should hit (from the accounts discovered in C2), and set a <strong>Qty ×</strong> multiplier per account. Click <strong>Save</strong>.</div></li>
       </ol>
     </div>
 
@@ -341,10 +343,10 @@ $ ngrok http 9000</pre>
     <div class="card">
       <div class="card-head"><h2>D1 · Your webhook URL</h2></div>
       <ol class="steps">
-        <li><span class="step-num">1</span><div>Set a strong <strong>Webhook secret</strong> in Settings and Save.</div></li>
-        <li><span class="step-num">2</span><div>Your URL (also shown on the <strong>Test &amp; Webhook</strong> tab):
-          <pre class="code">https://YOUR-SERVICE.onrender.com/webhook/YOUR_SECRET
-# self-host:  http://YOUR_HOST:9000/webhook/YOUR_SECRET (front with HTTPS — see B7)</pre></div></li>
+        <li><span class="step-num">1</span><div>Each webhook created in the <strong>Webhooks</strong> tab has its own secret URL, shown on its card (and selectable in <strong>Test &amp; Webhook</strong>).</div></li>
+        <li><span class="step-num">2</span><div>It looks like:
+          <pre class="code">https://YOUR-SERVICE.onrender.com/webhook/YOUR_TOKEN
+# self-host:  http://YOUR_HOST:9000/webhook/YOUR_TOKEN (front with HTTPS — see B7)</pre></div></li>
       </ol>
     </div>
 
@@ -427,7 +429,7 @@ $ ngrok http 9000</pre>
         <li><span class="step-num">?</span><div><strong>Disconnected / signal didn't go through</strong> — check <em>Connection Health</em>; the token auto-renews and webhooks re-authenticate on demand. Keep the host always-on (Starter plan / systemd) so renewal runs.</div></li>
         <li><span class="step-num">?</span><div><strong>“Update failed: Not a git checkout”</strong> — you used a ZIP; run <code>$ ./connect-git.sh</code> once.</div></li>
         <li><span class="step-num">?</span><div><strong>Signal rejected “not mapped”</strong> — add the symbol in Current Symbol Mapping (C5).</div></li>
-        <li><span class="step-num">?</span><div><strong>Nothing trades</strong> — is <strong>Trading enabled</strong> on and at least one account <strong>Enabled</strong>?</div></li>
+        <li><span class="step-num">?</span><div><strong>Nothing trades</strong> — is <strong>Trading enabled</strong> on, is the webhook itself <strong>Enabled</strong>, and does it have at least one account <strong>Enabled</strong> in the <strong>Webhooks</strong> tab?</div></li>
       </ol>
     </div>
   </main>

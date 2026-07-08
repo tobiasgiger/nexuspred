@@ -1,22 +1,24 @@
 """Translate incoming TradingView webhook signals into Tradovate orders.
 
-Supported signal shapes (see the screenshot / README for examples):
+Every signal arrives through a specific **webhook** (see ``config.py`` — each
+webhook has its own secret URL, its own routed trade accounts + qty
+multipliers, and a ``strategy`` that decides how the payload is executed:
 
-* ``action: "buy" | "sell"``  -> market entry (default qty) + TP limit orders
-  (1 contract each) + a protective stop-loss covering the whole position.
-* ``action: "close_all"``     -> cancel working orders for the symbol and flatten.
-* ``action: "move_sl"``       -> move the protective stop to ``new_sl``.
-* ``action: "trail_active"``  -> acknowledged/logged (trailing handled by the
-  strategy, which keeps sending ``move_sl`` updates).
-
-Order sizing rules (kept deliberately simple):
-* Initial entry: ``default_qty`` contracts, **Market** order.
-* Each take-profit present (tp1/tp2/tp3): ``tp_qty`` (1) contract, **Limit** order.
-* Stop-loss: covers the full entry quantity so ``close_all`` flattens everything.
+* ``"simple"``  -> ``action: "buy" | "sell"`` places a single Market (or Limit)
+  order sized by ``qty`` in the payload (falling back to the webhook's
+  ``default_qty``), scaled per account by that account's multiplier. No TP/SL
+  orders — just the execution. ``close_all`` flattens the tracked position.
+* ``"bracket"`` -> the original TP/SL flow: ``buy``/``sell`` opens a market
+  entry (webhook's ``default_qty`` contracts) + a TP limit order per
+  ``tp1``/``tp2``/``tp3`` present (webhook's ``tp_qty`` contracts each) + a
+  protective stop (``sl``) covering the full position. ``close_all`` cancels
+  working orders and flattens; ``move_sl`` moves the tracked stop;
+  ``trail_active`` resizes the stop to the remaining position.
 
 The same logic powers the **simulator**: passing ``simulate=True`` routes orders to
-an in-memory executor and uses a separate trade-tracking map, so you can rehearse a
-full scenario without credentials or risk.
+an in-memory executor (a synthetic bracket webhook + account) and uses a separate
+trade-tracking map, so you can rehearse a full scenario without credentials, risk,
+or a configured webhook.
 """
 from __future__ import annotations
 
@@ -34,9 +36,10 @@ class SignalError(Exception):
     """Raised for malformed or rejected signals."""
 
 
-# Per-symbol record of the active trade so management signals can find the
-# stop-loss order to modify. Reset when the position is closed. Live and
-# simulated trades are tracked separately so they never interfere.
+# Per-webhook, per-symbol record of the active trade so management signals can
+# find the stop-loss order to modify. Keyed by "<webhook_id>:<root>" so two
+# webhooks trading the same symbol never share state. Reset when the position
+# is closed. Live and simulated trades are tracked separately.
 _lock = threading.Lock()
 _active: dict[str, dict[str, Any]] = {}
 _sim_active: dict[str, dict[str, Any]] = {}
@@ -79,14 +82,58 @@ def _opposite(action: str) -> str:
     return "Sell" if action.lower() == "buy" else "Buy"
 
 
-async def process(payload: dict[str, Any], *, simulate: bool = False) -> dict[str, Any]:
+def _trade_key(webhook_id: str, root: str) -> str:
+    return f"{webhook_id}:{root}"
+
+
+def _synthetic_bracket_webhook(s: dict[str, Any]) -> dict[str, Any]:
+    """A stand-in webhook used only for ``simulate=True`` calls (no real webhook
+    context needed — the Simulator tab rehearses the bracket lifecycle)."""
+    return {
+        "id": "sim", "name": "Simulator", "strategy": "bracket",
+        "default_qty": s.get("default_qty", 3), "tp_qty": s.get("tp_qty", 1),
+        "accounts": [],
+    }
+
+
+def _webhook_executors(webhook: dict[str, Any]) -> list[Any]:
+    """Executors for a webhook's enabled (login, trade account) selections."""
+    out = []
+    for a in webhook.get("accounts") or []:
+        if not a.get("enabled"):
+            continue
+        ex = manager.executor_for(
+            a.get("token_idx"), a.get("spec"), a.get("qty_multiplier", 1)
+        )
+        if ex is None:
+            state.log_event(
+                "warn", f"Webhook '{webhook.get('name')}': account '{a.get('spec')}' "
+                "not found (deleted login/account?)"
+            )
+            continue
+        out.append(ex)
+    return out
+
+
+async def process(
+    payload: dict[str, Any], webhook: dict[str, Any] | None = None, *, simulate: bool = False
+) -> dict[str, Any]:
     """Validate, authorise and execute a webhook payload. Returns a summary dict.
+
+    ``webhook`` is the routing config (name/strategy/accounts) resolved by the
+    caller from the URL token; required unless ``simulate`` is True, in which
+    case a synthetic bracket webhook + the in-memory sim account is used.
 
     When ``simulate`` is True, orders are filled in memory (no Tradovate calls) and
     the live-only guards (trading switch, passphrase) are skipped.
     """
     s = config.load_settings()
     active_map = _sim_active if simulate else _active
+
+    if webhook is None:
+        if not simulate:
+            raise SignalError("No webhook context for this signal")
+        webhook = _synthetic_bracket_webhook(s)
 
     if not simulate:
         # passphrase (optional, defence in depth on top of the URL secret)
@@ -109,29 +156,103 @@ async def process(payload: dict[str, Any], *, simulate: bool = False) -> dict[st
         )
         return {"status": "skipped", "reason": "trading_disabled", "action": action}
 
-    executors = [sim_client] if simulate else manager.enabled()
+    executors = [sim_client] if simulate else _webhook_executors(webhook)
     if not executors:
-        state.log_event("warn", f"No enabled accounts — signal '{action}' ignored")
+        state.log_event(
+            "warn", f"No enabled accounts on webhook '{webhook.get('name')}' — "
+            f"signal '{action}' ignored"
+        )
         return {"status": "skipped", "reason": "no_enabled_accounts", "action": action}
 
     tag = "[SIM] " if simulate else ""
+    strategy = webhook.get("strategy", "simple")
 
     if action in ("buy", "sell"):
-        return await _handle_entry(payload, action, root, target, executors, active_map, tag)
+        if strategy == "simple":
+            return await _handle_simple_entry(payload, action, root, target, executors, active_map, tag, webhook)
+        return await _handle_entry(payload, action, root, target, executors, active_map, tag, webhook)
     if action == "close_all":
-        return await _handle_close_all(root, target, executors, active_map, tag)
+        return await _handle_close_all(root, target, executors, active_map, tag, webhook)
     if action == "move_sl":
-        return await _handle_move_sl(payload, root, executors, active_map, tag)
+        if strategy == "simple":
+            raise SignalError("'move_sl' is not supported on a 'simple' strategy webhook")
+        return await _handle_move_sl(payload, root, executors, active_map, tag, webhook)
     if action == "trail_active":
-        return await _handle_trail_active(payload, root, executors, active_map, tag)
+        if strategy == "simple":
+            state.log_event("info", f"{tag}Trailing active for {root} (no-op on 'simple' strategy)")
+            return {"status": "ok", "action": action, "note": "acknowledged", "simulated": simulate}
+        return await _handle_trail_active(payload, root, executors, active_map, tag, webhook)
 
     raise SignalError(f"Unknown action '{action}'")
 
 
-async def _handle_entry(payload, action, root, target, executors, active_map, tag):
+async def _handle_simple_entry(payload, action, root, target, executors, active_map, tag, webhook):
+    """Simple strategy: one Market (or Limit, if 'entry'/'price' given) order per
+    account, sized by the payload's qty (or the webhook default), no TP/SL."""
     s = config.load_settings()
-    base_qty = int(s.get("default_qty", 3))
-    base_tp_qty = int(s.get("tp_qty", 1))
+    default_qty = webhook.get("default_qty", 1)
+    raw_qty = payload.get("qty", payload.get("contracts"))
+    try:
+        base_qty = float(raw_qty) if raw_qty is not None else float(default_qty)
+    except (TypeError, ValueError):
+        raise SignalError(f"Invalid qty '{raw_qty}'")
+    if base_qty <= 0:
+        raise SignalError("qty must be positive")
+
+    entry_side = "Buy" if action == "buy" else "Sell"
+    order_type = s.get("entry_order_type", "Market")
+    price = payload.get("entry", payload.get("price"))
+
+    async def place_for(ex):
+        contract = await ex.resolve_contract(target)
+        mult = getattr(ex, "qty_multiplier", 1) or 1
+        qty = max(1, round(base_qty * mult))
+        order = await ex.place_order(
+            symbol=contract, action=entry_side, qty=qty,
+            order_type=order_type, price=price,
+        )
+        info = {
+            "name": ex.name, "contract": contract, "qty": qty, "entry_qty": qty,
+            "sl_order_id": None, "tp_order_ids": [],
+        }
+        return ex.name, info, [order], contract
+
+    results = await asyncio.gather(*(place_for(ex) for ex in executors), return_exceptions=True)
+
+    orders: list[dict[str, Any]] = []
+    acct_state: dict[str, dict[str, Any]] = {}
+    summary: list[dict[str, Any]] = []
+    contract = target
+    for ex, res in zip(executors, results):
+        if isinstance(res, Exception):
+            state.log_event("error", f"{tag}Entry failed for {ex.name}: {res}")
+            continue
+        name, info, acc_orders, contract = res
+        acct_state[name] = info
+        orders.extend(acc_orders)
+        summary.append({"account": name, "qty": info["qty"]})
+
+    if acct_state:
+        key = _trade_key(webhook["id"], root)
+        with _lock:
+            active_map[key] = {
+                "webhook_id": webhook["id"], "webhook_name": webhook.get("name", ""),
+                "root": root, "contract": contract, "side": action, "qty": base_qty,
+                "accounts": acct_state,
+            }
+
+    state.log_event(
+        "info", f"{tag}[{webhook.get('name', '?')}] {action.upper()} {contract} on "
+        f"{len(acct_state)}/{len(executors)} account(s): {', '.join(acct_state)}"
+    )
+    return {"status": "ok", "action": action, "contract": contract,
+            "accounts": summary, "orders": orders, "simulated": tag != ""}
+
+
+async def _handle_entry(payload, action, root, target, executors, active_map, tag, webhook):
+    s = config.load_settings()
+    base_qty = int(webhook.get("default_qty", 3))
+    base_tp_qty = int(webhook.get("tp_qty", 1))
     entry_side = "Buy" if action == "buy" else "Sell"
     exit_side = _opposite(action)
     sl_type = s.get("sl_order_type", "Stop")
@@ -202,21 +323,23 @@ async def _handle_entry(payload, action, root, target, executors, active_map, ta
         summary.append({"account": name, "qty": info["entry_qty"]})
 
     if acct_state:
+        key = _trade_key(webhook["id"], root)
         with _lock:
-            active_map[root] = {
-                "contract": contract, "side": action, "qty": base_qty,
+            active_map[key] = {
+                "webhook_id": webhook["id"], "webhook_name": webhook.get("name", ""),
+                "root": root, "contract": contract, "side": action, "qty": base_qty,
                 "accounts": acct_state,
             }
 
     state.log_event(
-        "info", f"{tag}Entry {action.upper()} {contract} placed on "
-        f"{len(acct_state)}/{len(executors)} account(s): {', '.join(acct_state)}"
+        "info", f"{tag}[{webhook.get('name', '?')}] Entry {action.upper()} {contract} "
+        f"placed on {len(acct_state)}/{len(executors)} account(s): {', '.join(acct_state)}"
     )
     return {"status": "ok", "action": action, "contract": contract,
             "accounts": summary, "orders": orders, "simulated": tag != ""}
 
 
-async def _handle_close_all(root, target, executors, active_map, tag):
+async def _handle_close_all(root, target, executors, active_map, tag, webhook):
     async def close_account(ex) -> int:
         cancelled = 0
         contract = await ex.resolve_contract(target)
@@ -240,12 +363,13 @@ async def _handle_close_all(root, target, executors, active_map, tag):
         if isinstance(r, Exception):
             state.log_event("warn", f"{tag}close_all failed for {ex.name}: {r}")
 
+    key = _trade_key(webhook["id"], root)
     with _lock:
-        active_map.pop(root, None)
+        active_map.pop(key, None)
 
     state.log_event(
-        "info", f"{tag}Closed all for {root} on {len(executors)} account(s) "
-        f"({cancelled} working orders cancelled)"
+        "info", f"{tag}[{webhook.get('name', '?')}] Closed all for {root} on "
+        f"{len(executors)} account(s) ({cancelled} working orders cancelled)"
     )
     return {"status": "ok", "action": "close_all", "accounts": len(executors),
             "cancelled": cancelled, "simulated": tag != ""}
@@ -264,12 +388,13 @@ def _is_breakeven_move(payload: dict[str, Any], tp_index: int | None) -> bool:
     return tp_index == 1 or "breakeven" in msg or "break-even" in msg
 
 
-async def _handle_move_sl(payload, root, executors, active_map, tag):
+async def _handle_move_sl(payload, root, executors, active_map, tag, webhook):
     s = config.load_settings()
     new_sl = payload.get("new_sl", payload.get("sl"))
 
+    key = _trade_key(webhook["id"], root)
     with _lock:
-        active = active_map.get(root)
+        active = active_map.get(key)
     if not active or not active.get("accounts"):
         state.log_event("warn", f"{tag}No tracked stop-loss for {root} to move")
         return {"status": "skipped", "reason": "no_active_stop", "action": "move_sl"}
@@ -320,10 +445,11 @@ async def _handle_move_sl(payload, root, executors, active_map, tag):
             "breakeven_to_entry": use_entry, "accounts": moved, "simulated": tag != ""}
 
 
-async def _handle_trail_active(payload, root, executors, active_map, tag):
+async def _handle_trail_active(payload, root, executors, active_map, tag, webhook):
     """TP2 (trail_active): resize the stop to the remaining position; price unchanged."""
+    key = _trade_key(webhook["id"], root)
     with _lock:
-        active = active_map.get(root)
+        active = active_map.get(key)
     tp_index = _tp_index_from_event(payload)
     if not active or not active.get("accounts") or tp_index is None:
         state.log_event("info", f"{tag}Trailing active for {root} (handled by strategy)")

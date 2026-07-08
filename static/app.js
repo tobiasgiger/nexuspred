@@ -92,13 +92,15 @@ function fmtDateTime(iso) {
 function renderActive(trades) {
   const tbody = $("#activeTable tbody");
   const rows = [];
-  for (const [sym, t] of Object.entries(trades)) {
+  for (const [key, t] of Object.entries(trades)) {
     const accts = t.accounts || {};
     const ids = Object.keys(accts);
     if (!ids.length) continue;
+    const sym = t.root || key.split(":").pop();
+    const whName = t.webhook_name || "—";
     for (const id of ids) {
       const a = accts[id];
-      rows.push(`<tr><td>${sym}</td><td>${t.contract}</td>
+      rows.push(`<tr><td>${escapeHtml(whName)}</td><td>${sym}</td><td>${t.contract}</td>
         <td><span class="tag ${t.side}">${(t.side || "").toUpperCase()}</span></td>
         <td>${a.name || id}</td><td>${a.qty ?? "—"}</td>
         <td>${a.sl_order_id || "—"}</td>
@@ -106,7 +108,7 @@ function renderActive(trades) {
     }
   }
   tbody.innerHTML = rows.length ? rows.join("")
-    : '<tr><td colspan="7" class="empty">None</td></tr>';
+    : '<tr><td colspan="8" class="empty">None</td></tr>';
 }
 
 /* --------------------------------------------------------------- orders */
@@ -189,7 +191,6 @@ async function loadSettings() {
     else if (key === "allowed_symbols") el.value = (val || []).join(", ");
     else el.value = val ?? "";
   }
-  updateWebhookUrl(s.webhook_secret);
   renderSymbolMap(s.symbol_map || {});
 }
 
@@ -213,7 +214,6 @@ $("#settingsForm").addEventListener("submit", async (e) => {
     toast("Settings saved", "success");
     $("#saveHint").textContent = "Saved ✓";
     setTimeout(() => ($("#saveHint").textContent = ""), 2500);
-    updateWebhookUrl(payload.webhook_secret);
     refreshStatus();
   } catch (err) { toast(err.message, "error"); }
 });
@@ -226,7 +226,8 @@ async function connectAll() {
     toast(`Connected ${ok}/${(r.sessions || []).length} account(s)`,
       ok ? "success" : "error");
     renderSessions(r.sessions || []);
-    loadTradeAccounts();   // connect discovers the trade accounts under each login
+    await loadTradeAccounts();   // connect discovers the trade accounts under each login
+    renderWebhooks();            // refresh webhook cards with any newly discovered accounts
     refreshStatus();
   } catch (e) { toast("Connect failed: " + e.message, "error"); }
 }
@@ -272,9 +273,9 @@ $("#updateBtn").addEventListener("click", applyUpdate);
 $("#checkUpdateBtn").addEventListener("click", checkUpdate);
 
 /* --------------------------------------------------------------- webhook/test */
-function updateWebhookUrl(secret) {
-  const s = secret || "your-secret";
-  const url = `${location.origin}/webhook/${s}`;
+function updateWebhookUrl(token) {
+  const t = token || "your-token";
+  const url = `${location.origin}/webhook/${t}`;
   $("#webhookUrl").textContent = url;
   const guideUrl = $("#guideUrl");
   if (guideUrl) guideUrl.textContent = url;
@@ -285,7 +286,32 @@ $("#copyUrl").addEventListener("click", () => {
   toast("Webhook URL copied", "success");
 });
 
+function selectedTestWebhook() {
+  const sel = $("#testWebhookSelect");
+  return WEBHOOKS.find((w) => w.id === sel.value) || null;
+}
+
+async function populateTestWebhookSelect() {
+  const sel = $("#testWebhookSelect");
+  if (!WEBHOOKS.length) {
+    sel.innerHTML = '<option value="">No webhooks — create one in the Webhooks tab</option>';
+    updateWebhookUrl("");
+    return;
+  }
+  const prev = sel.value;
+  sel.innerHTML = WEBHOOKS.map((w) =>
+    `<option value="${w.id}">${escapeHtml(w.name)} (${w.strategy})</option>`).join("");
+  sel.value = WEBHOOKS.some((w) => w.id === prev) ? prev : WEBHOOKS[0].id;
+  updateWebhookUrl(selectedTestWebhook()?.token);
+}
+
+$("#testWebhookSelect").addEventListener("change", () => {
+  updateWebhookUrl(selectedTestWebhook()?.token);
+});
+
 const PRESETS = {
+  simple_buy: { action: "buy", symbol: "MNQ1!", qty: 2 },
+  simple_sell: { action: "sell", symbol: "MNQ1!", qty: 2 },
   entry: {
     event: "entry", action: "sell", symbol: "MNQ1!", entry: 30267,
     sl: 30285.06839, tp1: 30261.57948, tp2: 30265.19316, tp3: 30247.0425,
@@ -317,12 +343,14 @@ $$(".preset").forEach((btn) => {
 });
 
 $("#sendTestBtn").addEventListener("click", async () => {
+  const wh = selectedTestWebhook();
+  if (!wh) return toast("Create a webhook first (Webhooks tab)", "error");
   let payload;
   try { payload = JSON.parse($("#testPayload").value); }
   catch { return toast("Payload is not valid JSON", "error"); }
   const box = $("#testResult");
   try {
-    const r = await api("/api/webhook-test", { method: "POST", body: JSON.stringify(payload) });
+    const r = await api(`/api/webhooks/${wh.id}/test`, { method: "POST", body: JSON.stringify(payload) });
     box.textContent = JSON.stringify(r, null, 2);
     box.className = "result-box";
     toast("Signal processed", "success");
@@ -399,7 +427,10 @@ async function loadTradeAccounts() {
   try { renderTradeAccounts(await api("/api/trade-accounts")); } catch (e) { /* ignore */ }
 }
 
+let KNOWN_ACCOUNTS = [];   // last-fetched trade-account overview, reused by the Webhooks tab
+
 function renderTradeAccounts(accounts) {
+  KNOWN_ACCOUNTS = accounts || [];
   const tbody = $("#tradeAccountsTable tbody");
   if (!accounts || !accounts.length) {
     tbody.innerHTML = '<tr><td colspan="6" class="empty">No accounts yet — add a token above, then Discover / Refresh</td></tr>';
@@ -442,6 +473,174 @@ $("#saveTradeAccountsBtn").addEventListener("click", async () => {
 });
 
 $("#refreshTradeAccounts").addEventListener("click", connectAll);
+
+/* --------------------------------------------------------------- webhooks */
+let WEBHOOKS = [];
+
+async function loadWebhooks() {
+  try {
+    WEBHOOKS = await api("/api/webhooks");
+    renderWebhooks();
+    populateTestWebhookSelect();
+  } catch (e) { /* ignore */ }
+}
+
+function accountKey(tokenIdx, spec) { return `${tokenIdx}::${spec}`; }
+
+function webhookAccountRows(webhook) {
+  const selected = new Map(
+    (webhook.accounts || []).map((a) => [accountKey(a.token_idx, a.spec), a])
+  );
+  if (!KNOWN_ACCOUNTS.length) {
+    return '<tr><td colspan="5" class="empty">No accounts yet — add a login under Settings → Token Accounts, then Discover / Refresh</td></tr>';
+  }
+  return KNOWN_ACCOUNTS.map((a) => {
+    const key = accountKey(a.token_idx, a.spec);
+    const sel = selected.get(key);
+    const enabled = sel ? sel.enabled : false;
+    const mult = sel ? sel.qty_multiplier : 1;
+    return `<tr data-token-idx="${a.token_idx}" data-spec="${escapeHtml(a.spec)}">
+      <td><input type="checkbox" class="switch wh-acc-enabled" ${enabled ? "checked" : ""} /></td>
+      <td>${escapeHtml(a.token_name || "—")}</td>
+      <td>${escapeHtml(a.spec || "—")}</td>
+      <td>${(a.environment || "—").toUpperCase()}</td>
+      <td><input type="number" class="wh-acc-mult" min="0.1" step="0.1" value="${mult ?? 1}" style="width:80px" /></td>
+    </tr>`;
+  }).join("");
+}
+
+function webhookCard(w) {
+  const url = `${location.origin}/webhook/${w.token}`;
+  return `
+  <div class="card wh-card" data-id="${w.id}">
+    <div class="card-head">
+      <h2>${escapeHtml(w.name)}</h2>
+      <label class="switch-row" style="margin:0">
+        <span>Enabled</span>
+        <input type="checkbox" class="switch wh-enabled" ${w.enabled ? "checked" : ""} />
+      </label>
+    </div>
+    <div class="grid grid-2">
+      <label>Name <input class="wh-name" value="${escapeHtml(w.name)}" /></label>
+      <label>Strategy
+        <select class="wh-strategy">
+          <option value="simple" ${w.strategy === "simple" ? "selected" : ""}>simple (buy/sell only)</option>
+          <option value="bracket" ${w.strategy === "bracket" ? "selected" : ""}>bracket (entry + TP/SL)</option>
+        </select>
+      </label>
+      <label>Default qty (fallback if payload omits qty)
+        <input class="wh-default-qty" type="number" min="1" value="${w.default_qty ?? 1}" />
+      </label>
+      <label class="wh-tp-qty-label" style="${w.strategy === "bracket" ? "" : "display:none"}">TP qty (bracket only)
+        <input class="wh-tp-qty" type="number" min="1" value="${w.tp_qty ?? 1}" />
+      </label>
+    </div>
+    <div class="url-box">
+      <code class="wh-url">${url}</code>
+      <button type="button" class="btn btn-ghost wh-copy">Copy</button>
+    </div>
+    <table class="data-table wh-accounts-table">
+      <thead><tr><th>Enabled</th><th>Login</th><th>Account</th><th>Env</th><th>Qty ×</th></tr></thead>
+      <tbody>${webhookAccountRows(w)}</tbody>
+    </table>
+    <div class="form-actions">
+      <button type="button" class="btn btn-primary wh-save">Save</button>
+      <button type="button" class="btn btn-ghost wh-regen">Regenerate token</button>
+      <button type="button" class="btn btn-ghost wh-delete">Delete</button>
+      <span class="save-hint wh-hint"></span>
+    </div>
+  </div>`;
+}
+
+function renderWebhooks() {
+  const list = $("#webhooksList");
+  if (!WEBHOOKS.length) {
+    list.innerHTML = '<div class="card"><p class="empty">No webhooks yet — click "+ Add Webhook" above.</p></div>';
+    return;
+  }
+  list.innerHTML = WEBHOOKS.map(webhookCard).join("");
+  list.querySelectorAll(".wh-card").forEach(wireWebhookCard);
+}
+
+function wireWebhookCard(card) {
+  const id = card.dataset.id;
+  const strategySel = card.querySelector(".wh-strategy");
+  const tpLabel = card.querySelector(".wh-tp-qty-label");
+  strategySel.addEventListener("change", () => {
+    tpLabel.style.display = strategySel.value === "bracket" ? "" : "none";
+  });
+
+  card.querySelector(".wh-copy").addEventListener("click", () => {
+    navigator.clipboard.writeText(card.querySelector(".wh-url").textContent);
+    toast("Webhook URL copied", "success");
+  });
+
+  card.querySelector(".wh-save").addEventListener("click", async () => {
+    const accounts = [...card.querySelectorAll(".wh-accounts-table tbody tr[data-spec]")]
+      .map((tr) => ({
+        token_idx: Number(tr.dataset.tokenIdx),
+        spec: tr.dataset.spec,
+        enabled: tr.querySelector(".wh-acc-enabled").checked,
+        qty_multiplier: Number(tr.querySelector(".wh-acc-mult").value) || 1,
+      }))
+      .filter((a) => a.enabled);
+    const body = {
+      name: card.querySelector(".wh-name").value.trim() || "Untitled",
+      enabled: card.querySelector(".wh-enabled").checked,
+      strategy: strategySel.value,
+      default_qty: Number(card.querySelector(".wh-default-qty").value) || 1,
+      tp_qty: Number(card.querySelector(".wh-tp-qty").value) || 1,
+      accounts,
+    };
+    try {
+      const updated = await api(`/api/webhooks/${id}`, { method: "PUT", body: JSON.stringify(body) });
+      const i = WEBHOOKS.findIndex((w) => w.id === id);
+      if (i >= 0) WEBHOOKS[i] = updated;
+      const hint = card.querySelector(".wh-hint");
+      hint.textContent = "Saved ✓";
+      setTimeout(() => (hint.textContent = ""), 2500);
+      toast("Webhook saved", "success");
+      populateTestWebhookSelect();
+    } catch (e) { toast(e.message, "error"); }
+  });
+
+  card.querySelector(".wh-regen").addEventListener("click", async () => {
+    if (!confirm("Regenerate this webhook's token? The old URL will stop working — update your TradingView alert.")) return;
+    try {
+      const updated = await api(`/api/webhooks/${id}/regenerate-token`, { method: "POST" });
+      const i = WEBHOOKS.findIndex((w) => w.id === id);
+      if (i >= 0) WEBHOOKS[i] = updated;
+      renderWebhooks();
+      populateTestWebhookSelect();
+      toast("Token regenerated", "success");
+    } catch (e) { toast(e.message, "error"); }
+  });
+
+  card.querySelector(".wh-delete").addEventListener("click", async () => {
+    const name = card.querySelector(".wh-name").value || "this webhook";
+    if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+    try {
+      await api(`/api/webhooks/${id}`, { method: "DELETE" });
+      WEBHOOKS = WEBHOOKS.filter((w) => w.id !== id);
+      renderWebhooks();
+      populateTestWebhookSelect();
+      toast("Webhook deleted", "success");
+    } catch (e) { toast(e.message, "error"); }
+  });
+}
+
+$("#addWebhookBtn").addEventListener("click", async () => {
+  try {
+    const wh = await api("/api/webhooks", {
+      method: "POST",
+      body: JSON.stringify({ name: `Strategy ${WEBHOOKS.length + 1}`, strategy: "simple", default_qty: 1, tp_qty: 1 }),
+    });
+    WEBHOOKS.push(wh);
+    renderWebhooks();
+    populateTestWebhookSelect();
+    toast("Webhook created", "success");
+  } catch (e) { toast(e.message, "error"); }
+});
 
 /* --------------------------------------------------------------- symbol map */
 function symbolRow(tv = "", contract = "") {
@@ -638,9 +837,10 @@ async function boot() {
   refreshLogs();
   checkUpdate();
   loadTokenAccounts();
-  loadTradeAccounts();
+  await loadTradeAccounts();   // populates KNOWN_ACCOUNTS before webhook cards render
+  await loadWebhooks();
   loadScenarios();
-  $("#testPayload").value = JSON.stringify(PRESETS.entry, null, 2);
+  $("#testPayload").value = JSON.stringify(PRESETS.simple_buy, null, 2);
 
   setInterval(refreshStatus, 5000);
   setInterval(refreshOrders, 7000);

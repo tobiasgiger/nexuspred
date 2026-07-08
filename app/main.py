@@ -77,10 +77,17 @@ async def dashboard(request: Request) -> HTMLResponse:
 
 
 # ===================================================================== Webhook
-async def _process_signal_bg(payload: dict[str, Any]) -> None:
+def _find_webhook(token: str) -> dict[str, Any] | None:
+    for wh in config.load_settings().get("webhooks", []):
+        if wh.get("token") == token:
+            return wh
+    return None
+
+
+async def _process_signal_bg(payload: dict[str, Any], webhook: dict[str, Any]) -> None:
     """Run the signal pipeline in the background so the webhook returns instantly."""
     try:
-        result = await signals.process(payload)
+        result = await signals.process(payload, webhook)
         state.log_signal(payload, result=result.get("status", "ok"))
     except (signals.SignalError, TradovateError) as exc:
         state.log_event("error", f"Signal error: {exc}", payload=payload)
@@ -90,23 +97,25 @@ async def _process_signal_bg(payload: dict[str, Any]) -> None:
         state.log_signal(payload, result=f"error: {exc}")
 
 
-@app.post("/webhook/{secret}")
-async def webhook(secret: str, request: Request) -> JSONResponse:
+@app.post("/webhook/{token}")
+async def webhook(token: str, request: Request) -> JSONResponse:
     """Receive a TradingView alert and route it to Tradovate.
 
-    The ``secret`` path segment must match ``webhook_secret`` in settings. The
-    alert is acknowledged immediately (HTTP 202) and processed in the background,
-    so bursts of alerts can't make TradingView time out ("request took too long").
+    The ``token`` path segment must match a configured webhook's ``token``; each
+    webhook carries its own strategy + routed trade accounts (see
+    ``/api/webhooks``). The alert is acknowledged immediately (HTTP 202) and
+    processed in the background, so bursts of alerts can't make TradingView time
+    out ("request took too long").
     """
     import asyncio
 
-    s = config.load_settings()
-    if secret != s.get("webhook_secret"):
-        raise HTTPException(status_code=403, detail="Invalid webhook secret")
+    wh = _find_webhook(token)
+    if not wh or not wh.get("enabled"):
+        raise HTTPException(status_code=403, detail="Invalid webhook token")
 
     payload = await _parse_payload(request)
     state.log_signal(payload, result="received")
-    asyncio.create_task(_process_signal_bg(payload))
+    asyncio.create_task(_process_signal_bg(payload, wh))
     return JSONResponse({"status": "accepted"}, status_code=202)
 
 
@@ -293,13 +302,97 @@ async def api_save_trade_accounts(request: Request) -> list[dict[str, Any]]:
     return _trade_accounts_overview()
 
 
-@app.post("/api/webhook-test")
-async def api_webhook_test(request: Request) -> dict[str, Any]:
-    """Run a payload through the signal pipeline without an external POST."""
+# =================================================================== Webhooks
+def _webhook_or_404(webhook_id: str) -> tuple[list[dict[str, Any]], int]:
+    """Return (all webhooks, index of webhook_id) or raise 404."""
+    webhooks = config.load_settings().get("webhooks", [])
+    for i, wh in enumerate(webhooks):
+        if wh.get("id") == webhook_id:
+            return webhooks, i
+    raise HTTPException(status_code=404, detail="Webhook not found")
+
+
+@app.get("/api/webhooks")
+async def api_list_webhooks() -> list[dict[str, Any]]:
+    return config.load_settings().get("webhooks", [])
+
+
+@app.post("/api/webhooks")
+async def api_create_webhook(request: Request) -> dict[str, Any]:
+    body = await request.json()
+    wh = config.new_webhook(
+        name=body.get("name") or "New Webhook",
+        strategy=body.get("strategy", "simple"),
+        default_qty=body.get("default_qty", 1),
+        tp_qty=body.get("tp_qty", 1),
+    )
+    webhooks = config.load_settings().get("webhooks", [])
+    webhooks.append(wh)
+    config.save_settings({"webhooks": webhooks})
+    state.log_event("info", f"Webhook '{wh['name']}' created ({wh['strategy']})")
+    return wh
+
+
+@app.put("/api/webhooks/{webhook_id}")
+async def api_update_webhook(webhook_id: str, request: Request) -> dict[str, Any]:
+    body = await request.json()
+    webhooks, i = _webhook_or_404(webhook_id)
+    wh = webhooks[i]
+    if "name" in body:
+        wh["name"] = str(body["name"]) or wh["name"]
+    if "enabled" in body:
+        wh["enabled"] = bool(body["enabled"])
+    if "strategy" in body and body["strategy"] in ("simple", "bracket"):
+        wh["strategy"] = body["strategy"]
+    if "default_qty" in body:
+        wh["default_qty"] = max(1, int(body["default_qty"] or 1))
+    if "tp_qty" in body:
+        wh["tp_qty"] = max(1, int(body["tp_qty"] or 1))
+    if "accounts" in body:
+        wh["accounts"] = [
+            {
+                "token_idx": int(a["token_idx"]),
+                "spec": a.get("spec", ""),
+                "enabled": bool(a.get("enabled")),
+                "qty_multiplier": float(a.get("qty_multiplier", 1) or 1),
+            }
+            for a in body["accounts"]
+            if a.get("spec") and a.get("token_idx") is not None
+        ]
+    webhooks[i] = wh
+    config.save_settings({"webhooks": webhooks})
+    state.log_event("info", f"Webhook '{wh['name']}' updated")
+    return wh
+
+
+@app.delete("/api/webhooks/{webhook_id}")
+async def api_delete_webhook(webhook_id: str) -> dict[str, Any]:
+    webhooks, i = _webhook_or_404(webhook_id)
+    removed = webhooks.pop(i)
+    config.save_settings({"webhooks": webhooks})
+    state.log_event("info", f"Webhook '{removed.get('name')}' deleted")
+    return {"status": "deleted", "id": webhook_id}
+
+
+@app.post("/api/webhooks/{webhook_id}/regenerate-token")
+async def api_regenerate_webhook_token(webhook_id: str) -> dict[str, Any]:
+    webhooks, i = _webhook_or_404(webhook_id)
+    webhooks[i]["token"] = secrets.token_urlsafe(16)
+    config.save_settings({"webhooks": webhooks})
+    state.log_event("info", f"Webhook '{webhooks[i]['name']}' token regenerated")
+    return webhooks[i]
+
+
+@app.post("/api/webhooks/{webhook_id}/test")
+async def api_test_webhook(webhook_id: str, request: Request) -> dict[str, Any]:
+    """Run a payload through the signal pipeline for a specific webhook (real
+    execution — respects the trading_enabled switch, same as a live POST)."""
+    webhooks, i = _webhook_or_404(webhook_id)
+    wh = webhooks[i]
     payload = await request.json()
     state.log_signal(payload, result="test")
     try:
-        return await signals.process(payload)
+        return await signals.process(payload, wh)
     except (signals.SignalError, TradovateError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -393,6 +486,7 @@ async def _health_loop() -> None:
 @app.on_event("startup")
 async def _startup() -> None:
     import asyncio
+    config.migrate_legacy_webhook()
     manager.reload()
     state.log_event("info", f"Bridge started (v{config.get_version()})")
     asyncio.create_task(_health_loop())

@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import secrets
 import threading
 from pathlib import Path
 from typing import Any
@@ -65,6 +66,20 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "MGC1!": "MGCM6",
     },
     "allowed_symbols": ["NQ", "MNQ", "ES", "MES", "GC", "MGC"],
+
+    # --- Webhooks ---------------------------------------------------------------
+    # Each strategy gets its own webhook (URL token, strategy type, and which
+    # trade accounts it routes to). Entry:
+    #   {"id": str, "name": str, "token": str, "enabled": bool,
+    #    "strategy": "simple" | "bracket", "default_qty": int, "tp_qty": int,
+    #    "accounts": [{"token_idx": int, "spec": str, "enabled": bool,
+    #                  "qty_multiplier": float}]}
+    # token_idx/spec address a trade account exposed by token_accounts above.
+    "webhooks": [],
+    # One-shot flag: on first startup after upgrading, the legacy single
+    # webhook_secret + every currently-enabled trade account are folded into a
+    # "Default" webhook so existing TradingView alerts keep working unchanged.
+    "webhooks_migrated": False,
 
     # --- Webhook security -----------------------------------------------------
     "webhook_secret": "change-me",   # required in the webhook URL path
@@ -152,6 +167,60 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
         SETTINGS_FILE.write_text(json.dumps(current, indent=2), encoding="utf-8")
         _cache = current
         return dict(current)
+
+
+def migrate_legacy_webhook() -> None:
+    """One-shot migration: fold the legacy single webhook_secret + every currently
+    enabled trade account into a "Default" webhook, so existing TradingView alerts
+    keep working unchanged after upgrading to per-strategy webhooks.
+
+    Runs once (guarded by ``webhooks_migrated``) on startup. Safe on a fresh
+    install too — it just creates an empty "Default" webhook to edit.
+    """
+    with _lock:
+        s = load_settings(force=True)
+        if s.get("webhooks_migrated"):
+            return
+        accounts: list[dict[str, Any]] = []
+        for idx, t in enumerate(s.get("token_accounts") or []):
+            for a in (t.get("accounts") or []):
+                if a.get("enabled", True):
+                    accounts.append({
+                        "token_idx": idx,
+                        "spec": a.get("spec") or a.get("account_spec") or "",
+                        "enabled": True,
+                        "qty_multiplier": float(a.get("qty_multiplier", 1) or 1),
+                    })
+        default_webhook = {
+            "id": f"wh_{secrets.token_hex(4)}",
+            "name": "Default",
+            "token": s.get("webhook_secret") or secrets.token_urlsafe(16),
+            "enabled": True,
+            "strategy": "bracket",
+            "default_qty": s.get("default_qty", 3),
+            "tp_qty": s.get("tp_qty", 1),
+            "accounts": accounts,
+        }
+        webhooks = list(s.get("webhooks") or [])
+        webhooks.append(default_webhook)
+        save_settings({"webhooks": webhooks, "webhooks_migrated": True})
+
+
+def new_webhook(
+    name: str = "New Webhook", strategy: str = "simple",
+    default_qty: int = 1, tp_qty: int = 1,
+) -> dict[str, Any]:
+    """Build a fresh webhook dict with a generated id + secret token."""
+    return {
+        "id": f"wh_{secrets.token_hex(4)}",
+        "name": name,
+        "token": secrets.token_urlsafe(16),
+        "enabled": True,
+        "strategy": strategy if strategy in ("simple", "bracket") else "simple",
+        "default_qty": max(1, int(default_qty or 1)),
+        "tp_qty": max(1, int(tp_qty or 1)),
+        "accounts": [],
+    }
 
 
 # Fields that must never be returned to the browser in plain text.

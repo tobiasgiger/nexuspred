@@ -10,8 +10,7 @@ configuration and monitoring, and a built-in GitHub auto-updater.
 
 ## Features
 
-- **Webhook endpoint** for TradingView alerts (`POST /webhook/{secret}`).
-- **Order logic** built around the strategy's JSON signals:
+- **Bracket strategy order logic** built around the strategy's JSON signals:
   - Initial `buy` / `sell` → **market** order, default **3 contracts** (MNQ / MES).
   - Each `tp1` / `tp2` / `tp3` → **limit** order of **1 contract**.
   - `sl` → protective **stop** order covering the whole position.
@@ -30,8 +29,13 @@ configuration and monitoring, and a built-in GitHub auto-updater.
 - **Dark-themed dashboard** to manage settings, watch positions/orders, and read logs.
 - **Auto-updater** that checks the GitHub repo and shows an **Update** button when a new
   version is available — one click pulls the latest code and restarts.
-- **Safety first**: trading is **disabled by default**, a webhook secret is required, and
-  an optional passphrase can be enforced in the alert body.
+- **One dedicated webhook per strategy** (`POST /webhook/{token}`), created/edited/deleted
+  from the **Webhooks** tab — each with its own routed trade accounts and per-account qty
+  multiplier, so signals never cross strategies. Two selectable strategy types:
+  **simple** (buy/sell the payload's qty, no TP/SL — just execution) and **bracket** (the
+  entry + tp1/tp2/tp3/sl flow described above).
+- **Safety first**: trading is **disabled by default**, every webhook URL has its own
+  unguessable secret token, and an optional passphrase can be enforced in the alert body.
 
 ---
 
@@ -79,8 +83,9 @@ includes a `render.yaml` blueprint.
    `DASHBOARD_PASSWORD=<your-password>` (the dashboard is public — protect it). Render
    injects `PORT` automatically.
 3. Use the **Starter** plan (always-on); the free plan sleeps after ~15 min idle.
-4. Deploy → you get `https://YOUR-SERVICE.onrender.com`. Your TradingView webhook is
-   `https://YOUR-SERVICE.onrender.com/webhook/YOUR_SECRET`.
+4. Deploy → you get `https://YOUR-SERVICE.onrender.com`. Each strategy's TradingView
+   webhook is `https://YOUR-SERVICE.onrender.com/webhook/YOUR_TOKEN` (from its card in
+   the **Webhooks** tab).
 5. Updates deploy automatically on `git push` (the in-app Update button is disabled on
    managed hosts).
 
@@ -90,27 +95,48 @@ includes a `render.yaml` blueprint.
 
 > **Persistence & security on any public host:** point `NEXUSPRED_DATA_DIR` at a
 > persistent disk so settings survive deploys, and always set `DASHBOARD_PASSWORD`
-> (HTTP Basic auth on the dashboard + API; the `/webhook/<secret>` and `/healthz` paths
+> (HTTP Basic auth on the dashboard + API; the `/webhook/<token>` and `/healthz` paths
 > stay open). `GET /healthz` is an unauthenticated liveness probe.
 
 1. Go to **Settings → Token Accounts** → add one row per Tradovate account with its own
-   access token (start in **Demo**).
-2. Click **Connect & Verify** — each account is resolved and its token validated.
-3. Set a strong **Webhook secret**.
-4. Flip **Trading enabled** on when you're ready to go live.
-5. Copy your **Webhook URL** from the *Test & Webhook* tab into your TradingView alert.
+   access token (start in **Demo**), then **Connect & Verify**.
+2. Go to **Settings → Trade Accounts** and switch on the accounts you want available for
+   trading.
+3. Go to the **Webhooks** tab → **+ Add Webhook** for each strategy, pick its strategy
+   type (`simple` or `bracket`), and enable the accounts (with qty multipliers) that
+   strategy should trade.
+4. Flip **Trading enabled** on (Settings tab) when you're ready to go live.
+5. Copy each webhook's URL from its card (or the *Test & Webhook* tab) into the matching
+   TradingView alert.
 
 ---
 
 ## TradingView alert setup
 
-Create an alert and set the **Webhook URL** to:
+Each strategy gets its own webhook — create it in the **Webhooks** tab, then set that
+alert's **Webhook URL** to the token shown on its card:
 
 ```
-http://YOUR_HOST:9000/webhook/YOUR_SECRET
+http://YOUR_HOST:9000/webhook/YOUR_TOKEN
 ```
 
-Set the alert message to the strategy's JSON. Examples (matching the strategy):
+### `simple` strategy webhooks
+
+Just `action`, `symbol` and (optionally) `qty` — no TP/SL:
+
+```json
+{"action":"buy","symbol":"MNQ1!","qty":2}
+```
+
+Omit `qty` to use the webhook's configured default. `close_all` flattens the position:
+
+```json
+{"action":"close_all","symbol":"MNQ1!"}
+```
+
+### `bracket` strategy webhooks
+
+Set the alert message to the strategy's JSON. Examples:
 
 **Entry**
 ```json
@@ -133,21 +159,25 @@ Set the alert message to the strategy's JSON. Examples (matching the strategy):
 {"event":"tp3_hit","action":"close_all","symbol":"MNQ1!","exit_price":30241.7}
 ```
 
-> If you set a **passphrase** in Settings, include `"passphrase":"..."` in every alert.
+> If you set a **passphrase** in Settings, include `"passphrase":"..."` in every alert
+> (applies to all webhooks).
 
 ---
 
 ## How orders are sized
 
-| Signal `action` | Order(s) placed | Type | Qty |
-|---|---|---|---|
-| `buy` / `sell` | entry | Market | `default_qty` (3) |
-| `buy` / `sell` | tp1, tp2, tp3 (if present) | Limit | `tp_qty` (1) each |
-| `buy` / `sell` | sl | Stop | full position |
-| `move_sl` | modify the stop order | — | — |
-| `close_all` | cancel working orders + flatten | Market | full position |
+| Strategy | Signal `action` | Order(s) placed | Type | Qty |
+|---|---|---|---|---|
+| `simple` | `buy` / `sell` | single entry | Market (or Limit if `entry`/`price` given) | payload `qty` (or webhook default) × account multiplier |
+| `simple` | `close_all` | cancel working orders + flatten | Market | full position |
+| `bracket` | `buy` / `sell` | entry | Market | webhook `default_qty` × account multiplier |
+| `bracket` | `buy` / `sell` | tp1, tp2, tp3 (if present) | Limit | webhook `tp_qty` each × account multiplier |
+| `bracket` | `buy` / `sell` | sl | Stop | full position |
+| `bracket` | `move_sl` | modify the stop order | — | — |
+| `bracket` | `close_all` | cancel working orders + flatten | Market | full position |
 
-All quantities and order types are configurable on the **Settings** tab.
+Qty defaults/TP qty are set **per webhook** (Webhooks tab); order types (Market/Limit/Stop)
+are global, configurable on the **Settings** tab.
 
 > **Note on "limit orders":** take-profits are placed as resting **limit** orders. The
 > stop-loss is placed as a **stop** order (a limit order at the SL price would fill
@@ -181,14 +211,15 @@ authenticated by its **own Tradovate access token**. Add logins under
 - Click **Connect & Verify** to authenticate and **discover the trade accounts** under
   that login.
 
-**Multiple trade accounts per login + per-account execution toggle.** A single token
-often grants access to several trade accounts. After connecting, every discovered account
-appears in **Settings → Trade Accounts**, where you switch **execution on/off per account**
-and set a per-account **Qty ×** (e.g. `2` turns the default 3-contract entry into 6, with
-TP/SL sized to match). Each signal fans out to **all accounts switched on, in parallel**.
+**Multiple trade accounts per login.** A single token often grants access to several trade
+accounts. After connecting, every discovered account appears in **Settings → Trade
+Accounts** — this is the discovery/reference list used to populate each webhook's account
+picker (and to aggregate Open Positions). It's not where routing happens anymore: **which
+accounts actually execute a given strategy's signals, and their qty multiplier, is chosen
+per webhook** in the **Webhooks** tab.
 
 - Newly discovered accounts default to **off** (except the first on a brand-new login), so
-  an account never starts trading without an explicit opt-in.
+  an account never starts trading without an explicit opt-in on some webhook.
 - The **Monitor** header shows *Logins connected* and *Accounts executing*;
   **Connection Health** shows each login's token expiry, and **Active Trades** shows one
   row per executing account with its own SL/TP order ids.
@@ -256,7 +287,7 @@ the dashboard **Update** button works.
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/webhook/{secret}` | Receive a TradingView alert |
+| `POST` | `/webhook/{token}` | Receive a TradingView alert for a specific webhook |
 | `GET`  | `/api/status` | Connection + trading status |
 | `GET/POST` | `/api/settings` | Read / update settings |
 | `GET`  | `/api/orders` `/api/signals` `/api/events` | Rolling logs |
@@ -265,7 +296,10 @@ the dashboard **Update** button works.
 | `GET/POST` | `/api/token-accounts` | List / save logins (tokens, enable flags & default multipliers) |
 | `GET/POST` | `/api/trade-accounts` | Overview / save per-account execution on-off & multipliers |
 | `GET`  | `/api/health` | Check every connection (renews tokens if needed) |
-| `POST` | `/api/webhook-test` | Run a payload through the pipeline |
+| `GET/POST` | `/api/webhooks` | List all webhooks / create one |
+| `PUT/DELETE` | `/api/webhooks/{id}` | Update / delete a webhook (name, strategy, qty, accounts) |
+| `POST` | `/api/webhooks/{id}/regenerate-token` | Rotate a webhook's secret token |
+| `POST` | `/api/webhooks/{id}/test` | Run a payload through the pipeline for this webhook |
 | `GET`  | `/api/scenarios` | List built-in simulator scenarios |
 | `POST` | `/api/simulate` | Run a signal in simulation (no broker) |
 | `GET`  | `/api/simulate/state` | Simulated positions & working orders |

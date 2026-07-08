@@ -485,5 +485,23 @@ class SessionManager:
                     out.append(AccountExecutor(s, a))
         return out
 
+    def executor_for(
+        self, token_idx: int, spec: str, qty_multiplier: float = 1
+    ) -> AccountExecutor | None:
+        """Build an executor for one specific (login, trade account) pair, with a
+        caller-supplied qty multiplier — used by per-webhook routing, independent
+        of that account's own execution toggle under Settings → Trade Accounts.
+        Returns None if the login or account no longer exists (e.g. deleted)."""
+        sessions = self.all()
+        if not (0 <= token_idx < len(sessions)):
+            return None
+        session = sessions[token_idx]
+        if not session.enabled:
+            return None
+        account = next((a for a in session.accounts if a.get("spec") == spec), None)
+        if account is None:
+            return None
+        return AccountExecutor(session, {**account, "qty_multiplier": qty_multiplier})
+
 
 manager = SessionManager()

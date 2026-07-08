@@ -4,6 +4,25 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 2.2.0
+- **Multi-webhook routing, one URL per strategy.** New **Webhooks** tab:
+  create/edit/delete a dedicated `/webhook/<token>` per strategy, each with its
+  own routed trade accounts (picked from the accounts discovered under
+  Settings → Trade Accounts) and its own per-account qty multiplier — signals
+  from one strategy never cross into another's accounts.
+- Two selectable strategy types per webhook: **simple** (buy/sell the qty from
+  the payload, or the webhook's default — no TP/SL, just execution) and
+  **bracket** (the existing entry + tp1/tp2/tp3/sl flow, with per-webhook
+  default/TP qty). A small strategy dispatch, so future logic (e.g. TP/SL
+  expressed in points off a close price) can be added later without touching
+  routing.
+- Existing installs auto-migrate on first startup: the old `webhook_secret` +
+  every currently-enabled trade account become a "Default" webhook (strategy
+  `bracket`), so existing TradingView alerts keep working unchanged.
+- The Test & Webhook tab gained a webhook picker so test signals run through a
+  specific webhook's routing; `/api/webhook-test` is replaced by
+  `/api/webhooks/{id}/test`.
+
 ## 2.1.0
 - **Multiple trade accounts per login, with per-account execution on/off.** One
   Tradovate access token often grants access to several trade accounts. Click
