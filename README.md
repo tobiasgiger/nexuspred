@@ -183,9 +183,8 @@ messages, all correlated by the shared `trade_id`:
 
 **Partial close** (`event: "management"`, `action: "partial_close_percent"`) — market-closes
 `percent`% of whatever remains right now (not of the original size), so three TP hits at
-25% / 33.33% / 50% of a 4-lot leave 3 → 2 → 1 (the "runner"). When `lifecycle_stage` is
-`TP2`, the stop is also moved to break-even (the entry's `tv.entry_price`) as part of the
-same message — every partial close resizes the stop to match the new remaining qty:
+25% / 33.33% / 50% of a 4-lot leave 3 → 2 → 1 (the "runner"). Every partial close resizes
+the stop to match the new remaining qty (its price is left unchanged):
 ```json
 {"event":"management","action":"partial_close_percent","lifecycle_stage":"TP2",
  "side":"SELL","symbol":"MNQ","percent":33.33333333,"trade_id":"TS-HUNTER-SELL-123"}

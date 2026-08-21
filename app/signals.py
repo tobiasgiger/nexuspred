@@ -21,9 +21,9 @@ multipliers, and a ``strategy`` that decides how the payload is executed:
   ``trade_id`` (not symbol, so several concurrent trades on the same symbol
   never collide) — ``action: "partial_close_percent"`` market-closes
   ``percent``% of whatever remains (TP1/TP2/TP3 each shave off a slice,
-  leaving a runner), moving the stop to break-even and resizing it whenever
-  ``lifecycle_stage`` is ``TP2``; ``action: "full_close"`` cancels working
-  orders and liquidates whatever remains, regardless of tracked quantity.
+  leaving a runner), resizing the stop to match the new remaining quantity
+  each time; ``action: "full_close"`` cancels working orders and liquidates
+  whatever remains, regardless of tracked quantity.
 
 The same logic powers the **simulator**: passing ``simulate=True`` routes orders to
 an in-memory executor (a synthetic bracket webhook + account) and uses a separate
@@ -652,7 +652,6 @@ async def _handle_ts_hunter_partial_close(payload, trade_id, executors, active_m
         raise SignalError("'percent' must be between 0 and 100")
 
     stage = str(payload.get("lifecycle_stage") or payload.get("lifecycleStage") or "").upper().strip()
-    is_breakeven_stage = stage == "TP2"
 
     exit_side = _opposite(active["side"])
     by_name = {ex.name: ex for ex in executors}
@@ -677,9 +676,6 @@ async def _handle_ts_hunter_partial_close(payload, trade_id, executors, active_m
         new_remaining = remaining - qty_to_close
         info["remaining_qty"] = new_remaining
         info["qty"] = new_remaining
-
-        if is_breakeven_stage and info.get("entry_price") is not None:
-            info["sl_stop"] = float(info["entry_price"])
 
         if info.get("sl_order_id"):
             if new_remaining > 0:
@@ -709,10 +705,9 @@ async def _handle_ts_hunter_partial_close(payload, trade_id, executors, active_m
             orders.append(r)
             closed_accounts.append(name)
 
-    where = " — stop moved to break-even" if is_breakeven_stage else ""
     state.log_event(
         "info", f"{tag}TS-Hunter {stage or 'partial close'} for trade {trade_id}: "
-        f"{percent:.2f}% of remaining closed on {len(closed_accounts)} account(s){where}"
+        f"{percent:.2f}% of remaining closed on {len(closed_accounts)} account(s)"
     )
     return {"status": "ok", "action": "partial_close_percent", "lifecycle_stage": stage,
             "trade_id": trade_id, "accounts": closed_accounts, "orders": orders,

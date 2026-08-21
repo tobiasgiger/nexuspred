@@ -4,6 +4,12 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 2.5.1
+- **TS-Hunter: removed the TP2 move-to-break-even.** A partial close still
+  resizes the stop to the new remaining quantity every time, but the stop's
+  price is no longer moved to break-even at `lifecycle_stage: "TP2"` — it
+  stays wherever it was set at entry (`sl.value`) throughout the trade.
+
 ## 2.5.0
 - **New strategy type: TS-Hunter**, selectable when creating/editing a webhook.
   Matches the TS-Hunter Pine strategy's own alert contract

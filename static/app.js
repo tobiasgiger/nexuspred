@@ -377,8 +377,8 @@ function alertMessageTemplate(strategy) {
         + "(entry as event:\"signal\", then event:\"management\" messages with "
         + "action:\"partial_close_percent\" for TP1/TP2/TP3 and action:\"full_close\" to "
         + "flatten) — all correlated by trade_id. Point that strategy's alert(s) at this "
-        + "webhook's URL; there's nothing to hand-edit here. TP2 automatically moves the "
-        + "stop to break-even.",
+        + "webhook's URL; there's nothing to hand-edit here. Each partial close resizes "
+        + "the stop to the new remaining qty (price unchanged).",
     };
   }
   if (strategy === "bracket") {
