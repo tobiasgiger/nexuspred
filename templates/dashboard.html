@@ -642,7 +642,7 @@ $ ngrok http 9000</pre>
         <p class="hint">Open the <strong>Webhooks</strong> tab and click <strong>+ Add
           Webhook</strong> for each strategy you run — one dedicated URL per strategy.</p>
         <ol class="steps">
-          <li><span class="step-num">1</span><div>Pick a <strong>strategy type</strong>: <code>simple</code> (just buy/sell the qty in the alert, no TP/SL) or <code>bracket</code> (TP/SL from tp1/tp2/tp3/sl in the payload).</div></li>
+          <li><span class="step-num">1</span><div>Pick a <strong>strategy type</strong>: <code>simple</code> (just buy/sell the qty in the alert, no TP/SL), <code>bracket</code> (TP/SL from tp1/tp2/tp3/sl in the payload), or <code>TS-Hunter</code> (matches the TS-Hunter Pine strategy's own contract — entry + percent-based partial closes correlated by trade_id).</div></li>
           <li><span class="step-num">2</span><div>In that webhook's card, tick <strong>Enabled</strong> for every trade account this strategy should hit (from the accounts discovered in C2), and set a <strong>Qty ×</strong> multiplier per account. Click <strong>Save</strong>.</div></li>
         </ol>
       </div>

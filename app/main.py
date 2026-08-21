@@ -342,7 +342,7 @@ async def api_update_webhook(webhook_id: str, request: Request) -> dict[str, Any
         wh["name"] = str(body["name"]) or wh["name"]
     if "enabled" in body:
         wh["enabled"] = bool(body["enabled"])
-    if "strategy" in body and body["strategy"] in ("simple", "bracket"):
+    if "strategy" in body and body["strategy"] in config.STRATEGIES:
         wh["strategy"] = body["strategy"]
     if "default_qty" in body:
         wh["default_qty"] = max(1, int(body["default_qty"] or 1))

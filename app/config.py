@@ -71,7 +71,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # Each strategy gets its own webhook (URL token, strategy type, and which
     # trade accounts it routes to). Entry:
     #   {"id": str, "name": str, "token": str, "enabled": bool,
-    #    "strategy": "simple" | "bracket", "default_qty": int, "tp_qty": int,
+    #    "strategy": "simple" | "bracket" | "ts_hunter", "default_qty": int, "tp_qty": int,
     #    "accounts": [{"token_idx": int, "spec": str, "enabled": bool,
     #                  "qty_multiplier": float}]}
     # token_idx/spec address a trade account exposed by token_accounts above.
@@ -223,6 +223,16 @@ def migrate_legacy_webhook() -> None:
         save_settings({"webhooks": webhooks, "webhooks_migrated": True})
 
 
+# Valid webhook strategy types:
+#   simple    -> plain buy/sell for the payload's qty, no TP/SL
+#   bracket   -> entry + tp1/tp2/tp3/sl bracket (see signals.py)
+#   ts_hunter -> TS-Hunter contract: event "signal" opens a market entry sized
+#                from risk.value with a protective stop at sl.value; event
+#                "management" (action partial_close_percent / full_close)
+#                manages it, correlated by trade_id (see signals.py)
+STRATEGIES = ("simple", "bracket", "ts_hunter")
+
+
 def new_webhook(
     name: str = "New Webhook", strategy: str = "simple",
     default_qty: int = 1, tp_qty: int = 1,
@@ -233,7 +243,7 @@ def new_webhook(
         "name": name,
         "token": secrets.token_urlsafe(16),
         "enabled": True,
-        "strategy": strategy if strategy in ("simple", "bracket") else "simple",
+        "strategy": strategy if strategy in STRATEGIES else "simple",
         "default_qty": max(1, int(default_qty or 1)),
         "tp_qty": max(1, int(tp_qty or 1)),
         "accounts": [],

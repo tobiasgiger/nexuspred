@@ -363,6 +363,24 @@ $("#copyUrl").addEventListener("click", () => {
  * stays a JSON number, not a string.
  */
 function alertMessageTemplate(strategy) {
+  if (strategy === "ts_hunter") {
+    const json = JSON.stringify({
+      contract_version: "at_execution_command_v5", event: "signal",
+      side: "BUY", symbol: "MNQ",
+      risk: { mode: "fixed_lot", value: 4 },
+      sl: { mode: "fixed_price_from_alert", value: 0 },
+      trade_id: "unique-id-per-trade",
+    }, null, 2);
+    return {
+      json,
+      hint: "TS-Hunter expects the exact JSON your TS-Hunter Pine strategy already sends "
+        + "(entry as event:\"signal\", then event:\"management\" messages with "
+        + "action:\"partial_close_percent\" for TP1/TP2/TP3 and action:\"full_close\" to "
+        + "flatten) — all correlated by trade_id. Point that strategy's alert(s) at this "
+        + "webhook's URL; there's nothing to hand-edit here. TP2 automatically moves the "
+        + "stop to break-even.",
+    };
+  }
   if (strategy === "bracket") {
     const json = JSON.stringify({
       action: "{{strategy.order.action}}",
@@ -650,9 +668,10 @@ function webhookCard(w) {
         <select class="wh-strategy">
           <option value="simple" ${w.strategy === "simple" ? "selected" : ""}>simple (buy/sell only)</option>
           <option value="bracket" ${w.strategy === "bracket" ? "selected" : ""}>bracket (entry + TP/SL)</option>
+          <option value="ts_hunter" ${w.strategy === "ts_hunter" ? "selected" : ""}>TS-Hunter (signal + partial closes)</option>
         </select>
       </label>
-      <label>Default qty (fallback if payload omits qty)
+      <label class="wh-default-qty-label" style="${w.strategy === "ts_hunter" ? "display:none" : ""}">Default qty (fallback if payload omits qty)
         <input class="wh-default-qty" type="number" min="1" value="${w.default_qty ?? 1}" />
       </label>
       <label class="wh-tp-qty-label" style="${w.strategy === "bracket" ? "" : "display:none"}">TP qty (bracket only)
@@ -697,8 +716,10 @@ function wireWebhookCard(card) {
   const id = card.dataset.id;
   const strategySel = card.querySelector(".wh-strategy");
   const tpLabel = card.querySelector(".wh-tp-qty-label");
+  const defaultQtyLabel = card.querySelector(".wh-default-qty-label");
   strategySel.addEventListener("change", () => {
     tpLabel.style.display = strategySel.value === "bracket" ? "" : "none";
+    defaultQtyLabel.style.display = strategySel.value === "ts_hunter" ? "none" : "";
     const t = alertMessageTemplate(strategySel.value);
     card.querySelector(".wh-template").textContent = t.json;
     card.querySelector(".wh-template-hint").textContent = t.hint;

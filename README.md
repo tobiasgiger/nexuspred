@@ -31,9 +31,11 @@ configuration and monitoring, and a built-in GitHub auto-updater.
   version is available — one click pulls the latest code and restarts.
 - **One dedicated webhook per strategy** (`POST /webhook/{token}`), created/edited/deleted
   from the **Webhooks** tab — each with its own routed trade accounts and per-account qty
-  multiplier, so signals never cross strategies. Two selectable strategy types:
-  **simple** (buy/sell the payload's qty, no TP/SL — just execution) and **bracket** (the
-  entry + tp1/tp2/tp3/sl flow described above).
+  multiplier, so signals never cross strategies. Three selectable strategy types:
+  **simple** (buy/sell the payload's qty, no TP/SL — just execution), **bracket** (the
+  entry + tp1/tp2/tp3/sl flow described above), and **TS-Hunter** (matches the TS-Hunter
+  Pine strategy's own contract: market entry sized from `risk.value`, then percent-based
+  partial closes correlated by `trade_id` — see below).
 - **Safety first**: trading is **disabled by default**, every webhook URL has its own
   unguessable secret token, and an optional passphrase can be enforced in the alert body.
 - **Alerts** (Settings → Alerts): Discord webhook and/or email, each independently
@@ -165,6 +167,42 @@ Set the alert message to the strategy's JSON. Examples:
 > If you set a **passphrase** in Settings, include `"passphrase":"..."` in every alert
 > (applies to all webhooks).
 
+### `TS-Hunter` strategy webhooks
+
+Matches the TS-Hunter Pine strategy's own alert contract (`contract_version:
+at_execution_command_v5`) — point that strategy's alerts straight at this webhook, nothing
+to hand-edit. A trade's lifecycle is a `signal` entry followed by zero or more `management`
+messages, all correlated by the shared `trade_id`:
+
+**Entry** (`event: "signal"`) — market order sized from `risk.value`, protective stop at `sl.value`:
+```json
+{"event":"signal","side":"SELL","symbol":"MNQ",
+ "risk":{"mode":"fixed_lot","value":4},"sl":{"mode":"fixed_price_from_alert","value":29658.50},
+ "trade_id":"TS-HUNTER-SELL-123","tv":{"entry_price":29329.00}}
+```
+
+**Partial close** (`event: "management"`, `action: "partial_close_percent"`) — market-closes
+`percent`% of whatever remains right now (not of the original size), so three TP hits at
+25% / 33.33% / 50% of a 4-lot leave 3 → 2 → 1 (the "runner"). When `lifecycle_stage` is
+`TP2`, the stop is also moved to break-even (the entry's `tv.entry_price`) as part of the
+same message — every partial close resizes the stop to match the new remaining qty:
+```json
+{"event":"management","action":"partial_close_percent","lifecycle_stage":"TP2",
+ "side":"SELL","symbol":"MNQ","percent":33.33333333,"trade_id":"TS-HUNTER-SELL-123"}
+```
+
+**Full close** (`event: "management"`, `action: "full_close"`) — cancels working orders and
+liquidates whatever remains, regardless of tracked quantity:
+```json
+{"event":"management","action":"full_close","side":"SELL","symbol":"MNQ",
+ "trade_id":"TS-HUNTER-SELL-123","reason":"Shot ATR-TSL Confirmed Close"}
+```
+
+Trades are tracked by `trade_id`, not symbol — several concurrent TS-Hunter trades on the
+same symbol never collide. If the bridge restarts and loses track of a trade, `full_close`
+still works: it falls back to flattening the symbol on every account the webhook currently
+routes to.
+
 ---
 
 ## How orders are sized
@@ -178,9 +216,13 @@ Set the alert message to the strategy's JSON. Examples:
 | `bracket` | `buy` / `sell` | sl | Stop | full position |
 | `bracket` | `move_sl` | modify the stop order | — | — |
 | `bracket` | `close_all` | cancel working orders + flatten | Market | full position |
+| `ts_hunter` | `signal` | entry | Market | `risk.value` × account multiplier |
+| `ts_hunter` | `signal` | sl (if present) | Stop | same as entry qty |
+| `ts_hunter` | `partial_close_percent` | market-close `percent`% of what remains + resize sl | Market | `percent`% of current remaining qty |
+| `ts_hunter` | `full_close` | cancel working orders + flatten | Market | full position |
 
 Qty defaults/TP qty are set **per webhook** (Webhooks tab); order types (Market/Limit/Stop)
-are global, configurable on the **Settings** tab.
+are global, configurable on the **Settings** tab (TS-Hunter is always Market, per its contract).
 
 > **Note on "limit orders":** take-profits are placed as resting **limit** orders. The
 > stop-loss is placed as a **stop** order (a limit order at the SL price would fill

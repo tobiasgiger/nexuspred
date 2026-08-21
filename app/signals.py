@@ -14,6 +14,16 @@ multipliers, and a ``strategy`` that decides how the payload is executed:
   protective stop (``sl``) covering the full position. ``close_all`` cancels
   working orders and flattens; ``move_sl`` moves the tracked stop;
   ``trail_active`` resizes the stop to the remaining position.
+* ``"ts_hunter"`` -> the TS-Hunter contract (``contract_version:
+  at_execution_command_v5``): a payload with ``event: "signal"`` opens a
+  market entry sized from ``risk.value`` contracts with a protective stop at
+  ``sl.value``; ``event: "management"`` then drives it, correlated by
+  ``trade_id`` (not symbol, so several concurrent trades on the same symbol
+  never collide) — ``action: "partial_close_percent"`` market-closes
+  ``percent``% of whatever remains (TP1/TP2/TP3 each shave off a slice,
+  leaving a runner), moving the stop to break-even and resizing it whenever
+  ``lifecycle_stage`` is ``TP2``; ``action: "full_close"`` cancels working
+  orders and liquidates whatever remains, regardless of tracked quantity.
 
 The same logic powers the **simulator**: passing ``simulate=True`` routes orders to
 an in-memory executor (a synthetic bracket webhook + account) and uses a separate
@@ -140,6 +150,9 @@ async def process(
         if s.get("webhook_passphrase"):
             if payload.get("passphrase") != s["webhook_passphrase"]:
                 raise SignalError("Invalid passphrase")
+
+    if webhook.get("strategy") == "ts_hunter":
+        return await _process_ts_hunter(payload, webhook, active_map, simulate)
 
     action = str(payload.get("action", "")).lower().strip()
     tv_symbol = str(payload.get("symbol", "")).strip()
@@ -483,6 +496,282 @@ async def _handle_trail_active(payload, root, executors, active_map, tag, webhoo
     )
     return {"status": "ok", "action": "trail_active", "accounts": resized,
             "simulated": tag != ""}
+
+
+# ======================================================================= TS-Hunter
+# Tracked separately from bracket/simple: keyed by the payload's own
+# ``trade_id`` (shares the same _active/_sim_active dicts and _lock — the key
+# scheme just differs, so several concurrent trades on one symbol never
+# collide and the Monitor's Active Trades table shows both kinds for free).
+
+async def _process_ts_hunter(payload, webhook, active_map, simulate):
+    s = config.load_settings()
+    tag = "[SIM] " if simulate else ""
+
+    event = str(payload.get("event", "")).lower().strip()
+    trade_id = str(payload.get("trade_id", "")).strip()
+    if not trade_id:
+        raise SignalError("Payload missing 'trade_id'")
+
+    tv_symbol = str(payload.get("symbol") or payload.get("pair") or "").strip()
+    if not tv_symbol:
+        raise SignalError("Payload missing 'symbol'")
+
+    target, root, allowed = _resolve_symbol(s, tv_symbol)
+    if not allowed:
+        raise SignalError(f"Symbol '{tv_symbol}' not mapped / not in allowed list")
+
+    side = str(payload.get("side") or payload.get("direction") or "").lower().strip()
+    if event == "signal" and side not in ("buy", "sell"):
+        raise SignalError(f"Invalid/missing side '{side}'")
+
+    if not simulate and not s.get("trading_enabled"):
+        state.log_event(
+            "warn", f"Trading disabled — TS-Hunter signal for {root} (trade {trade_id}) not executed"
+        )
+        return {"status": "skipped", "reason": "trading_disabled"}
+
+    executors = [sim_client] if simulate else _webhook_executors(webhook)
+    if not executors:
+        state.log_event(
+            "warn", f"No enabled accounts on webhook '{webhook.get('name')}' — "
+            f"TS-Hunter signal ignored"
+        )
+        return {"status": "skipped", "reason": "no_enabled_accounts"}
+
+    if event == "signal":
+        return await _handle_ts_hunter_entry(
+            payload, side, root, target, trade_id, executors, active_map, tag, webhook
+        )
+    if event == "management":
+        mgmt_action = str(payload.get("action", "")).lower().strip()
+        if mgmt_action == "partial_close_percent":
+            return await _handle_ts_hunter_partial_close(
+                payload, trade_id, executors, active_map, tag
+            )
+        if mgmt_action == "full_close":
+            return await _handle_ts_hunter_full_close(
+                payload, trade_id, target, executors, active_map, tag
+            )
+        raise SignalError(f"Unknown TS-Hunter management action '{mgmt_action}'")
+
+    raise SignalError(f"Unknown TS-Hunter event '{event}'")
+
+
+async def _handle_ts_hunter_entry(payload, side, root, target, trade_id, executors, active_map, tag, webhook):
+    s = config.load_settings()
+    risk = payload.get("risk") or {}
+    try:
+        base_qty = float(risk.get("value"))
+    except (TypeError, ValueError):
+        raise SignalError("Payload missing numeric 'risk.value' (contract qty)")
+    if base_qty <= 0:
+        raise SignalError("'risk.value' must be positive")
+
+    sl_price = (payload.get("sl") or {}).get("value")
+    entry_price_ref = (payload.get("tv") or {}).get("entry_price")
+
+    entry_side = "Buy" if side == "buy" else "Sell"
+    exit_side = _opposite(side)
+    sl_type = s.get("sl_order_type", "Stop")
+
+    async def place_for(ex):
+        contract = await ex.resolve_contract(target)
+        mult = getattr(ex, "qty_multiplier", 1) or 1
+        qty = max(1, round(base_qty * mult))
+
+        # Entry first (always Market — the TS-Hunter contract is market-only).
+        entry = await ex.place_order(
+            symbol=contract, action=entry_side, qty=qty, order_type="Market",
+        )
+        acc_orders = [entry]
+
+        sl_id = None
+        if sl_price is not None:
+            sl = await ex.place_order(
+                symbol=contract, action=exit_side, qty=qty,
+                order_type=sl_type, stop_price=float(sl_price),
+            )
+            acc_orders.append(sl)
+            sl_id = sl.get("order_id")
+
+        info = {
+            "name": ex.name, "contract": contract, "qty": qty, "entry_qty": qty,
+            "remaining_qty": qty, "sl_order_id": sl_id, "sl_type": sl_type,
+            "sl_stop": float(sl_price) if sl_price is not None else None,
+            "entry_price": float(entry_price_ref) if entry_price_ref is not None else None,
+            "tp_order_ids": [],
+        }
+        return ex.name, info, acc_orders, contract
+
+    results = await asyncio.gather(*(place_for(ex) for ex in executors), return_exceptions=True)
+
+    orders: list[dict[str, Any]] = []
+    acct_state: dict[str, dict[str, Any]] = {}
+    summary: list[dict[str, Any]] = []
+    contract = target
+    for ex, res in zip(executors, results):
+        if isinstance(res, Exception):
+            state.log_event("error", f"{tag}TS-Hunter entry failed for {ex.name}: {res}")
+            continue
+        name, info, acc_orders, contract = res
+        acct_state[name] = info
+        orders.extend(acc_orders)
+        summary.append({"account": name, "qty": info["qty"]})
+
+    if acct_state:
+        with _lock:
+            active_map[trade_id] = {
+                "webhook_id": webhook["id"], "webhook_name": webhook.get("name", ""),
+                "root": root, "contract": contract, "side": side, "trade_id": trade_id,
+                "accounts": acct_state,
+            }
+
+    state.log_event(
+        "info", f"{tag}[{webhook.get('name', '?')}] TS-Hunter {side.upper()} {contract} "
+        f"(trade {trade_id}) on {len(acct_state)}/{len(executors)} account(s): {', '.join(acct_state)}"
+    )
+    if acct_state and not tag:
+        await alerts.trade_executed(webhook.get("name", "?"), side, contract, list(acct_state))
+    return {"status": "ok", "action": "signal", "contract": contract, "trade_id": trade_id,
+            "accounts": summary, "orders": orders, "simulated": tag != ""}
+
+
+async def _handle_ts_hunter_partial_close(payload, trade_id, executors, active_map, tag):
+    with _lock:
+        active = active_map.get(trade_id)
+    if not active or not active.get("accounts"):
+        state.log_event("warn", f"{tag}TS-Hunter: no tracked trade '{trade_id}' for partial close")
+        return {"status": "skipped", "reason": "no_active_trade", "action": "partial_close_percent"}
+
+    try:
+        percent = float(payload.get("percent"))
+    except (TypeError, ValueError):
+        raise SignalError("partial_close_percent payload missing numeric 'percent'")
+    if not (0 < percent <= 100):
+        raise SignalError("'percent' must be between 0 and 100")
+
+    stage = str(payload.get("lifecycle_stage") or payload.get("lifecycleStage") or "").upper().strip()
+    is_breakeven_stage = stage == "TP2"
+
+    exit_side = _opposite(active["side"])
+    by_name = {ex.name: ex for ex in executors}
+
+    async def close_for(name):
+        info = active["accounts"][name]
+        ex = by_name.get(name)
+        if ex is None:
+            state.log_event(
+                "warn", f"{tag}TS-Hunter: account '{name}' no longer enabled, "
+                "skipping partial close for it"
+            )
+            return None
+        remaining = int(info.get("remaining_qty") or 0)
+        if remaining <= 0:
+            return None
+        qty_to_close = max(1, min(remaining, round(remaining * percent / 100)))
+        order = await ex.place_order(
+            symbol=info["contract"], action=exit_side, qty=qty_to_close, order_type="Market",
+        )
+
+        new_remaining = remaining - qty_to_close
+        info["remaining_qty"] = new_remaining
+        info["qty"] = new_remaining
+
+        if is_breakeven_stage and info.get("entry_price") is not None:
+            info["sl_stop"] = float(info["entry_price"])
+
+        if info.get("sl_order_id"):
+            if new_remaining > 0:
+                await ex.modify_order(
+                    info["sl_order_id"], qty=new_remaining,
+                    order_type=info.get("sl_type", "Stop"), stop_price=info.get("sl_stop"),
+                )
+            else:
+                try:
+                    await ex.cancel_order(info["sl_order_id"])
+                except TradovateError:
+                    pass
+                info["sl_order_id"] = None
+
+        return order
+
+    names = list(active["accounts"])
+    results = await asyncio.gather(*(close_for(n) for n in names), return_exceptions=True)
+
+    orders: list[dict[str, Any]] = []
+    closed_accounts: list[str] = []
+    for name, r in zip(names, results):
+        if isinstance(r, Exception):
+            state.log_event("warn", f"{tag}TS-Hunter partial close failed for {name}: {r}")
+            continue
+        if r is not None:
+            orders.append(r)
+            closed_accounts.append(name)
+
+    where = " — stop moved to break-even" if is_breakeven_stage else ""
+    state.log_event(
+        "info", f"{tag}TS-Hunter {stage or 'partial close'} for trade {trade_id}: "
+        f"{percent:.2f}% of remaining closed on {len(closed_accounts)} account(s){where}"
+    )
+    return {"status": "ok", "action": "partial_close_percent", "lifecycle_stage": stage,
+            "trade_id": trade_id, "accounts": closed_accounts, "orders": orders,
+            "simulated": tag != ""}
+
+
+async def _handle_ts_hunter_full_close(payload, trade_id, target, executors, active_map, tag):
+    with _lock:
+        active = active_map.get(trade_id)
+
+    by_name = {ex.name: ex for ex in executors}
+    if active and active.get("accounts"):
+        targets = [(by_name[n], active["accounts"][n].get("contract", target))
+                   for n in active["accounts"] if n in by_name]
+        for n in active["accounts"]:
+            if n not in by_name:
+                state.log_event(
+                    "warn", f"{tag}TS-Hunter: account '{n}' no longer enabled, "
+                    "skipping full close for it"
+                )
+    else:
+        # Untracked trade (e.g. the bridge restarted) — fall back to flattening
+        # every currently-enabled account for this symbol, same safety net as
+        # the simple/bracket close_all.
+        targets = [(ex, target) for ex in executors]
+
+    async def close_account(ex, contract) -> int:
+        cancelled = 0
+        try:
+            for order in await ex.working_orders():
+                try:
+                    await ex.cancel_order(order["id"])
+                    cancelled += 1
+                except TradovateError:
+                    pass
+        except TradovateError as exc:
+            state.log_event("warn", f"{tag}Could not list working orders for {ex.name}: {exc}")
+        await ex.liquidate_position(contract)
+        return cancelled
+
+    results = await asyncio.gather(
+        *(close_account(ex, c) for ex, c in targets), return_exceptions=True
+    )
+    cancelled = sum(r for r in results if isinstance(r, int))
+    for (ex, _), r in zip(targets, results):
+        if isinstance(r, Exception):
+            state.log_event("warn", f"{tag}TS-Hunter full_close failed for {ex.name}: {r}")
+
+    with _lock:
+        active_map.pop(trade_id, None)
+
+    reason = payload.get("reason", "")
+    suffix = f": {reason}" if reason else ""
+    state.log_event(
+        "info", f"{tag}TS-Hunter full_close for trade {trade_id} on {len(targets)} "
+        f"account(s) ({cancelled} working orders cancelled){suffix}"
+    )
+    return {"status": "ok", "action": "full_close", "trade_id": trade_id,
+            "accounts": len(targets), "cancelled": cancelled, "simulated": tag != ""}
 
 
 def active_trades(simulate: bool = False) -> dict[str, Any]:

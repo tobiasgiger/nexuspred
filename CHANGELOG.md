@@ -4,6 +4,28 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 2.5.0
+- **New strategy type: TS-Hunter**, selectable when creating/editing a webhook.
+  Matches the TS-Hunter Pine strategy's own alert contract
+  (`contract_version: at_execution_command_v5`) directly — no payload
+  reshaping needed on the TradingView side.
+  - `event: "signal"` opens a Market entry sized from `risk.value` contracts
+    (× account multiplier) with a protective Stop at `sl.value`.
+  - `event: "management"` / `action: "partial_close_percent"` market-closes
+    `percent`% of whatever remains *right now* (not of the original size) —
+    three TP hits at 25% / 33.33% / 50% of a 4-lot correctly leave 3 → 2 → 1
+    (a "runner"). Every partial close resizes the stop to the new remaining
+    qty; when `lifecycle_stage` is `TP2` the stop is also moved to
+    break-even (the entry's `tv.entry_price`).
+  - `event: "management"` / `action: "full_close"` cancels working orders and
+    liquidates whatever remains, regardless of tracked quantity — including
+    a safe fallback if the bridge restarted and lost track of the trade.
+  - Trades are correlated by the payload's own `trade_id`, not symbol, so
+    several concurrent TS-Hunter trades on the same symbol never collide.
+  - The Webhooks tab's copy-paste alert template becomes a read-only
+    reference for this strategy (the Pine script already generates the exact
+    JSON — there's nothing to hand-edit).
+
 ## 2.4.0
 - **Alerts** (new Settings card): Discord webhook and/or email notifications,
   each channel and each trigger independently toggled.
