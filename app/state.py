@@ -8,6 +8,7 @@ via the API (which runs in the logged-in user's area context).
 """
 from __future__ import annotations
 
+import asyncio
 import threading
 from collections import deque
 from datetime import datetime, timezone
@@ -19,26 +20,74 @@ _MAX = 200
 _lock = threading.Lock()
 
 
+class _Sub:
+    """A live subscriber (SSE connection): a queue plus the loop it belongs to,
+    so events logged from any thread can be delivered thread-safely."""
+    __slots__ = ("queue", "loop")
+
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self.queue: asyncio.Queue = asyncio.Queue(maxsize=200)
+        self.loop = loop
+
+
 class _AreaState:
-    __slots__ = ("signals", "orders", "events", "sessions")
+    __slots__ = ("signals", "orders", "events", "sessions", "subscribers")
 
     def __init__(self) -> None:
         self.signals: Deque[dict[str, Any]] = deque(maxlen=_MAX)
         self.orders: Deque[dict[str, Any]] = deque(maxlen=_MAX)
         self.events: Deque[dict[str, Any]] = deque(maxlen=_MAX)
         self.sessions: dict[str, dict[str, Any]] = {}
+        self.subscribers: set[_Sub] = set()
 
 
 _areas: dict[int, _AreaState] = {}
 
 
-def _st() -> _AreaState:
-    aid = context.get_area()
+def _st_for(aid: int) -> _AreaState:
     with _lock:
         st = _areas.get(aid)
         if st is None:
             st = _areas[aid] = _AreaState()
         return st
+
+
+def _st() -> _AreaState:
+    return _st_for(context.get_area())
+
+
+def _safe_put(q: asyncio.Queue, message: dict[str, Any]) -> None:
+    try:
+        q.put_nowait(message)
+    except asyncio.QueueFull:
+        pass
+
+
+def _broadcast(st: _AreaState, message: dict[str, Any]) -> None:
+    """Push a message to this area's live subscribers (thread-safe)."""
+    for sub in list(st.subscribers):
+        try:
+            sub.loop.call_soon_threadsafe(_safe_put, sub.queue, message)
+        except RuntimeError:  # loop already closed
+            pass
+
+
+# --------------------------------------------------------------- live stream
+def subscribe(area_id: int | None = None) -> _Sub:
+    """Register a live subscriber for an area. Call from within a running loop."""
+    aid = area_id if area_id is not None else context.get_area()
+    sub = _Sub(asyncio.get_running_loop())
+    st = _st_for(aid)
+    with _lock:
+        st.subscribers.add(sub)
+    return sub
+
+
+def unsubscribe(sub: _Sub, area_id: int | None = None) -> None:
+    aid = area_id if area_id is not None else context.get_area()
+    st = _st_for(aid)
+    with _lock:
+        st.subscribers.discard(sub)
 
 
 def _now() -> str:
@@ -90,6 +139,7 @@ def log_signal(payload: dict[str, Any], result: str = "received") -> dict[str, A
     st = _st()
     with _lock:
         st.signals.appendleft(entry)
+    _broadcast(st, {"kind": "signal", "data": entry})
     return entry
 
 
@@ -105,6 +155,7 @@ def log_event(level: str, message: str, **extra: Any) -> None:
     st = _st()
     with _lock:
         st.events.appendleft(entry)
+    _broadcast(st, {"kind": "event", "data": entry})
 
 
 def snapshot() -> dict[str, Any]:

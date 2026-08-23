@@ -14,6 +14,7 @@ from fastapi.responses import (
     JSONResponse,
     RedirectResponse,
     Response,
+    StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -564,6 +565,41 @@ async def api_orders() -> list[dict[str, Any]]:
 @app.get("/api/events")
 async def api_events() -> list[dict[str, Any]]:
     return state.recent_events()
+
+
+@app.get("/api/stream")
+async def api_stream(request: Request) -> StreamingResponse:
+    """Server-Sent Events: live event-log and signal-log entries (no polling).
+
+    Each message is ``{"kind": "event"|"signal", "data": {...}}``. The connection
+    is scoped to the logged-in user's area, captured before the generator starts
+    (it runs after the request's area context has been reset)."""
+    import asyncio
+    import json
+
+    area = context.get_area()
+    sub = state.subscribe(area)
+
+    async def gen():
+        try:
+            yield ": connected\n\n"  # prime so proxies flush headers
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    msg = await asyncio.wait_for(sub.queue.get(), timeout=15.0)
+                    yield f"data: {json.dumps(msg)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"  # heartbeat keeps the connection open
+        finally:
+            state.unsubscribe(sub, area)
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive",
+                 "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/api/positions")

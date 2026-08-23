@@ -4,6 +4,15 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 4.7.0
+- **Live event & signal logs (real-time, no polling wait).** The Logs view now
+  streams new entries the instant they happen over **Server-Sent Events**
+  (`GET /api/stream`), instead of waiting on an 8 s poll — events and signals
+  appear immediately. A slow 20 s refresh remains as a reconcile fallback, and the
+  browser's `EventSource` auto-reconnects if the connection drops. The stream is
+  scoped to the logged-in user's area, and log delivery is thread-safe (events
+  logged from background tasks/health loops are pushed correctly).
+
 ## 4.6.0
 - **Email delivery for invites & password resets.** Reusing the SMTP settings you
   already configure for alerts, admins can now have the **invite link emailed

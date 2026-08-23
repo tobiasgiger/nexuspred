@@ -295,23 +295,54 @@ async function refreshPositions() {
 }
 
 /* --------------------------------------------------------------- logs */
+const LOG_CAP = 200;  // max lines kept in the DOM per log
+
+function eventLineHtml(e) {
+  return `<div class="log-line"><span class="lt">${fmtTime(e.ts)}</span>
+       <span class="lv ${e.level}">${(e.level || "").toUpperCase()}</span>
+       <span>${escapeHtml(e.message)}</span></div>`;
+}
+function signalLineHtml(s) {
+  return `<div class="log-line"><span class="lt">${fmtTime(s.ts)}</span>
+       <span class="lv info">${escapeHtml(s.result || "")}</span>
+       <code>${escapeHtml(JSON.stringify(s.payload))}</code></div>`;
+}
+
+// Prepend a single new line to a log container (live), trimming to LOG_CAP.
+function prependLog(containerSel, html) {
+  const el = $(containerSel);
+  if (!el) return;
+  const empty = el.querySelector(".empty");
+  if (empty) el.innerHTML = "";
+  el.insertAdjacentHTML("afterbegin", html);
+  while (el.children.length > LOG_CAP) el.removeChild(el.lastChild);
+}
+
 async function refreshLogs() {
   try {
     const [events, signals] = await Promise.all([
       api("/api/events"), api("/api/signals"),
     ]);
-    $("#eventLog").innerHTML = events.map((e) =>
-      `<div class="log-line"><span class="lt">${fmtTime(e.ts)}</span>
-       <span class="lv ${e.level}">${e.level.toUpperCase()}</span>
-       <span>${escapeHtml(e.message)}</span></div>`).join("") ||
+    $("#eventLog").innerHTML = events.map(eventLineHtml).join("") ||
       '<div class="empty">No events</div>';
-
-    $("#signalLog").innerHTML = signals.map((s) =>
-      `<div class="log-line"><span class="lt">${fmtTime(s.ts)}</span>
-       <span class="lv info">${escapeHtml(s.result || "")}</span>
-       <code>${escapeHtml(JSON.stringify(s.payload))}</code></div>`).join("") ||
+    $("#signalLog").innerHTML = signals.map(signalLineHtml).join("") ||
       '<div class="empty">No signals</div>';
   } catch (e) { /* ignore */ }
+}
+
+// Live event/signal stream (SSE) — instant updates, no polling wait.
+let _logStream = null;
+function connectEventStream() {
+  try {
+    if (_logStream) _logStream.close();
+    _logStream = new EventSource("/api/stream");
+    _logStream.onmessage = (ev) => {
+      let msg; try { msg = JSON.parse(ev.data); } catch (e) { return; }
+      if (msg.kind === "event") prependLog("#eventLog", eventLineHtml(msg.data));
+      else if (msg.kind === "signal") prependLog("#signalLog", signalLineHtml(msg.data));
+    };
+    // EventSource auto-reconnects on error; nothing to do.
+  } catch (e) { /* SSE unavailable — the periodic refresh still updates the logs */ }
 }
 
 function escapeHtml(str) {
@@ -1622,6 +1653,7 @@ async function boot() {
   refreshStatus();
   refreshOrders();
   refreshLogs();
+  connectEventStream();   // live event/signal log via SSE
   checkUpdate();
   loadTokenAccounts();
   await loadTradeAccounts();   // populates KNOWN_ACCOUNTS before webhook cards render
@@ -1640,7 +1672,7 @@ async function boot() {
 
   setInterval(refreshStatus, 5000);
   setInterval(refreshOrders, 7000);
-  setInterval(refreshLogs, 8000);
+  setInterval(refreshLogs, 20000);  // reconcile fallback; live updates arrive via SSE
   setInterval(refreshDiscordStatus, 5000);
 }
 boot();
