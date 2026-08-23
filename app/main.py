@@ -13,6 +13,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from . import config, signals, state, updater
+from .discord_signals import dispatcher as discord_dispatcher
+from .discord_signals.listener import manager as discord_manager
+from .discord_signals.routes import router as discord_router
 from .simulator import SCENARIOS, sim_client
 from .tradovate import TradovateError, manager
 
@@ -21,6 +24,7 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 app = FastAPI(title="Tradovate Webhook Bridge", version=config.get_version())
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+app.include_router(discord_router)  # Discord signal module (same server + auth)
 
 # Paths that must stay reachable without the dashboard password: the webhook
 # (TradingView can't send auth), static assets, and the health check.
@@ -490,3 +494,25 @@ async def _startup() -> None:
     manager.reload()
     state.log_event("info", f"Bridge started (v{config.get_version()})")
     asyncio.create_task(_health_loop())
+    # Discord signal listener: isolated supervisor task; a Discord failure can
+    # never crash the bridge (order execution etc.). Reads its own config live.
+    try:
+        discord_manager.start()
+        if not discord_manager.library_available():
+            state.log_event(
+                "warn",
+                "[discord] listener library not installed (discord.py-self) — "
+                "module idle. Install it to enable the Discord signal listener.",
+            )
+    except Exception as exc:  # noqa: BLE001 - never let module startup break the app
+        state.log_event("warn", f"[discord] listener failed to start: {exc}")
+
+
+@app.on_event("shutdown")
+async def _shutdown() -> None:
+    """Stop the Discord listener and close its HTTP client cleanly."""
+    try:
+        await discord_manager.shutdown()
+    except Exception as exc:  # noqa: BLE001
+        state.log_event("warn", f"[discord] shutdown error: {exc}")
+    await discord_dispatcher.aclose()

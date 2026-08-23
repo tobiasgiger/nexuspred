@@ -106,6 +106,19 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "alert_on_connection_restored": True,
     "alert_on_trade_executed": True,
 
+    # --- Discord signal listener (self-bot module) ----------------------------
+    # Watches Discord channels via the Gateway using a personal USER token
+    # (self-bot) and fans parsed signals out to per-channel webhook targets.
+    # Read live on every incoming event, so changes apply without a restart.
+    "discord_enabled": False,          # master switch for the listener
+    "discord_user_token": "",          # personal Discord user token (SECRET)
+    "discord_dry_run": False,          # parse+display but send to NO webhook
+    # Each channel: {"id": "<channel_id>", "label": str, "enabled": bool,
+    #   "targets": [{"label": str, "url": str, "secret": str, "enabled": bool}]}
+    # A channel may fan out to several targets; each target is toggled and may
+    # carry a secret sent as the X-Webhook-Secret header.
+    "discord_channels": [],
+
     # --- Auto-updater ---------------------------------------------------------
     "auto_check_updates": True,
 
@@ -254,6 +267,7 @@ def new_webhook(
 SECRET_FIELDS = {
     "webhook_passphrase", "dashboard_password",
     "alert_discord_webhook_url", "alert_smtp_password",
+    "discord_user_token",
 }
 
 # Per-entry secret fields inside the token_accounts list.
@@ -270,6 +284,17 @@ def public_settings() -> dict[str, Any]:
     out["token_accounts"] = [
         {**a, **{f: ("********" if a.get(f) else "") for f in _TOKEN_SECRETS}}
         for a in (s.get("token_accounts") or [])
+    ]
+    # Mask the per-target secrets inside each Discord channel entry.
+    out["discord_channels"] = [
+        {
+            **c,
+            "targets": [
+                {**t, "secret": ("********" if t.get("secret") else "")}
+                for t in (c.get("targets") or [])
+            ],
+        }
+        for c in (s.get("discord_channels") or [])
     ]
     return out
 

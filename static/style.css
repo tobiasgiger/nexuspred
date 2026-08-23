@@ -166,6 +166,7 @@ textarea { resize: vertical; font-family: "SF Mono", "Fira Code", Consolas, mono
 
 .form-actions { display: flex; align-items: center; gap: 14px; margin-top: 8px; margin-bottom: 24px; }
 .save-hint { color: var(--green); font-size: 13px; }
+.save-hint.err { color: var(--red); }
 
 /* ---------------------------------------------------------------- tables */
 .data-table { width: 100%; border-collapse: collapse; font-size: 13px; }

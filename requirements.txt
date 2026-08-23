@@ -5,3 +5,6 @@ pydantic==2.7.4
 jinja2==3.1.4
 python-multipart==0.0.9
 packaging>=23.2
+# Discord signal listener (self-bot). Imports as `discord`; the module imports
+# it lazily, so the bridge still boots if this fails to install.
+discord.py-self>=2.0.0

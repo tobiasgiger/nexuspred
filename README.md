@@ -41,6 +41,9 @@ configuration and monitoring, and a built-in GitHub auto-updater.
 - **Alerts** (Settings → Alerts): Discord webhook and/or email, each independently
   toggled, for connection lost/restored (which account + broker) and trade executed
   (which accounts + strategy, Discord only).
+- **Discord signal listener** (Discord Signals tab): watches Discord channels over the
+  Gateway with a personal user token (self-bot) and fans parsed trade signals out to
+  configurable webhook targets in parallel — see below.
 
 ---
 
@@ -304,6 +307,50 @@ alert when it drops and one when it comes back, not a repeat every health check.
 Discord POST or SMTP send is logged as a warning and never blocks a health check or a
 trade.
 
+## Discord signal listener
+
+A module (`app/discord_signals/`) that watches one or more Discord channels in which a
+signal provider posts trade updates as Discord **embeds**, parses them into structured
+signals, and forwards them to configurable webhook targets — typically this bridge, but
+any URL works. It runs **inside** the bridge process (same server, port, auth and
+deploy), as an isolated supervisor task, so a Discord connection failure can never affect
+order execution.
+
+> **Self-bot / ToS note.** Watching a channel you're only a *member* of requires logging
+> in with your personal **user token** (a "self-bot"), which violates Discord's Terms of
+> Service and can get the account banned. That trade-off is a deliberate choice — the
+> module simply implements it. It uses [`discord.py-self`](https://pypi.org/project/discord.py-self/)
+> and the **Gateway** (WebSocket push, never polling) so latency stays low.
+
+**Configure it on the Discord Signals tab:**
+
+- **Enable listener** and paste your Discord **user token** (stored masked in
+  `data/settings.json`, like every other secret).
+- **Global dry-run** — parse and display signals but send to **no** webhook.
+- **Channels** — each is a Discord channel ID with a label and one or more **webhook
+  targets**. Each target has a label, URL, optional **secret** (sent as the
+  `X-Webhook-Secret` header) and an on/off toggle. Every *enabled* target of a channel
+  receives each signal **in parallel**, each with its own 5 s timeout and isolated error
+  handling.
+
+All of the above is read **live per event**, so changes take effect without a restart.
+
+**Recognised messages** (by embed title): an **entry** (`… · SELL/BUY <symbol>`), a
+**stop/target move** (`… · Stop / target moved · <symbol>`), and a **close**
+(`Closed <symbol> · …`). Anything else is shown as **unrecognised** in the live feed and
+the event log — never silently dropped — so a change to the provider's format is noticed
+immediately.
+
+The **live feed** updates in real time over Server-Sent Events (no polling), showing each
+signal, which targets succeeded/failed, the measured latency, and unrecognised raw
+messages. The **Send test signal** button pushes a synthetic embed through the full
+pipeline to verify fan-out, disabled targets, the secret header and dry-run without a live
+Discord connection.
+
+`discord.py-self` is imported lazily: the bridge still boots and the parser/config/test
+all work even if it isn't installed (the tab shows "No library"). It's listed in
+`requirements.txt`, so a normal install/deploy picks it up.
+
 ## Symbol mapping
 
 TradingView sends continuous symbols like `MNQ1!`. **Settings → Current Symbol Mapping**
@@ -374,6 +421,11 @@ the dashboard **Update** button works.
 | `POST` | `/api/simulate/reset` | Clear the simulated account |
 | `GET`  | `/api/update/check` | Check GitHub for a new version |
 | `POST` | `/api/update/apply` | Pull latest & restart |
+| `GET/POST` | `/api/discord/config` | Read / save the Discord listener config (secrets masked) |
+| `GET`  | `/api/discord/status` | Listener state, connection & watched channels |
+| `GET`  | `/api/discord/signals` | Recent Discord signal events (ring buffer) |
+| `GET`  | `/api/discord/stream` | Live signal feed (Server-Sent Events) |
+| `POST` | `/api/discord/test` | Push a synthetic embed through the pipeline |
 
 ---
 

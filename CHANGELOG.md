@@ -4,6 +4,35 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 2.6.0
+- **New module: Discord signal listener** (`app/discord_signals/`). Watches one
+  or more Discord channels over the **Gateway** (WebSocket push, not polling)
+  using a personal user token (self-bot, via `discord.py-self`) and fans parsed
+  signals out to configurable webhook targets — typically the bridge itself, but
+  any URL works. Runs **inside** the existing FastAPI process (same server, port,
+  auth and deploy), as an isolated supervisor task so a Discord failure can never
+  crash order execution.
+  - **Parser** recognises the three provider embed types (entry, stop/target
+    moved, closed). Unknown formats are surfaced as "unrecognised" in the live
+    feed and event log — never silently dropped — so provider format changes are
+    noticed immediately.
+  - **Per-channel → multiple webhook targets**, each with a label, URL, optional
+    secret (sent as `X-Webhook-Secret`) and on/off toggle. Enabled targets are
+    POSTed **in parallel** (own HTTP client, independent of the Discord client),
+    each with its own 5s timeout and isolated error handling.
+  - **Live config**: channels, targets and the global **dry-run** switch are read
+    per event, so changes on the new **Discord Signals** dashboard tab take
+    effect without a restart. Dry-run parses + displays but sends to no webhook.
+  - **Live dashboard** via Server-Sent Events (no polling): incoming signals,
+    per-target success/failure, latency, and unrecognised raw messages.
+  - **Test button** pushes a synthetic embed through the full pipeline to verify
+    fan-out, disabled targets, the secret header and dry-run without a live
+    Discord connection. Measured signal→dispatch latency is well under the 250 ms
+    target (gateway push + parallel send).
+  - `discord.py-self` is imported lazily; the bridge still boots and the module's
+    parser/config/test work even if it isn't installed (the tab shows "No
+    library").
+
 ## 2.5.1
 - **TS-Hunter: removed the TP2 move-to-break-even.** A partial close still
   resizes the stop to the new remaining quantity every time, but the stop's

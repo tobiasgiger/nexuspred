@@ -31,6 +31,7 @@
   <nav class="tabs">
     <button class="tab active" data-tab="monitor">Monitor</button>
     <button class="tab" data-tab="webhooks">Webhooks</button>
+    <button class="tab" data-tab="discord">Discord Signals</button>
     <button class="tab" data-tab="settings">Settings</button>
     <button class="tab" data-tab="logs">Logs</button>
     <button class="tab" data-tab="test">Test &amp; Webhook</button>
@@ -403,6 +404,101 @@
             <tbody><tr><td colspan="5" class="empty">None</td></tr></tbody>
           </table>
         </div>
+      </div>
+    </section>
+
+    <!-- ============================ DISCORD SIGNALS ============================ -->
+    <section class="panel" id="tab-discord">
+      <div class="grid grid-3">
+        <div class="card stat">
+          <div class="stat-label">Listener</div>
+          <div class="stat-value" id="dsState">—</div>
+        </div>
+        <div class="card stat">
+          <div class="stat-label">Dry-run</div>
+          <div class="stat-value" id="dsDryRun">—</div>
+        </div>
+        <div class="card stat">
+          <div class="stat-label">Watched channels</div>
+          <div class="stat-value" id="dsWatched">—</div>
+        </div>
+      </div>
+
+      <div class="callout hidden" id="dsLibWarn">
+        <strong>Listener library not installed.</strong>
+        The Discord listener needs <code>discord.py-self</code>
+        (<code>pip install discord.py-self</code>, already in <code>requirements.txt</code>).
+        Parsing, config and the test button work without it, but no live channel is
+        watched until it's installed and the process restarts.
+      </div>
+
+      <!-- Live feed -->
+      <div class="card">
+        <div class="card-head">
+          <h2>Live Signal Feed</h2>
+          <span class="conn-pill"><span class="dot" id="dsStreamDot"></span>
+            <span id="dsStreamText">connecting…</span></span>
+        </div>
+        <p class="hint">Signals appear here in real time (Server-Sent Events, no reload).
+          Unrecognised messages are shown too — so a change in the provider's format is
+          never silently lost.</p>
+        <div id="dsFeed" class="log-stream"><div class="empty">No signals yet.</div></div>
+      </div>
+
+      <!-- Settings -->
+      <div class="card">
+        <div class="card-head"><h2>Listener &amp; Channels</h2></div>
+        <div class="grid grid-2">
+          <label class="switch-row"><span>Enable listener</span>
+            <input type="checkbox" class="switch" id="dsEnabled" /></label>
+          <label class="switch-row"><span>Global dry-run (parse only, send to no webhook)</span>
+            <input type="checkbox" class="switch" id="dsDryRunToggle" /></label>
+        </div>
+        <label>Discord user token (self-bot)
+          <input type="password" id="dsToken" placeholder="your personal Discord user token" autocomplete="off" />
+        </label>
+        <p class="hint">Uses your personal user token to log in as a normal client
+          (self-bot). Leave as <code>********</code> to keep the stored token.</p>
+
+        <div class="card-head" style="margin-top:16px">
+          <h2 class="sim-sub">Channels</h2>
+          <button type="button" class="btn btn-ghost" id="dsAddChannel">+ Add channel</button>
+        </div>
+        <p class="hint">Each channel is a Discord channel ID plus one or more webhook
+          targets. Every enabled target of a channel receives each signal in parallel.
+          A target's secret is sent as the <code>X-Webhook-Secret</code> header.</p>
+        <div id="dsChannels"></div>
+
+        <div class="form-actions">
+          <button type="button" class="btn btn-primary" id="dsSave">Save</button>
+          <span class="save-hint" id="dsSaveHint"></span>
+        </div>
+      </div>
+
+      <!-- Test -->
+      <div class="card">
+        <div class="card-head"><h2>Send Test Signal</h2></div>
+        <p class="hint">Runs a synthetic embed through the full pipeline for a channel
+          (parse → dispatch), respecting the dry-run switch — verify fan-out without a
+          live Discord connection.</p>
+        <div class="grid grid-2">
+          <label>Channel ID <input id="dsTestChannel" placeholder="e.g. 123456789012345678" /></label>
+          <label>Preset
+            <select id="dsTestPreset">
+              <option value="entry">Entry (SELL)</option>
+              <option value="update">Stop / target moved</option>
+              <option value="close">Closed</option>
+              <option value="junk">Unrecognised</option>
+            </select>
+          </label>
+        </div>
+        <label>Embed (JSON: title + fields)
+          <textarea id="dsTestEmbed" rows="8" class="code"></textarea>
+        </label>
+        <div class="form-actions">
+          <button type="button" class="btn btn-primary" id="dsTestSend">Send test</button>
+        </div>
+        <pre class="result-box" id="dsTestResult">—</pre>
       </div>
     </section>
 

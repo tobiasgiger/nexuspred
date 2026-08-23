@@ -989,6 +989,235 @@ async function refreshSimState() {
   } catch (e) { /* ignore */ }
 }
 
+/* ---------------------------------------------------- Discord Signals */
+let DS_CHANNELS = [];
+
+const DS_TEST_PRESETS = {
+  entry: {
+    title: "AkSniper 🎯 · SELL MNQ",
+    fields: [{ name: "Contracts", value: "3" }, { name: "Entry", value: "20450.25" }, { name: "Time", value: "10:31" }],
+  },
+  update: {
+    title: "AkSniper 🎯 · Stop / target moved · MNQ",
+    fields: [{ name: "Stop", value: "20440.0 → 20450.0" }, { name: "Target", value: "20500.0 → 20520.5" }, { name: "Position", value: "3" }],
+  },
+  close: {
+    title: "Closed MNQ · +90.75 pts",
+    fields: [{ name: "P&L", value: "+$181.50" }, { name: "Move", value: "+90.75" }, { name: "Exit", value: "20541.0" }, { name: "Held", value: "12m" }],
+  },
+  junk: {
+    title: "Brand-new message type nobody expected",
+    fields: [{ name: "Whatever", value: "???" }],
+  },
+};
+
+async function loadDiscordConfig() {
+  try {
+    const c = await api("/api/discord/config");
+    $("#dsEnabled").checked = !!c.discord_enabled;
+    $("#dsDryRunToggle").checked = !!c.discord_dry_run;
+    $("#dsToken").value = c.discord_user_token || "";
+    DS_CHANNELS = c.discord_channels || [];
+    renderDiscordChannels();
+  } catch (e) { /* ignore */ }
+}
+
+function dsTargetRow(t = {}) {
+  return `<tr class="ds-target">
+    <td><input type="checkbox" class="switch ds-t-enabled" ${t.enabled ? "checked" : ""} /></td>
+    <td><input class="ds-t-label" value="${escapeHtml(t.label || "")}" placeholder="bridge" style="width:120px" /></td>
+    <td><input class="ds-t-url" value="${escapeHtml(t.url || "")}" placeholder="https://…/webhook/&lt;token&gt;" style="width:100%;min-width:220px" /></td>
+    <td><input type="password" class="ds-t-secret" value="${escapeHtml(t.secret || "")}" placeholder="optional" autocomplete="off" style="width:120px" /></td>
+    <td><button type="button" class="btn btn-ghost ds-t-del">✕</button></td>
+  </tr>`;
+}
+
+function dsChannelCard(c = {}) {
+  const targets = (c.targets || []).map(dsTargetRow).join("");
+  return `<div class="card ds-channel">
+    <div class="card-head">
+      <label class="switch-row" style="margin:0"><span>Enabled</span>
+        <input type="checkbox" class="switch ds-c-enabled" ${c.enabled ? "checked" : ""} /></label>
+      <button type="button" class="btn btn-ghost ds-c-del">Delete channel</button>
+    </div>
+    <div class="grid grid-2">
+      <label>Label <input class="ds-c-label" value="${escapeHtml(c.label || "")}" placeholder="Signal channel" /></label>
+      <label>Channel ID <input class="ds-c-id" value="${escapeHtml(c.id || "")}" placeholder="123456789012345678" /></label>
+    </div>
+    <table class="data-table ds-targets">
+      <thead><tr><th>On</th><th>Label</th><th>Webhook URL</th><th>Secret</th><th></th></tr></thead>
+      <tbody>${targets || '<tr class="ds-empty-row"><td colspan="5" class="empty">No targets — add one.</td></tr>'}</tbody>
+    </table>
+    <div class="form-actions"><button type="button" class="btn btn-ghost ds-add-target">+ Add target</button></div>
+  </div>`;
+}
+
+function renderDiscordChannels() {
+  const box = $("#dsChannels");
+  if (!DS_CHANNELS.length) {
+    box.innerHTML = '<p class="empty">No channels yet — click "+ Add channel".</p>';
+    return;
+  }
+  box.innerHTML = DS_CHANNELS.map(dsChannelCard).join("");
+  box.querySelectorAll(".ds-channel").forEach(wireDiscordChannel);
+}
+
+function wireDiscordChannel(card) {
+  card.querySelector(".ds-c-del").addEventListener("click", () => { card.remove(); });
+  card.querySelector(".ds-add-target").addEventListener("click", () => {
+    const tbody = card.querySelector(".ds-targets tbody");
+    const empty = tbody.querySelector(".ds-empty-row");
+    if (empty) empty.remove();
+    tbody.insertAdjacentHTML("beforeend", dsTargetRow({ enabled: true }));
+    wireDiscordTarget(tbody.lastElementChild);
+  });
+  card.querySelectorAll(".ds-target").forEach(wireDiscordTarget);
+}
+
+function wireDiscordTarget(row) {
+  row.querySelector(".ds-t-del").addEventListener("click", () => row.remove());
+}
+
+function collectDiscordChannels() {
+  return [...$("#dsChannels").querySelectorAll(".ds-channel")].map((card) => ({
+    id: card.querySelector(".ds-c-id").value.trim(),
+    label: card.querySelector(".ds-c-label").value.trim(),
+    enabled: card.querySelector(".ds-c-enabled").checked,
+    targets: [...card.querySelectorAll(".ds-target")].map((r) => ({
+      label: r.querySelector(".ds-t-label").value.trim(),
+      url: r.querySelector(".ds-t-url").value.trim(),
+      secret: r.querySelector(".ds-t-secret").value,
+      enabled: r.querySelector(".ds-t-enabled").checked,
+    })).filter((t) => t.url),
+  })).filter((c) => c.id);
+}
+
+$("#dsAddChannel").addEventListener("click", () => {
+  DS_CHANNELS = collectDiscordChannels();
+  DS_CHANNELS.push({ label: "", id: "", enabled: true, targets: [] });
+  renderDiscordChannels();
+});
+
+$("#dsSave").addEventListener("click", async () => {
+  const hint = $("#dsSaveHint");
+  const body = {
+    discord_enabled: $("#dsEnabled").checked,
+    discord_dry_run: $("#dsDryRunToggle").checked,
+    discord_user_token: $("#dsToken").value,
+    discord_channels: collectDiscordChannels(),
+  };
+  try {
+    const c = await api("/api/discord/config", { method: "POST", body: JSON.stringify(body) });
+    DS_CHANNELS = c.discord_channels || [];
+    $("#dsToken").value = c.discord_user_token || "";
+    renderDiscordChannels();
+    hint.textContent = "Saved ✓"; hint.className = "save-hint ok";
+    toast("Discord config saved", "success");
+    refreshDiscordStatus();
+  } catch (e) {
+    hint.textContent = e.message; hint.className = "save-hint err";
+    toast(e.message, "error");
+  }
+  setTimeout(() => { hint.textContent = ""; }, 3000);
+});
+
+async function refreshDiscordStatus() {
+  try {
+    const s = await api("/api/discord/status");
+    const stateEl = $("#dsState");
+    const label = { connected: "Connected", connecting: "Connecting…", disabled: "Disabled",
+      error: "Error", library_missing: "No library", stopped: "Stopped" }[s.state] || s.state;
+    stateEl.textContent = label + (s.user ? ` (${s.user})` : "");
+    $("#dsDryRun").textContent = s.dry_run ? "ON" : "off";
+    $("#dsWatched").textContent = (s.watched_channels || []).length;
+    $("#dsLibWarn").classList.toggle("hidden", s.library_available);
+  } catch (e) { /* ignore */ }
+}
+
+function dsFeedLine(ev) {
+  const time = fmtTime(ev.ts);
+  const src = ev.source ? `<span class="tag">${escapeHtml(ev.source)}</span>` : "";
+  if (ev.kind === "unrecognized") {
+    return `<div class="log-line"><span class="lt">${time}</span>
+      <span class="lv" style="color:var(--warn,#e0a800)">UNKNOWN</span>
+      <code>${escapeHtml(ev.channel_label || "")} — ${escapeHtml((ev.raw && ev.raw.title) || "")}</code></div>`;
+  }
+  const sig = ev.signal || {};
+  const dry = ev.dry_run ? '<span class="tag sim">DRY</span>' : "";
+  const ok = (ev.targets || []).filter((t) => t.ok).length;
+  const total = (ev.targets || []).length;
+  const failed = (ev.targets || []).filter((t) => t.ok === false).length;
+  const targetTxt = ev.dry_run
+    ? `${total} target(s) skipped`
+    : `${ok}/${total} sent${failed ? `, ${failed} failed` : ""}`;
+  const lat = ev.latency_ms != null ? ` · ${ev.latency_ms}ms` : "";
+  const side = sig.side ? ` ${sig.side}` : "";
+  return `<div class="log-line"><span class="lt">${time}</span>
+    <span class="lv">${escapeHtml(sig.event_type || "signal")}</span>
+    <code>${escapeHtml(ev.channel_label || "")} · ${escapeHtml(sig.symbol || "?")}${side} ${src}${dry} — ${targetTxt}${lat}</code></div>`;
+}
+
+function dsRenderFeed(events) {
+  const box = $("#dsFeed");
+  if (!events.length) { box.innerHTML = '<div class="empty">No signals yet.</div>'; return; }
+  box.innerHTML = events.map(dsFeedLine).join("");
+}
+
+async function loadDiscordSignals() {
+  try { dsRenderFeed(await api("/api/discord/signals")); } catch (e) { /* ignore */ }
+}
+
+let DS_FEED = [];
+function connectDiscordStream() {
+  let es;
+  try { es = new EventSource("/api/discord/stream"); }
+  catch (e) { return; }
+  es.onopen = () => {
+    $("#dsStreamDot").className = "dot on";
+    $("#dsStreamText").textContent = "live";
+  };
+  es.onerror = () => {
+    $("#dsStreamDot").className = "dot";
+    $("#dsStreamText").textContent = "reconnecting…";
+    // EventSource auto-reconnects; nothing to do.
+  };
+  es.onmessage = (msg) => {
+    try {
+      const ev = JSON.parse(msg.data);
+      DS_FEED.unshift(ev);
+      DS_FEED = DS_FEED.slice(0, 200);
+      dsRenderFeed(DS_FEED);
+    } catch (e) { /* ignore */ }
+  };
+}
+
+function dsLoadTestPreset() {
+  const p = DS_TEST_PRESETS[$("#dsTestPreset").value] || DS_TEST_PRESETS.entry;
+  $("#dsTestEmbed").value = JSON.stringify(p, null, 2);
+}
+$("#dsTestPreset").addEventListener("change", dsLoadTestPreset);
+
+$("#dsTestSend").addEventListener("click", async () => {
+  const box = $("#dsTestResult");
+  let embed;
+  try { embed = JSON.parse($("#dsTestEmbed").value); }
+  catch { return toast("Embed is not valid JSON", "error"); }
+  const channel_id = $("#dsTestChannel").value.trim();
+  if (!channel_id) return toast("Enter a channel ID", "error");
+  try {
+    const r = await api("/api/discord/test", {
+      method: "POST",
+      body: JSON.stringify({ channel_id, embed, force: true }),
+    });
+    box.textContent = JSON.stringify(r, null, 2);
+    toast("Test signal sent", "success");
+    loadDiscordSignals();
+  } catch (e) {
+    box.textContent = "Error: " + e.message;
+    toast(e.message, "error");
+  }
+});
+
 /* --------------------------------------------------------------- boot */
 async function boot() {
   await loadSettings();
@@ -1002,8 +1231,16 @@ async function boot() {
   loadScenarios();
   $("#testPayload").value = JSON.stringify(PRESETS.simple_buy, null, 2);
 
+  // Discord signal module
+  loadDiscordConfig();
+  refreshDiscordStatus();
+  loadDiscordSignals();
+  connectDiscordStream();
+  dsLoadTestPreset();
+
   setInterval(refreshStatus, 5000);
   setInterval(refreshOrders, 7000);
   setInterval(refreshLogs, 8000);
+  setInterval(refreshDiscordStatus, 5000);
 }
 boot();
