@@ -70,7 +70,7 @@ async def connection_lost(account: str, environment: str, error: str) -> None:
     detail = f" — {error}" if error else ""
     message = f"🔴 **Connection lost** — account `{account}` ({environment}, Tradovate){detail}"
     await _send_discord(message)
-    await _send_email(f"nexuspred: connection lost ({account})", message)
+    await _send_email(f"Fluxbridge: connection lost ({account})", message)
 
 
 async def connection_restored(account: str, environment: str) -> None:
@@ -79,7 +79,7 @@ async def connection_restored(account: str, environment: str) -> None:
         return
     message = f"🟢 **Connection restored** — account `{account}` ({environment}, Tradovate)"
     await _send_discord(message)
-    await _send_email(f"nexuspred: connection restored ({account})", message)
+    await _send_email(f"Fluxbridge: connection restored ({account})", message)
 
 
 async def trade_executed(

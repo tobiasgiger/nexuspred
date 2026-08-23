@@ -1,8 +1,11 @@
-# nexuspred — Tradovate Webhook Bridge
+# Fluxbridge — TradingView → Tradovate signal router
+
+_(repository: `tobiasgiger/nexuspred`)_
 
 A self-hosted bridge that receives **TradingView** alerts via a webhook and routes them
 to **Tradovate** as live/demo orders. Ships with a dark, professional dashboard for
-configuration and monitoring, and a built-in GitHub auto-updater.
+configuration and monitoring, an optional Discord signal listener, **Sign in with Google**
+access control, and a built-in GitHub auto-updater.
 
 ![dashboard](docs/dashboard.png)
 
@@ -103,9 +106,10 @@ includes a `render.yaml` blueprint.
 > predates it, set `PYTHON_VERSION=3.11.9` and *Clear build cache & deploy*.
 
 > **Persistence & security on any public host:** point `NEXUSPRED_DATA_DIR` at a
-> persistent disk so settings survive deploys, and always set `DASHBOARD_PASSWORD`
-> (HTTP Basic auth on the dashboard + API; the `/webhook/<token>` and `/healthz` paths
-> stay open). `GET /healthz` is an unauthenticated liveness probe.
+> persistent disk so settings survive deploys, and protect the dashboard — either
+> **Sign in with Google** (Settings → Security, see [Login & access](#login--access-sign-in-with-google))
+> or the fallback `DASHBOARD_PASSWORD`. The `/webhook/<token>` and `/healthz` paths
+> stay open (`GET /healthz` is an unauthenticated liveness probe).
 
 1. Go to **Settings → Token Accounts** → add one row per Tradovate account with its own
    access token (start in **Demo**), then **Connect & Verify**.
@@ -353,6 +357,32 @@ Discord connection.
 all work even if it isn't installed (the tab shows "No library"). It's listed in
 `requirements.txt`, so a normal install/deploy picks it up.
 
+## Login & access (Sign in with Google)
+
+Protect the dashboard with **Sign in with Google**, restricted to an **email
+allowlist** — configure it under **Settings → Security** (or via env vars). Once a
+**Client ID + secret** *and* at least one **allowed email** are set, the dashboard
+requires Google sign-in and the legacy password is ignored. Until then, the bridge
+falls back to the `DASHBOARD_PASSWORD` (or is open if none) so you're never locked out.
+
+**One-time Google setup:**
+
+1. In the [Google Cloud Console](https://console.cloud.google.com/) → **APIs &
+   Services → Credentials**, create an **OAuth client ID** of type **Web application**.
+2. Add an **Authorised redirect URI**: your deployment's URL + `/auth/callback`
+   (the exact value is shown, with a Copy button, on **Settings → Security**), e.g.
+   `https://your-app.onrender.com/auth/callback`.
+3. Configure the **OAuth consent screen** (External is fine; add yourself as a test
+   user while it's in testing).
+4. Paste the **Client ID**, **Client Secret** and your **allowed email(s)** into
+   Settings → Security (or set `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` /
+   `GOOGLE_ALLOWED_EMAILS`). Behind a proxy, set **Public URL** / `PUBLIC_URL` so the
+   redirect uses your real HTTPS host.
+
+Sessions are a signed, HTTP-only cookie (no server-side store). Use **Sign out**
+(top-right) to end a session. The `/webhook/<token>` and `/healthz` paths are never
+behind login.
+
 ## Symbol mapping
 
 TradingView sends continuous symbols like `MNQ1!`. **Settings → Current Symbol Mapping**
@@ -429,6 +459,7 @@ the dashboard **Update** button works.
 | `GET`  | `/api/discord/stream` | Live signal feed (Server-Sent Events) |
 | `POST` | `/api/discord/test` | Push a synthetic embed through the pipeline |
 | `GET`  | `/api/extension/token-extractor.zip` | Download the browser token-extractor extension |
+| `GET`  | `/login` · `/auth/login` · `/auth/callback` · `/auth/logout` | Sign in with Google (OAuth) flow |
 
 ---
 

@@ -8,11 +8,17 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import config, signals, state, updater
+from . import auth, config, signals, state, updater
 from .discord_signals import dispatcher as discord_dispatcher
 from .discord_signals.listener import manager as discord_manager
 from .discord_signals.routes import router as discord_router
@@ -22,13 +28,16 @@ from .tradovate import TradovateError, manager
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
-app = FastAPI(title="Tradovate Webhook Bridge", version=config.get_version())
+app = FastAPI(title="Fluxbridge", version=config.get_version())
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 app.include_router(discord_router)  # Discord signal module (same server + auth)
 
-# Paths that must stay reachable without the dashboard password: the webhook
-# (TradingView can't send auth), static assets, and the health check.
-_AUTH_EXEMPT = ("/webhook/", "/static/", "/healthz", "/guide", "/favicon.ico")
+# Paths reachable without auth: the webhook (TradingView can't send auth), static
+# assets, the health check, the standalone guide/favicon, and the login/OAuth flow.
+_AUTH_EXEMPT = (
+    "/webhook/", "/static/", "/healthz", "/guide", "/favicon.ico",
+    "/login", "/auth/",
+)
 
 
 def _dashboard_password() -> str:
@@ -38,11 +47,26 @@ def _dashboard_password() -> str:
 
 
 @app.middleware("http")
-async def _basic_auth(request: Request, call_next):
-    """Require HTTP Basic auth for the dashboard/API when a password is configured."""
-    pw = _dashboard_password()
+async def _auth_middleware(request: Request, call_next):
+    """Gate the dashboard/API. Prefer Google login (email allowlist) when it's
+    configured; otherwise fall back to the legacy password (or open if none)."""
     path = request.url.path
-    if pw and not path.startswith(_AUTH_EXEMPT):
+    if path.startswith(_AUTH_EXEMPT):
+        return await call_next(request)
+
+    # --- Preferred: Sign in with Google (email allowlist) ---
+    if auth.configured():
+        email = auth.read_session(request.cookies.get(auth.COOKIE))
+        if email and auth.email_allowed(email):
+            return await call_next(request)
+        accept = request.headers.get("accept", "")
+        if request.method == "GET" and "text/html" in accept:
+            return RedirectResponse("/login", status_code=302)
+        return JSONResponse({"detail": "Authentication required"}, status_code=401)
+
+    # --- Fallback: legacy HTTP Basic password (until Google is set up) ---
+    pw = _dashboard_password()
+    if pw:
         header = request.headers.get("Authorization", "")
         ok = False
         if header.startswith("Basic "):
@@ -54,9 +78,99 @@ async def _basic_auth(request: Request, call_next):
         if not ok:
             return Response(
                 status_code=401,
-                headers={"WWW-Authenticate": 'Basic realm="nexuspred"'},
+                headers={"WWW-Authenticate": 'Basic realm="Fluxbridge"'},
             )
     return await call_next(request)
+
+
+# ================================================================= Auth (Google)
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request, error: str = "") -> HTMLResponse:
+    """Login screen with a 'Sign in with Google' button."""
+    if auth.configured() and auth.read_session(request.cookies.get(auth.COOKIE)):
+        return RedirectResponse("/", status_code=302)
+    messages = {
+        "not_allowed": "That Google account isn't authorised for this dashboard.",
+        "unverified": "That Google account's email isn't verified.",
+        "state": "Login session expired — please try again.",
+        "exchange": "Google sign-in failed — please try again.",
+    }
+    return templates.TemplateResponse(
+        "login.html",
+        {"request": request, "configured": auth.configured(),
+         "error": messages.get(error, "")},
+    )
+
+
+@app.get("/auth/login")
+async def auth_login(request: Request):
+    """Kick off the Google OAuth flow (Authorization Code)."""
+    if not auth.configured():
+        return RedirectResponse("/login", status_code=302)
+    state_tok = auth.new_state()
+    resp = RedirectResponse(auth.google_auth_url(request, state_tok), status_code=302)
+    secure = auth.base_url(request).startswith("https")
+    resp.set_cookie(auth.STATE_COOKIE, state_tok, max_age=600, httponly=True,
+                    secure=secure, samesite="lax", path="/")
+    return resp
+
+
+@app.get("/auth/callback")
+async def auth_callback(request: Request, code: str = "", state: str = ""):
+    """Handle Google's redirect: verify state, exchange code, allowlist the email."""
+    import httpx
+
+    if not auth.configured():
+        return RedirectResponse("/login", status_code=302)
+    if not code or not state or state != request.cookies.get(auth.STATE_COOKIE):
+        return RedirectResponse("/login?error=state", status_code=302)
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            tok = await client.post(auth.TOKEN_ENDPOINT, data={
+                "code": code,
+                "client_id": auth.client_id(),
+                "client_secret": auth.client_secret(),
+                "redirect_uri": auth.redirect_uri(request),
+                "grant_type": "authorization_code",
+            })
+            if tok.status_code != 200:
+                return RedirectResponse("/login?error=exchange", status_code=302)
+            access = tok.json().get("access_token")
+            info = await client.get(auth.USERINFO_ENDPOINT,
+                                    headers={"Authorization": f"Bearer {access}"})
+            profile = info.json() if info.status_code == 200 else {}
+    except Exception as exc:  # noqa: BLE001
+        state_mod_log(f"Google sign-in error: {exc}")
+        return RedirectResponse("/login?error=exchange", status_code=302)
+
+    email = (profile.get("email") or "").strip().lower()
+    if not profile.get("email_verified", False):
+        return RedirectResponse("/login?error=unverified", status_code=302)
+    if not auth.email_allowed(email):
+        state.log_event("warn", f"Denied login for {email or 'unknown'} (not allowlisted)")
+        return RedirectResponse("/login?error=not_allowed", status_code=302)
+
+    resp = RedirectResponse("/", status_code=302)
+    secure = auth.base_url(request).startswith("https")
+    resp.set_cookie(auth.COOKIE, auth.make_session(email), max_age=auth.SESSION_TTL,
+                    httponly=True, secure=secure, samesite="lax", path="/")
+    resp.delete_cookie(auth.STATE_COOKIE, path="/")
+    state.log_event("info", f"Signed in: {email}")
+    return resp
+
+
+@app.get("/auth/logout")
+async def auth_logout() -> RedirectResponse:
+    resp = RedirectResponse("/login", status_code=302)
+    resp.delete_cookie(auth.COOKIE, path="/")
+    return resp
+
+
+def state_mod_log(msg: str) -> None:
+    try:
+        state.log_event("warn", msg)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 @app.get("/favicon.ico")

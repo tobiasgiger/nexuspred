@@ -87,7 +87,24 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # Protect the dashboard + API with HTTP Basic auth when hosted publicly.
     # The DASHBOARD_PASSWORD env var overrides this (use it for the first deploy).
     # The /webhook/<secret> endpoint is never behind this (TradingView can't auth).
+    # NOTE: this password is only a FALLBACK — when Google login is configured
+    # (client id/secret + at least one allowed email) it takes over entirely.
     "dashboard_password": "",
+
+    # --- Access / login: Sign in with Google (OAuth) ------------------------
+    # When a client id + secret AND at least one allowed email are set, the
+    # dashboard requires "Sign in with Google" and only these emails get in
+    # (the password above is then ignored). Env overrides: GOOGLE_CLIENT_ID,
+    # GOOGLE_CLIENT_SECRET, GOOGLE_ALLOWED_EMAILS (comma-separated), PUBLIC_URL.
+    "google_oauth_enabled": False,
+    "google_client_id": "",
+    "google_client_secret": "",
+    "google_allowed_emails": [],     # e.g. ["you@gmail.com"]
+    # Public base URL of this deploy (e.g. https://app.onrender.com). Used to
+    # build the OAuth redirect URI when behind a proxy; auto-derived if blank.
+    "public_url": "",
+    # Auto-generated signing key for the login session cookie (never shown).
+    "session_secret": "",
 
     # --- Alerts -----------------------------------------------------------------
     # Two channels (each independently toggled) and three triggers (each with
@@ -268,6 +285,7 @@ SECRET_FIELDS = {
     "webhook_passphrase", "dashboard_password",
     "alert_discord_webhook_url", "alert_smtp_password",
     "discord_user_token",
+    "google_client_secret", "session_secret",
 }
 
 # Per-entry secret fields inside the token_accounts list.

@@ -4,6 +4,25 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 3.0.0
+- **Renamed to Fluxbridge.** New display/brand name across the dashboard, login
+  page, window title, and alerts. (Internal repo name, package, and env vars —
+  `NEXUSPRED_DATA_DIR`, `NEXUSPRED_BRANCH`, the `tobiasgiger/nexuspred` repo —
+  are unchanged, so existing deployments keep working.)
+- **Sign in with Google (email allowlist) replaces the password.** When a Google
+  OAuth **Client ID + secret** and at least one **allowed email** are set (Settings
+  → Security, or `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_ALLOWED_EMAILS`),
+  the dashboard requires Google sign-in and only allowlisted emails get in.
+  - Standard OAuth Authorization-Code flow (`/login`, `/auth/login`,
+    `/auth/callback`, `/auth/logout`); state (CSRF) + a signed, HTTP-only session
+    cookie (no server-side store, no new dependency).
+  - Settings → Security shows the exact **redirect URI** to register, plus a
+    **Public URL** override for proxied deploys. A **Sign out** button appears when
+    Google login is active.
+  - The `dashboard_password` / `DASHBOARD_PASSWORD` is now a **fallback** only —
+    used until Google login is fully configured — so you can't get locked out.
+  - `/webhook/<token>` and `/healthz` remain unauthenticated.
+
 ## 2.11.0
 - **No-install token grab: bookmarklets.** The Tools tab now offers draggable
   **Discord** and **Tradovate** bookmarklets — drag to the bookmarks bar, click on

@@ -312,10 +312,21 @@ async function loadSettings() {
     if (!el) continue;
     if (el.type === "checkbox") el.checked = !!val;
     else if (key === "symbol_map") el.value = JSON.stringify(val, null, 2);
-    else if (key === "allowed_symbols") el.value = (val || []).join(", ");
+    else if (key === "allowed_symbols" || key === "google_allowed_emails") el.value = (val || []).join(", ");
     else el.value = val ?? "";
   }
   renderSymbolMap(s.symbol_map || {});
+  updateAuthUi(s);
+}
+
+/* Redirect URI display + Sign-out visibility for Google login. */
+function updateAuthUi(s) {
+  const ru = $("#redirectUri");
+  if (ru) ru.textContent = `${location.origin}/auth/callback`;
+  const emails = s.google_allowed_emails || [];
+  const configured = !!(s.google_client_id && emails.length);
+  const so = $("#signOutBtn");
+  if (so) so.classList.toggle("hidden", !configured);
 }
 
 $("#settingsForm").addEventListener("submit", async (e) => {
@@ -329,7 +340,7 @@ $("#settingsForm").addEventListener("submit", async (e) => {
     else if (el.name === "symbol_map") {
       try { payload[el.name] = JSON.parse(el.value || "{}"); }
       catch { return toast("Symbol map must be valid JSON", "error"); }
-    } else if (el.name === "allowed_symbols") {
+    } else if (el.name === "allowed_symbols" || el.name === "google_allowed_emails") {
       payload[el.name] = el.value.split(",").map((x) => x.trim()).filter(Boolean);
     } else payload[el.name] = el.value;
   }
@@ -408,6 +419,11 @@ function updateWebhookUrl(token) {
 $("#copyUrl").addEventListener("click", () => {
   navigator.clipboard.writeText($("#webhookUrl").textContent);
   toast("Webhook URL copied", "success");
+});
+
+$("#copyRedirect").addEventListener("click", () => {
+  navigator.clipboard.writeText($("#redirectUri").textContent);
+  toast("Redirect URI copied", "success");
 });
 
 /**
