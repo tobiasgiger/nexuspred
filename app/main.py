@@ -18,12 +18,12 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import auth, config, signals, state, updater
+from . import auth, config, context, db, signals, state, tradovate, updater
 from .discord_signals import dispatcher as discord_dispatcher
-from .discord_signals.listener import manager as discord_manager
+from .discord_signals import listener as discord_listener
 from .discord_signals.routes import router as discord_router
 from .simulator import SCENARIOS, sim_client
-from .tradovate import TradovateError, manager
+from .tradovate import TradovateError
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -32,145 +32,217 @@ app = FastAPI(title="Fluxbridge", version=config.get_version())
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 app.include_router(discord_router)  # Discord signal module (same server + auth)
 
-# Paths reachable without auth: the webhook (TradingView can't send auth), static
-# assets, the health check, the standalone guide/favicon, and the login/OAuth flow.
+# Paths reachable without a login session: the webhook (TradingView can't send
+# auth), static assets, health check, guide/favicon, and the auth pages.
 _AUTH_EXEMPT = (
     "/webhook/", "/static/", "/healthz", "/guide", "/favicon.ico",
-    "/login", "/auth/",
+    "/login", "/logout", "/register", "/setup",
 )
 
 
-def _dashboard_password() -> str:
-    return os.environ.get("DASHBOARD_PASSWORD") or config.load_settings().get(
-        "dashboard_password", ""
-    )
+def _secure(request: Request) -> bool:
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    return proto == "https"
+
+
+def _wants_html(request: Request) -> bool:
+    return request.method == "GET" and "text/html" in request.headers.get("accept", "")
+
+
+def _set_session_cookie(resp: Response, request: Request, user_id: int) -> None:
+    resp.set_cookie(auth.COOKIE, auth.make_session(user_id), max_age=auth.SESSION_TTL,
+                    httponly=True, secure=_secure(request), samesite="lax", path="/")
 
 
 @app.middleware("http")
 async def _auth_middleware(request: Request, call_next):
-    """Gate the dashboard/API. Prefer Google login (email allowlist) when it's
-    configured; otherwise fall back to the legacy password (or open if none)."""
+    """Require a login session; set the request's area context to the user's area."""
     path = request.url.path
     if path.startswith(_AUTH_EXEMPT):
         return await call_next(request)
 
-    # --- Preferred: Sign in with Google (email allowlist) ---
-    if auth.configured():
-        email = auth.read_session(request.cookies.get(auth.COOKIE))
-        if email and auth.email_allowed(email):
-            return await call_next(request)
-        accept = request.headers.get("accept", "")
-        if request.method == "GET" and "text/html" in accept:
+    if db.user_count() == 0:  # first run: force admin setup
+        if _wants_html(request):
+            return RedirectResponse("/setup", status_code=302)
+        return JSONResponse({"detail": "Setup required"}, status_code=503)
+
+    user = auth.current_user(request)
+    if not user:
+        if _wants_html(request):
             return RedirectResponse("/login", status_code=302)
         return JSONResponse({"detail": "Authentication required"}, status_code=401)
 
-    # --- Fallback: legacy HTTP Basic password (until Google is set up) ---
-    pw = _dashboard_password()
-    if pw:
-        header = request.headers.get("Authorization", "")
-        ok = False
-        if header.startswith("Basic "):
-            try:
-                _, _, supplied = base64.b64decode(header[6:]).decode().partition(":")
-                ok = secrets.compare_digest(supplied, pw)
-            except (ValueError, UnicodeDecodeError):
-                ok = False
-        if not ok:
-            return Response(
-                status_code=401,
-                headers={"WWW-Authenticate": 'Basic realm="Fluxbridge"'},
-            )
-    return await call_next(request)
+    area = db.user_primary_area(user["id"]) or context.DEFAULT_AREA_ID
+    request.state.user = user
+    request.state.area_id = area
+    tok = context.set_area(area)
+    try:
+        return await call_next(request)
+    finally:
+        context.reset_area(tok)
 
 
-# ================================================================= Auth (Google)
+# ===================================================================== Auth
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, error: str = "") -> HTMLResponse:
-    """Login screen with a 'Sign in with Google' button."""
-    if auth.configured() and auth.read_session(request.cookies.get(auth.COOKIE)):
+    if db.user_count() == 0:
+        return RedirectResponse("/setup", status_code=302)
+    if auth.current_user(request):
         return RedirectResponse("/", status_code=302)
-    messages = {
-        "not_allowed": "That Google account isn't authorised for this dashboard.",
-        "unverified": "That Google account's email isn't verified.",
-        "state": "Login session expired — please try again.",
-        "exchange": "Google sign-in failed — please try again.",
-    }
+    msgs = {"bad": "Wrong email or password."}
     return templates.TemplateResponse(
-        "login.html",
-        {"request": request, "configured": auth.configured(),
-         "error": messages.get(error, "")},
-    )
+        "login.html", {"request": request, "error": msgs.get(error, "")})
 
 
-@app.get("/auth/login")
-async def auth_login(request: Request):
-    """Kick off the Google OAuth flow (Authorization Code)."""
-    if not auth.configured():
-        return RedirectResponse("/login", status_code=302)
-    state_tok = auth.new_state()
-    resp = RedirectResponse(auth.google_auth_url(request, state_tok), status_code=302)
-    secure = auth.base_url(request).startswith("https")
-    resp.set_cookie(auth.STATE_COOKIE, state_tok, max_age=600, httponly=True,
-                    secure=secure, samesite="lax", path="/")
-    return resp
-
-
-@app.get("/auth/callback")
-async def auth_callback(request: Request, code: str = "", state: str = ""):
-    """Handle Google's redirect: verify state, exchange code, allowlist the email."""
-    import httpx
-
-    if not auth.configured():
-        return RedirectResponse("/login", status_code=302)
-    if not code or not state or state != request.cookies.get(auth.STATE_COOKIE):
-        return RedirectResponse("/login?error=state", status_code=302)
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            tok = await client.post(auth.TOKEN_ENDPOINT, data={
-                "code": code,
-                "client_id": auth.client_id(),
-                "client_secret": auth.client_secret(),
-                "redirect_uri": auth.redirect_uri(request),
-                "grant_type": "authorization_code",
-            })
-            if tok.status_code != 200:
-                return RedirectResponse("/login?error=exchange", status_code=302)
-            access = tok.json().get("access_token")
-            info = await client.get(auth.USERINFO_ENDPOINT,
-                                    headers={"Authorization": f"Bearer {access}"})
-            profile = info.json() if info.status_code == 200 else {}
-    except Exception as exc:  # noqa: BLE001
-        state_mod_log(f"Google sign-in error: {exc}")
-        return RedirectResponse("/login?error=exchange", status_code=302)
-
-    email = (profile.get("email") or "").strip().lower()
-    if not profile.get("email_verified", False):
-        return RedirectResponse("/login?error=unverified", status_code=302)
-    if not auth.email_allowed(email):
-        state.log_event("warn", f"Denied login for {email or 'unknown'} (not allowlisted)")
-        return RedirectResponse("/login?error=not_allowed", status_code=302)
-
+@app.post("/login")
+async def login_submit(request: Request):
+    form = await request.form()
+    user = db.authenticate(str(form.get("email", "")), str(form.get("password", "")))
+    if not user:
+        return RedirectResponse("/login?error=bad", status_code=302)
     resp = RedirectResponse("/", status_code=302)
-    secure = auth.base_url(request).startswith("https")
-    resp.set_cookie(auth.COOKIE, auth.make_session(email), max_age=auth.SESSION_TTL,
-                    httponly=True, secure=secure, samesite="lax", path="/")
-    resp.delete_cookie(auth.STATE_COOKIE, path="/")
-    state.log_event("info", f"Signed in: {email}")
+    _set_session_cookie(resp, request, user["id"])
     return resp
 
 
-@app.get("/auth/logout")
-async def auth_logout() -> RedirectResponse:
+@app.get("/logout")
+async def logout() -> RedirectResponse:
     resp = RedirectResponse("/login", status_code=302)
     resp.delete_cookie(auth.COOKIE, path="/")
     return resp
 
 
-def state_mod_log(msg: str) -> None:
-    try:
-        state.log_event("warn", msg)
-    except Exception:  # noqa: BLE001
-        pass
+@app.get("/setup", response_class=HTMLResponse)
+async def setup_page(request: Request, error: str = "") -> HTMLResponse:
+    if db.user_count() > 0:
+        return RedirectResponse("/login", status_code=302)
+    msgs = {"mismatch": "Passwords don't match.", "short": "Password must be at least 8 characters.",
+            "email": "Enter a valid email."}
+    return templates.TemplateResponse(
+        "setup.html", {"request": request, "error": msgs.get(error, "")})
+
+
+@app.post("/setup")
+async def setup_submit(request: Request):
+    if db.user_count() > 0:
+        return RedirectResponse("/login", status_code=302)
+    form = await request.form()
+    email = str(form.get("email", "")).strip().lower()
+    pw = str(form.get("password", ""))
+    if "@" not in email:
+        return RedirectResponse("/setup?error=email", status_code=302)
+    if pw != str(form.get("password2", "")):
+        return RedirectResponse("/setup?error=mismatch", status_code=302)
+    if len(pw) < 8:
+        return RedirectResponse("/setup?error=short", status_code=302)
+    # Seed the first admin's area with any pre-multi-tenant settings.json.
+    legacy = config.legacy_settings_file() or {}
+    user = db.create_user(email, pw, is_admin=True, initial_settings=legacy)
+    area = db.user_primary_area(user["id"])
+    config.invalidate(area)
+    config.migrate_legacy_webhook(area_id=area)
+    state.log_event("info", f"Admin account created: {email}")
+    resp = RedirectResponse("/", status_code=302)
+    _set_session_cookie(resp, request, user["id"])
+    return resp
+
+
+@app.get("/register", response_class=HTMLResponse)
+async def register_page(request: Request, code: str = "", error: str = "") -> HTMLResponse:
+    invite = db.get_invite(code) if code else None
+    valid = bool(invite and not invite.get("used_by"))
+    msgs = {"mismatch": "Passwords don't match.", "short": "Password must be at least 8 characters.",
+            "email": "Enter a valid email.", "exists": "An account with that email already exists.",
+            "invite": "This invite is invalid or already used."}
+    return templates.TemplateResponse(
+        "register.html",
+        {"request": request, "code": code, "valid_invite": valid,
+         "invite_email": (invite or {}).get("email", ""), "error": msgs.get(error, "")})
+
+
+@app.post("/register")
+async def register_submit(request: Request):
+    form = await request.form()
+    code = str(form.get("code", ""))
+    invite = db.get_invite(code)
+    if not invite or invite.get("used_by"):
+        return RedirectResponse(f"/register?code={code}&error=invite", status_code=302)
+    email = str(form.get("email", "")).strip().lower()
+    pw = str(form.get("password", ""))
+    if "@" not in email:
+        return RedirectResponse(f"/register?code={code}&error=email", status_code=302)
+    if pw != str(form.get("password2", "")):
+        return RedirectResponse(f"/register?code={code}&error=mismatch", status_code=302)
+    if len(pw) < 8:
+        return RedirectResponse(f"/register?code={code}&error=short", status_code=302)
+    if db.get_user_by_email(email):
+        return RedirectResponse(f"/register?code={code}&error=exists", status_code=302)
+    user = db.create_user(email, pw, is_admin=invite.get("is_admin", False))
+    db.consume_invite(code, user["id"])
+    area = db.user_primary_area(user["id"])
+    config.migrate_legacy_webhook(area_id=area)  # give the new area a Default webhook
+    state.log_event("info", f"Account registered: {email}")
+    resp = RedirectResponse("/", status_code=302)
+    _set_session_cookie(resp, request, user["id"])
+    return resp
+
+
+# ===================================================== User / admin management
+def _base_url(request: Request) -> str:
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    return f"{proto}://{host}"
+
+
+def _require_admin(request: Request) -> dict[str, Any]:
+    user = getattr(request.state, "user", None)
+    if not user or not user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin only")
+    return user
+
+
+@app.get("/api/me")
+async def api_me(request: Request) -> dict[str, Any]:
+    u = request.state.user
+    return {"id": u["id"], "email": u["email"], "is_admin": u["is_admin"]}
+
+
+@app.get("/api/users")
+async def api_users(request: Request) -> list[dict[str, Any]]:
+    _require_admin(request)
+    return db.list_users()
+
+
+@app.post("/api/users/invite")
+async def api_create_invite(request: Request) -> dict[str, Any]:
+    admin = _require_admin(request)
+    body = await request.json()
+    code = db.create_invite(admin["id"], email=str(body.get("email", "")),
+                            is_admin=bool(body.get("is_admin")))
+    return {"code": code, "url": f"{_base_url(request)}/register?code={code}"}
+
+
+@app.get("/api/invites")
+async def api_invites(request: Request) -> list[dict[str, Any]]:
+    _require_admin(request)
+    return db.list_invites()
+
+
+@app.delete("/api/invites/{code}")
+async def api_delete_invite(request: Request, code: str) -> dict[str, Any]:
+    _require_admin(request)
+    db.delete_invite(code)
+    return {"status": "deleted", "code": code}
+
+
+@app.delete("/api/users/{user_id}")
+async def api_delete_user(request: Request, user_id: int) -> dict[str, Any]:
+    admin = _require_admin(request)
+    if user_id == admin["id"]:
+        raise HTTPException(status_code=400, detail="You can't delete your own account")
+    db.delete_user(user_id)
+    state.log_event("info", f"User {user_id} deleted by {admin['email']}")
+    return {"status": "deleted", "id": user_id}
 
 
 @app.get("/favicon.ico")
@@ -229,11 +301,14 @@ async def dashboard(request: Request) -> HTMLResponse:
 
 
 # ===================================================================== Webhook
-def _find_webhook(token: str) -> dict[str, Any] | None:
-    for wh in config.load_settings().get("webhooks", []):
-        if wh.get("token") == token:
-            return wh
-    return None
+def _resolve_webhook(token: str) -> tuple[int | None, dict[str, Any] | None]:
+    """Find which area owns a webhook token (webhooks are per area). Returns
+    (area_id, webhook) or (None, None)."""
+    for area_id in db.all_area_ids():
+        for wh in config.load_settings(area_id=area_id).get("webhooks", []):
+            if wh.get("token") == token:
+                return area_id, wh
+    return None, None
 
 
 async def _process_signal_bg(payload: dict[str, Any], webhook: dict[str, Any]) -> None:
@@ -261,13 +336,18 @@ async def webhook(token: str, request: Request) -> JSONResponse:
     """
     import asyncio
 
-    wh = _find_webhook(token)
-    if not wh or not wh.get("enabled"):
+    area_id, wh = _resolve_webhook(token)
+    if not wh or not wh.get("enabled") or area_id is None:
         raise HTTPException(status_code=403, detail="Invalid webhook token")
 
-    payload = await _parse_payload(request)
-    state.log_signal(payload, result="received")
-    asyncio.create_task(_process_signal_bg(payload, wh))
+    # Process in the owning user's area context (the background task inherits it).
+    tok = context.set_area(area_id)
+    try:
+        payload = await _parse_payload(request)
+        state.log_signal(payload, result="received")
+        asyncio.create_task(_process_signal_bg(payload, wh))
+    finally:
+        context.reset_area(tok)
     return JSONResponse({"status": "accepted"}, status_code=202)
 
 
@@ -357,7 +437,7 @@ async def api_events() -> list[dict[str, Any]]:
 @app.get("/api/positions")
 async def api_positions() -> Any:
     out: list[dict[str, Any]] = []
-    for sess in manager.enabled():
+    for sess in tradovate.manager().enabled():
         try:
             out.extend(await sess.positions())
         except TradovateError:
@@ -368,9 +448,10 @@ async def api_positions() -> Any:
 @app.post("/api/connect")
 async def api_connect() -> dict[str, Any]:
     """Connect & verify all configured accounts (in parallel)."""
-    manager.reload()
+    mgr = tradovate.manager()
+    mgr.reload()
     import asyncio
-    sessions = manager.all()
+    sessions = mgr.all()
     await asyncio.gather(*(s.connect() for s in sessions), return_exceptions=True)
     return {"sessions": state.session_statuses()}
 
@@ -404,7 +485,7 @@ async def api_save_token_accounts(request: Request) -> list[dict[str, Any]]:
             "token_expires": prev.get("token_expires", ""),
         })
     config.save_settings({"token_accounts": cleaned})
-    manager.reload()
+    tradovate.manager().reload()
     enabled = sum(1 for a in cleaned if a["enabled"])
     state.log_event("info", f"Token accounts updated — {enabled}/{len(cleaned)} enabled")
     return config.public_settings().get("token_accounts", [])
@@ -448,7 +529,7 @@ async def api_save_trade_accounts(request: Request) -> list[dict[str, Any]]:
         tokens[idx] = t
 
     config.save_settings({"token_accounts": tokens})
-    manager.reload()
+    tradovate.manager().reload()
     enabled = sum(1 for a in _trade_accounts_overview() if a["enabled"])
     state.log_event("info", f"Trade-account toggles updated — {enabled} enabled for execution")
     return _trade_accounts_overview()
@@ -597,9 +678,10 @@ async def api_update_apply() -> dict[str, Any]:
 
 @app.get("/api/health")
 async def api_health() -> dict[str, Any]:
-    """On-demand health check of every configured account."""
+    """On-demand health check of every configured account (current area)."""
     import asyncio
-    await asyncio.gather(*(s.health_check() for s in manager.all()), return_exceptions=True)
+    await asyncio.gather(*(s.health_check() for s in tradovate.manager().all()),
+                         return_exceptions=True)
     return {"sessions": state.session_statuses()}
 
 
@@ -618,49 +700,64 @@ async def _refresh_session(sess) -> float:
 
 
 async def _health_loop() -> None:
-    """Keep every account's token alive proactively (Bridge-Bot-TV style), in parallel."""
+    """Keep every area's account tokens alive proactively, in parallel per area."""
     import asyncio
     while True:
-        interval = int(config.load_settings().get("health_check_interval", 60) or 0)
-        if interval <= 0:                       # background refresh disabled
-            await asyncio.sleep(30)
-            continue
-        sessions = manager.all()
-        if not sessions:
-            await asyncio.sleep(max(30, interval))
-            continue
-        delays = await asyncio.gather(*(_refresh_session(s) for s in sessions),
-                                      return_exceptions=True)
-        ok_delays = [d for d in delays if isinstance(d, (int, float))]
-        await asyncio.sleep(min(ok_delays) if ok_delays else 60.0)
+        try:
+            area_ids = db.all_area_ids()
+        except Exception:  # noqa: BLE001
+            area_ids = []
+        next_delays: list[float] = []
+        for area_id in area_ids:
+            with context.use_area(area_id):
+                # Make sure every area has a Discord supervisor (idempotent).
+                try:
+                    discord_listener.manager_for(area_id).start()
+                except Exception:  # noqa: BLE001
+                    pass
+                interval = int(config.load_settings(area_id=area_id).get("health_check_interval", 60) or 0)
+                if interval <= 0:
+                    continue
+                mgr = tradovate.manager_for(area_id)
+                mgr.reload()
+                sessions = mgr.all()
+                if not sessions:
+                    continue
+                delays = await asyncio.gather(*(_refresh_session(s) for s in sessions),
+                                              return_exceptions=True)
+                next_delays += [d for d in delays if isinstance(d, (int, float))]
+        await asyncio.sleep(min(next_delays) if next_delays else 30.0)
 
 
 @app.on_event("startup")
 async def _startup() -> None:
     import asyncio
-    config.migrate_legacy_webhook()
-    manager.reload()
+    db.init()
     state.log_event("info", f"Bridge started (v{config.get_version()})")
     asyncio.create_task(_health_loop())
-    # Discord signal listener: isolated supervisor task; a Discord failure can
-    # never crash the bridge (order execution etc.). Reads its own config live.
+    # Start a Discord listener supervisor per existing area (isolated tasks; a
+    # Discord failure can never crash order execution). New areas are picked up
+    # by the health loop.
     try:
-        discord_manager.start()
-        if not discord_manager.library_available():
+        area_ids = db.all_area_ids()
+        for area_id in area_ids:
+            discord_listener.manager_for(area_id).start()
+        if area_ids and not discord_listener.manager_for(area_ids[0]).library_available():
             state.log_event(
                 "warn",
                 "[discord] listener library not installed (discord.py-self) — "
                 "module idle. Install it to enable the Discord signal listener.",
             )
     except Exception as exc:  # noqa: BLE001 - never let module startup break the app
-        state.log_event("warn", f"[discord] listener failed to start: {exc}")
+        state.log_event("warn", f"[discord] listener startup failed: {exc}")
 
 
 @app.on_event("shutdown")
 async def _shutdown() -> None:
-    """Stop the Discord listener and close its HTTP client cleanly."""
-    try:
-        await discord_manager.shutdown()
-    except Exception as exc:  # noqa: BLE001
-        state.log_event("warn", f"[discord] shutdown error: {exc}")
+    """Stop all Discord listeners and close the shared HTTP client cleanly."""
+    for m in discord_listener.all_managers():
+        try:
+            await m.shutdown()
+        except Exception as exc:  # noqa: BLE001
+            state.log_event("warn", f"[discord] shutdown error: {exc}")
     await discord_dispatcher.aclose()

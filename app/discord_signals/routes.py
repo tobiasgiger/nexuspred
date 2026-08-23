@@ -24,9 +24,8 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
-from .. import config, state
-from . import hub, pipeline
-from .listener import manager
+from .. import config, context, state
+from . import hub, listener, pipeline
 from .parser import embed_from_dict
 
 router = APIRouter(prefix="/api/discord", tags=["discord"])
@@ -112,7 +111,7 @@ async def save_config(request: Request) -> dict[str, Any]:
 
     # Reconcile the listener with the new config (no process restart).
     try:
-        await manager.apply_config()
+        await listener.manager_for(context.get_area()).apply_config()
     except Exception as exc:  # noqa: BLE001
         state.log_event("warn", f"[discord] apply_config failed: {exc}")
 
@@ -122,7 +121,7 @@ async def save_config(request: Request) -> dict[str, Any]:
 # --------------------------------------------------------------------- status
 @router.get("/status")
 async def get_status() -> dict[str, Any]:
-    return manager.status()
+    return listener.manager_for(context.get_area()).status()
 
 
 # -------------------------------------------------------------------- signals
@@ -135,7 +134,8 @@ async def get_signals() -> list[dict[str, Any]]:
 @router.get("/stream")
 async def stream(request: Request) -> StreamingResponse:
     """Server-Sent Events feed of live signal events (no polling on the client)."""
-    queue = hub.subscribe()
+    area = context.get_area()  # capture now; the generator runs outside request ctx
+    queue = hub.subscribe(area)
 
     async def event_gen():
         try:
@@ -150,7 +150,7 @@ async def stream(request: Request) -> StreamingResponse:
                 except asyncio.TimeoutError:
                     yield ": keepalive\n\n"  # heartbeat keeps the connection open
         finally:
-            hub.unsubscribe(queue)
+            hub.unsubscribe(queue, area)
 
     return StreamingResponse(
         event_gen(),

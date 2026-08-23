@@ -53,6 +53,7 @@
           <button class="navitem sub tab" data-tab="settings-discord">Discord Listener</button>
           <button class="navitem sub tab" data-tab="settings-alerts">Alerts</button>
           <button class="navitem sub tab" data-tab="settings-security">Security</button>
+          <button class="navitem sub tab" data-tab="settings-account">Account &amp; Users</button>
           <button class="navitem sub tab" data-tab="settings-updates">Updates</button>
         </div>
 
@@ -89,7 +90,8 @@
             <span id="versionText">v—</span>
             <button id="updateBtn" class="btn btn-update hidden">Update available</button>
           </div>
-          <a class="btn btn-ghost hidden" id="signOutBtn" href="/auth/logout">Sign out</a>
+          <span class="user-email" id="userEmail"></span>
+          <a class="btn btn-ghost" id="signOutBtn" href="/logout">Sign out</a>
         </div>
       </header>
 
@@ -233,37 +235,11 @@
 
         <section class="panel" id="tab-settings-security">
           <div class="card">
-            <div class="card-head"><h2>Sign in with Google</h2></div>
-            <p class="hint">Protect the dashboard by requiring <strong>Sign in with
-              Google</strong>, limited to an <strong>email allowlist</strong>. Once a client
-              id, secret <em>and</em> at least one allowed email are set, the password below is
-              ignored and everyone must sign in. Create an OAuth client at
-              <strong>Google Cloud Console → APIs &amp; Services → Credentials</strong>
-              (type <em>Web application</em>), then add the redirect URI below.</p>
-            <label class="switch-row"><span>Enable Google sign-in</span>
-              <input type="checkbox" name="google_oauth_enabled" class="switch" /></label>
-            <label>Google Client ID <input name="google_client_id" autocomplete="off" placeholder="xxxxx.apps.googleusercontent.com" /></label>
-            <label>Google Client Secret <input name="google_client_secret" type="password" autocomplete="off" /></label>
-            <label>Allowed emails (comma separated) <input name="google_allowed_emails" placeholder="you@gmail.com" /></label>
-            <label>Public URL (optional, for the redirect behind a proxy)
-              <input name="public_url" placeholder="https://your-app.onrender.com" /></label>
-            <div class="card-head" style="margin-top:6px">
-              <span class="hint">Authorised redirect URI — paste this into your Google OAuth client:</span>
-            </div>
-            <div class="url-box"><code id="redirectUri">—</code><button type="button" class="btn btn-ghost" id="copyRedirect">Copy</button></div>
-          </div>
-
-          <div class="card">
-            <div class="card-head"><h2>Other security</h2></div>
-            <p class="hint">The passphrase (if set) is an optional extra check applied to
-              every webhook's JSON body. The dashboard password is a <strong>fallback</strong>
-              only — it's used when Google sign-in above is not fully configured.</p>
+            <div class="card-head"><h2>Webhook security</h2></div>
+            <p class="hint">Access to the dashboard is handled by your <strong>account
+              login</strong> (see Account &amp; Users). This passphrase, if set, is an
+              optional extra check applied to every webhook's JSON body.</p>
             <label>Webhook passphrase (optional, in JSON body) <input name="webhook_passphrase" type="password" /></label>
-            <label>Dashboard password (fallback when Google sign-in is off)
-              <input name="dashboard_password" type="password" autocomplete="new-password" />
-            </label>
-            <p class="hint">The <code>DASHBOARD_PASSWORD</code> env var overrides it. Takes
-              effect on the next request; the webhook URL is never behind it.</p>
           </div>
           <div class="form-actions">
             <button type="submit" class="btn btn-primary">Save Settings</button>
@@ -452,6 +428,48 @@
           <button type="button" class="btn btn-primary" id="dsSave">Save Discord Settings</button>
           <span class="save-hint" id="dsSaveHint"></span>
         </div>
+      </div>
+    </section>
+
+    <section class="panel" id="tab-settings-account">
+      <div class="card">
+        <div class="card-head"><h2>Your account</h2></div>
+        <p class="hint">You're signed in to your own isolated area — your token accounts,
+          webhooks, Discord listener, symbol map and logs are private to you.</p>
+        <table class="data-table">
+          <tbody>
+            <tr><td style="width:140px;color:var(--text-dim)">Email</td><td id="accEmail">—</td></tr>
+            <tr><td style="color:var(--text-dim)">Role</td><td id="accRole">—</td></tr>
+          </tbody>
+        </table>
+        <div class="form-actions"><a class="btn btn-ghost" href="/logout">Sign out</a></div>
+      </div>
+
+      <div class="card hidden" id="usersAdminCard">
+        <div class="card-head">
+          <h2>Users (admin)</h2>
+          <button type="button" class="btn btn-primary" id="createInviteBtn">+ Create invite</button>
+        </div>
+        <p class="hint">Registration is invite-only. Create an invite link and share it —
+          the new user gets their own isolated area. Optionally tick <em>admin</em> to let
+          them manage users too.</p>
+        <label class="switch-row" style="max-width:260px"><span>New invite is admin</span>
+          <input type="checkbox" class="switch" id="inviteIsAdmin" /></label>
+        <div class="url-box hidden" id="inviteResult">
+          <code id="inviteUrl"></code><button type="button" class="btn btn-ghost" id="copyInvite">Copy</button>
+        </div>
+
+        <h3 class="sim-sub">Accounts</h3>
+        <table class="data-table" id="usersTable">
+          <thead><tr><th>Email</th><th>Role</th><th>Created</th><th></th></tr></thead>
+          <tbody><tr><td colspan="4" class="empty">Loading…</td></tr></tbody>
+        </table>
+
+        <h3 class="sim-sub">Open invites</h3>
+        <table class="data-table" id="invitesTable">
+          <thead><tr><th>Invite link</th><th>For</th><th>Admin</th><th>Status</th><th></th></tr></thead>
+          <tbody><tr><td colspan="5" class="empty">None</td></tr></tbody>
+        </table>
       </div>
     </section>
 

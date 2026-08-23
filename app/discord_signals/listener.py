@@ -23,7 +23,7 @@ import asyncio
 import time
 from typing import Any, Optional
 
-from .. import config, state
+from .. import config, context, state
 from . import pipeline
 from .parser import embed_from_discord
 
@@ -41,7 +41,8 @@ def _import_discord() -> tuple[Any, Optional[str]]:
 class ListenerManager:
     """Owns the Discord client lifecycle and reconciles it with live config."""
 
-    def __init__(self) -> None:
+    def __init__(self, area_id: int | None = None) -> None:
+        self.area_id = area_id
         self._supervisor_task: Optional[asyncio.Task] = None
         self._client: Any = None
         self._current_token: Optional[str] = None
@@ -60,8 +61,13 @@ class ListenerManager:
     def library_available(self) -> bool:
         return self._discord is not None
 
+    def _area(self) -> int:
+        return self.area_id if self.area_id is not None else context.get_area()
+
     def status(self) -> dict[str, Any]:
-        s = config.load_settings()
+        s = config.load_settings(area_id=self.area_id)
+        with context.use_area(self._area()):
+            watched = sorted(pipeline.watched_channel_ids())
         return {
             **self._status,
             "enabled": bool(s.get("discord_enabled")),
@@ -69,7 +75,7 @@ class ListenerManager:
             "has_token": bool(s.get("discord_user_token")),
             "library_available": self.library_available(),
             "library_error": self._lib_error or "",
-            "watched_channels": sorted(pipeline.watched_channel_ids()),
+            "watched_channels": watched,
         }
 
     def _set_status(self, **fields: Any) -> None:
@@ -102,25 +108,26 @@ class ListenerManager:
 
     async def _handle_message(self, message: Any, *, source: str) -> None:
         received = time.monotonic()  # capture ASAP for the latency measurement
-        try:
-            channel_id = str(getattr(getattr(message, "channel", None), "id", "") or "")
-            if not channel_id or channel_id not in pipeline.watched_channel_ids():
-                return
-            embeds = list(getattr(message, "embeds", None) or [])
-            if not embeds:
-                return
-            for raw in embeds:
-                embed = embed_from_discord(raw)
-                event = await pipeline.process_embed(
-                    embed, channel_id, source=source, received_monotonic=received
-                )
-                if event:
-                    self._set_status(
-                        last_event_ts=event.get("ts", ""),
-                        last_event_channel=event.get("channel_label", ""),
+        with context.use_area(self._area()):  # this listener's area
+            try:
+                channel_id = str(getattr(getattr(message, "channel", None), "id", "") or "")
+                if not channel_id or channel_id not in pipeline.watched_channel_ids():
+                    return
+                embeds = list(getattr(message, "embeds", None) or [])
+                if not embeds:
+                    return
+                for raw in embeds:
+                    embed = embed_from_discord(raw)
+                    event = await pipeline.process_embed(
+                        embed, channel_id, source=source, received_monotonic=received
                     )
-        except Exception as exc:  # noqa: BLE001 - a handler error must not kill the client
-            state.log_event("warn", f"[discord] message handler error: {exc}")
+                    if event:
+                        self._set_status(
+                            last_event_ts=event.get("ts", ""),
+                            last_event_channel=event.get("channel_label", ""),
+                        )
+            except Exception as exc:  # noqa: BLE001 - a handler error must not kill the client
+                state.log_event("warn", f"[discord] message handler error: {exc}")
 
     # -------------------------------------------------------------- lifecycle
     async def _run_client(self, token: str) -> None:
@@ -149,9 +156,10 @@ class ListenerManager:
 
     async def _supervisor(self) -> None:
         """Reconcile desired (config) vs actual client state, forever, safely."""
+        context.set_area(self._area())  # this task (and its child tasks) run in the area
         while not self._shutdown:
             try:
-                s = config.load_settings()
+                s = config.load_settings(area_id=self.area_id)
                 enabled = bool(s.get("discord_enabled"))
                 token = s.get("discord_user_token") or ""
 
@@ -196,7 +204,7 @@ class ListenerManager:
         closing the current client when the token changed or the listener was
         disabled, so it re-evaluates immediately instead of on its next poll.
         """
-        s = config.load_settings()
+        s = config.load_settings(area_id=self.area_id)
         enabled = bool(s.get("discord_enabled"))
         token = s.get("discord_user_token") or ""
         if not enabled or not token:
@@ -219,5 +227,21 @@ class ListenerManager:
                 pass
 
 
-# Module-level singleton, mirroring app.tradovate.manager.
-manager = ListenerManager()
+# One ListenerManager per area (user workspace).
+import threading as _threading
+
+_managers: dict[int, ListenerManager] = {}
+_managers_lock = _threading.Lock()
+
+
+def manager_for(area_id: int) -> ListenerManager:
+    with _managers_lock:
+        m = _managers.get(area_id)
+        if m is None:
+            m = _managers[area_id] = ListenerManager(area_id)
+        return m
+
+
+def all_managers() -> list[ListenerManager]:
+    with _managers_lock:
+        return list(_managers.values())

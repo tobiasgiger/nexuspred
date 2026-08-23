@@ -82,29 +82,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "webhooks_migrated": False,
 
     # --- Webhook security -----------------------------------------------------
-    "webhook_secret": "change-me",   # required in the webhook URL path
+    # Access to the dashboard is handled by the user/login system (see app.db /
+    # app.auth), not per-area settings. These two are trading-related only.
+    "webhook_secret": "change-me",   # legacy single-webhook token (migrated)
     "webhook_passphrase": "",        # optional passphrase checked in JSON body
-    # Protect the dashboard + API with HTTP Basic auth when hosted publicly.
-    # The DASHBOARD_PASSWORD env var overrides this (use it for the first deploy).
-    # The /webhook/<secret> endpoint is never behind this (TradingView can't auth).
-    # NOTE: this password is only a FALLBACK — when Google login is configured
-    # (client id/secret + at least one allowed email) it takes over entirely.
-    "dashboard_password": "",
-
-    # --- Access / login: Sign in with Google (OAuth) ------------------------
-    # When a client id + secret AND at least one allowed email are set, the
-    # dashboard requires "Sign in with Google" and only these emails get in
-    # (the password above is then ignored). Env overrides: GOOGLE_CLIENT_ID,
-    # GOOGLE_CLIENT_SECRET, GOOGLE_ALLOWED_EMAILS (comma-separated), PUBLIC_URL.
-    "google_oauth_enabled": False,
-    "google_client_id": "",
-    "google_client_secret": "",
-    "google_allowed_emails": [],     # e.g. ["you@gmail.com"]
-    # Public base URL of this deploy (e.g. https://app.onrender.com). Used to
-    # build the OAuth redirect URI when behind a proxy; auto-derived if blank.
-    "public_url": "",
-    # Auto-generated signing key for the login session cookie (never shown).
-    "session_secret": "",
 
     # --- Alerts -----------------------------------------------------------------
     # Two channels (each independently toggled) and three triggers (each with
@@ -145,9 +126,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "health_check_interval": 60,
 }
 
-# Reentrant: save_settings() holds the lock while calling load_settings().
+LEGACY_SETTINGS_FILE = DATA_DIR / "settings.json"
+
+# Per-area settings cache. Reentrant lock: save_settings() calls load_settings().
 _lock = threading.RLock()
-_cache: dict[str, Any] | None = None
+_cache: dict[int, dict[str, Any]] = {}
 
 
 def get_version() -> str:
@@ -157,75 +140,75 @@ def get_version() -> str:
         return "0.0.0"
 
 
-def _ensure_data_dir() -> None:
-    """Create the data dir; if it isn't writable, fall back to a local dir.
-
-    On hosts like Render, NEXUSPRED_DATA_DIR must point at a *mounted* persistent
-    disk. If the path can't be created (e.g. the disk wasn't attached), we fall
-    back to ``<repo>/data`` so the app keeps working — but that location is
-    ephemeral, so settings won't survive a redeploy until the disk is fixed.
-    """
-    global DATA_DIR, SETTINGS_FILE
+def legacy_settings_file() -> dict[str, Any] | None:
+    """Read the pre-multi-tenant ``data/settings.json`` if present, so its config
+    can seed the first user's area on migration. Returns None if absent/invalid."""
     try:
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        return
-    except OSError as exc:
-        fallback = ROOT_DIR / "data"
-        if DATA_DIR != fallback:
-            logging.getLogger("nexuspred").warning(
-                "Data dir %s is not writable (%s). Falling back to %s — settings "
-                "will NOT persist across redeploys. Attach a persistent disk at %s.",
-                DATA_DIR, exc, fallback, DATA_DIR,
-            )
-            DATA_DIR = fallback
-            SETTINGS_FILE = DATA_DIR / "settings.json"
-            DATA_DIR.mkdir(parents=True, exist_ok=True)
-        else:
-            raise
+        if LEGACY_SETTINGS_FILE.exists():
+            return json.loads(LEGACY_SETTINGS_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        pass
+    return None
 
 
-def load_settings(force: bool = False) -> dict[str, Any]:
-    """Return the current settings, merged over defaults."""
-    global _cache
+def _resolve_area(area_id: int | None) -> int:
+    from . import context
+    return area_id if area_id is not None else context.get_area()
+
+
+def load_settings(area_id: int | None = None, force: bool = False) -> dict[str, Any]:
+    """Return an area's settings, merged over defaults (defaults to the current
+    context area). Cached per area."""
+    from . import db
+
+    aid = _resolve_area(area_id)
     with _lock:
-        if _cache is not None and not force:
-            return dict(_cache)
+        if not force and aid in _cache:
+            return dict(_cache[aid])
         merged = dict(DEFAULT_SETTINGS)
-        if SETTINGS_FILE.exists():
-            try:
-                stored = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-                merged.update(stored)
-            except (OSError, json.JSONDecodeError):
-                pass
-        _cache = merged
+        try:
+            merged.update(db.get_area_settings(aid) or {})
+        except Exception:  # noqa: BLE001 - a DB hiccup shouldn't crash a read
+            pass
+        _cache[aid] = merged
         return dict(merged)
 
 
-def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
-    """Merge ``updates`` into the stored settings and persist them."""
-    global _cache
+def save_settings(updates: dict[str, Any], area_id: int | None = None) -> dict[str, Any]:
+    """Merge ``updates`` into an area's settings and persist them (to SQLite)."""
+    from . import db
+
+    aid = _resolve_area(area_id)
     with _lock:
-        _ensure_data_dir()
-        current = load_settings(force=True)
-        # Only accept keys we know about to avoid junk creeping in.
+        current = load_settings(area_id=aid, force=True)
         for key, value in updates.items():
-            if key in DEFAULT_SETTINGS:
+            if key in DEFAULT_SETTINGS:  # ignore unknown keys
                 current[key] = value
-        SETTINGS_FILE.write_text(json.dumps(current, indent=2), encoding="utf-8")
-        _cache = current
+        db.save_area_settings(aid, current)
+        _cache[aid] = current
         return dict(current)
 
 
-def migrate_legacy_webhook() -> None:
+def invalidate(area_id: int | None = None) -> None:
+    """Drop an area's cached settings (or all) so the next read re-loads from DB."""
+    with _lock:
+        if area_id is None:
+            _cache.clear()
+        else:
+            _cache.pop(area_id, None)
+
+
+def migrate_legacy_webhook(area_id: int | None = None) -> None:
     """One-shot migration: fold the legacy single webhook_secret + every currently
     enabled trade account into a "Default" webhook, so existing TradingView alerts
     keep working unchanged after upgrading to per-strategy webhooks.
 
-    Runs once (guarded by ``webhooks_migrated``) on startup. Safe on a fresh
-    install too — it just creates an empty "Default" webhook to edit.
+    Runs once per area (guarded by ``webhooks_migrated``). Safe on a fresh area —
+    it just creates an empty "Default" webhook to edit.
     """
+    aid = _resolve_area(area_id)
     with _lock:
-        s = load_settings(force=True)
+        s = load_settings(area_id=aid, force=True)
         if s.get("webhooks_migrated"):
             return
         accounts: list[dict[str, Any]] = []
@@ -238,10 +221,15 @@ def migrate_legacy_webhook() -> None:
                         "enabled": True,
                         "qty_multiplier": float(a.get("qty_multiplier", 1) or 1),
                     })
+        # Reuse a real legacy webhook_secret only if it was customised; otherwise
+        # every fresh area would collide on the default "change-me" token.
+        legacy_secret = s.get("webhook_secret")
+        token = legacy_secret if (legacy_secret and legacy_secret != "change-me") \
+            else secrets.token_urlsafe(16)
         default_webhook = {
             "id": f"wh_{secrets.token_hex(4)}",
             "name": "Default",
-            "token": s.get("webhook_secret") or secrets.token_urlsafe(16),
+            "token": token,
             "enabled": True,
             "strategy": "bracket",
             "default_qty": s.get("default_qty", 3),
@@ -250,7 +238,7 @@ def migrate_legacy_webhook() -> None:
         }
         webhooks = list(s.get("webhooks") or [])
         webhooks.append(default_webhook)
-        save_settings({"webhooks": webhooks, "webhooks_migrated": True})
+        save_settings({"webhooks": webhooks, "webhooks_migrated": True}, area_id=aid)
 
 
 # Valid webhook strategy types:
@@ -282,19 +270,18 @@ def new_webhook(
 
 # Fields that must never be returned to the browser in plain text.
 SECRET_FIELDS = {
-    "webhook_passphrase", "dashboard_password",
+    "webhook_passphrase",
     "alert_discord_webhook_url", "alert_smtp_password",
     "discord_user_token",
-    "google_client_secret", "session_secret",
 }
 
 # Per-entry secret fields inside the token_accounts list.
 _TOKEN_SECRETS = ("access_token", "md_token")
 
 
-def public_settings() -> dict[str, Any]:
+def public_settings(area_id: int | None = None) -> dict[str, Any]:
     """Settings safe to send to the dashboard (secrets masked)."""
-    s = load_settings()
+    s = load_settings(area_id=area_id)
     out = dict(s)
     for field in SECRET_FIELDS:
         out[field] = "********" if out.get(field) else ""
@@ -317,17 +304,18 @@ def public_settings() -> dict[str, Any]:
     return out
 
 
-def update_token_account(idx: int, **fields: Any) -> None:
-    """Persist fields (e.g. a renewed token) into token_accounts[idx]. Best-effort,
-    thread-safe read-modify-write so concurrent session renewals don't clobber."""
+def update_token_account(idx: int, area_id: int | None = None, **fields: Any) -> None:
+    """Persist fields (e.g. a renewed token) into token_accounts[idx] of an area.
+    Best-effort, thread-safe read-modify-write so concurrent renewals don't clobber."""
+    from . import db
+
+    aid = _resolve_area(area_id)
     with _lock:
-        current = load_settings(force=True)
+        current = load_settings(area_id=aid, force=True)
         accounts = list(current.get("token_accounts") or [])
         if 0 <= idx < len(accounts):
             accounts[idx] = {**accounts[idx], **fields}
             current["token_accounts"] = accounts
-            _ensure_data_dir()
-            SETTINGS_FILE.write_text(json.dumps(current, indent=2), encoding="utf-8")
-            global _cache
-            _cache = current
+            db.save_area_settings(aid, current)
+            _cache[aid] = current
 

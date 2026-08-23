@@ -37,7 +37,7 @@ import threading
 import re
 from typing import Any
 
-from . import alerts, config, state
+from . import alerts, config, context, state
 from .simulator import sim_client
 from .tradovate import TradovateError, manager
 
@@ -51,8 +51,21 @@ class SignalError(Exception):
 # webhooks trading the same symbol never share state. Reset when the position
 # is closed. Live and simulated trades are tracked separately.
 _lock = threading.Lock()
-_active: dict[str, dict[str, Any]] = {}
-_sim_active: dict[str, dict[str, Any]] = {}
+# Active-trade records are isolated per area (user workspace). Each maps
+# "<webhook_id>:<root>" -> trade record. Live and simulated tracked separately.
+_active: dict[int, dict[str, dict[str, Any]]] = {}
+_sim_active: dict[int, dict[str, dict[str, Any]]] = {}
+
+
+def _map_for(simulate: bool) -> dict[str, dict[str, Any]]:
+    """The active-trade map for the current area (live or simulated)."""
+    reg = _sim_active if simulate else _active
+    aid = context.get_area()
+    with _lock:
+        m = reg.get(aid)
+        if m is None:
+            m = reg[aid] = {}
+        return m
 
 
 _CONTRACT_RE = re.compile(r"^([A-Z]{1,4})([FGHJKMNQUVXZ])(\d{1,2})$")
@@ -112,7 +125,7 @@ def _webhook_executors(webhook: dict[str, Any]) -> list[Any]:
     for a in webhook.get("accounts") or []:
         if not a.get("enabled"):
             continue
-        ex = manager.executor_for(
+        ex = manager().executor_for(
             a.get("token_idx"), a.get("spec"), a.get("qty_multiplier", 1)
         )
         if ex is None:
@@ -138,7 +151,7 @@ async def process(
     the live-only guards (trading switch, passphrase) are skipped.
     """
     s = config.load_settings()
-    active_map = _sim_active if simulate else _active
+    active_map = _map_for(simulate)
 
     if webhook is None:
         if not simulate:
@@ -770,13 +783,12 @@ async def _handle_ts_hunter_full_close(payload, trade_id, target, executors, act
 
 
 def active_trades(simulate: bool = False) -> dict[str, Any]:
+    src = _map_for(simulate)
     with _lock:
-        src = _sim_active if simulate else _active
         return {k: dict(v) for k, v in src.items()}
 
 
 def reset_simulation() -> None:
-    """Clear simulated positions, working orders and tracked trades."""
+    """Clear simulated positions, working orders and tracked trades (this area)."""
     sim_client.reset()
-    with _lock:
-        _sim_active.clear()
+    _map_for(True).clear()

@@ -410,3 +410,7 @@ tr.wh-detail > td, tr.ds-cdetail > td { background: var(--bg); padding: 0; }
 .bm-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
 .bm-link { cursor: grab; }
 .bm-link:active { cursor: grabbing; }
+
+/* signed-in user email in the topbar */
+.user-email { color: var(--text-dim); font-size: 12.5px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 640px) { .user-email { display: none; } }

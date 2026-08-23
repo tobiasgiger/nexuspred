@@ -316,17 +316,6 @@ async function loadSettings() {
     else el.value = val ?? "";
   }
   renderSymbolMap(s.symbol_map || {});
-  updateAuthUi(s);
-}
-
-/* Redirect URI display + Sign-out visibility for Google login. */
-function updateAuthUi(s) {
-  const ru = $("#redirectUri");
-  if (ru) ru.textContent = `${location.origin}/auth/callback`;
-  const emails = s.google_allowed_emails || [];
-  const configured = !!(s.google_client_id && emails.length);
-  const so = $("#signOutBtn");
-  if (so) so.classList.toggle("hidden", !configured);
 }
 
 $("#settingsForm").addEventListener("submit", async (e) => {
@@ -421,9 +410,84 @@ $("#copyUrl").addEventListener("click", () => {
   toast("Webhook URL copied", "success");
 });
 
-$("#copyRedirect").addEventListener("click", () => {
-  navigator.clipboard.writeText($("#redirectUri").textContent);
-  toast("Redirect URI copied", "success");
+/* ------------------------------------------------------- account / users */
+async function loadAccount() {
+  let me;
+  try { me = await api("/api/me"); } catch (e) { return; }
+  const email = me.email || "";
+  const ue = $("#userEmail"); if (ue) ue.textContent = email;
+  const ae = $("#accEmail"); if (ae) ae.textContent = email;
+  const ar = $("#accRole"); if (ar) ar.textContent = me.is_admin ? "Admin" : "User";
+  const adminCard = $("#usersAdminCard");
+  if (adminCard) {
+    adminCard.classList.toggle("hidden", !me.is_admin);
+    if (me.is_admin) { loadUsers(); loadInvites(); }
+  }
+}
+
+async function loadUsers() {
+  try {
+    const users = await api("/api/users");
+    const me = await api("/api/me");
+    $("#usersTable tbody").innerHTML = users.map((u) => `
+      <tr>
+        <td>${escapeHtml(u.email)}</td>
+        <td>${u.is_admin ? '<span class="tag">admin</span>' : "user"}</td>
+        <td>${fmtDateTime(u.created_at)}</td>
+        <td>${u.id === me.id ? '<span class="hint">you</span>'
+          : `<button type="button" class="btn btn-ghost user-del" data-id="${u.id}" data-email="${escapeHtml(u.email)}">Delete</button>`}</td>
+      </tr>`).join("");
+    $("#usersTable tbody").querySelectorAll(".user-del").forEach((b) =>
+      b.addEventListener("click", async () => {
+        if (!confirm(`Delete ${b.dataset.email}? Their area and all its data are removed. This cannot be undone.`)) return;
+        try { await api(`/api/users/${b.dataset.id}`, { method: "DELETE" }); toast("User deleted", "success"); loadUsers(); }
+        catch (e) { toast(e.message, "error"); }
+      }));
+  } catch (e) { /* ignore */ }
+}
+
+async function loadInvites() {
+  try {
+    const invites = await api("/api/invites");
+    const open = invites.filter((i) => !i.used_by);
+    const body = $("#invitesTable tbody");
+    body.innerHTML = open.length ? open.map((i) => {
+      const url = `${location.origin}/register?code=${i.code}`;
+      return `<tr>
+        <td><code style="font-size:11px">${escapeHtml(url)}</code></td>
+        <td>${escapeHtml(i.email || "anyone")}</td>
+        <td>${i.is_admin ? "yes" : "no"}</td>
+        <td>open</td>
+        <td><button type="button" class="btn btn-ghost inv-del" data-code="${i.code}">Revoke</button></td>
+      </tr>`;
+    }).join("") : '<tr><td colspan="5" class="empty">None</td></tr>';
+    body.querySelectorAll(".inv-del").forEach((b) =>
+      b.addEventListener("click", async () => {
+        try { await api(`/api/invites/${b.dataset.code}`, { method: "DELETE" }); loadInvites(); }
+        catch (e) { toast(e.message, "error"); }
+      }));
+  } catch (e) { /* ignore */ }
+}
+
+const _createInviteBtn = $("#createInviteBtn");
+if (_createInviteBtn) _createInviteBtn.addEventListener("click", async () => {
+  try {
+    const r = await api("/api/users/invite", {
+      method: "POST",
+      body: JSON.stringify({ is_admin: $("#inviteIsAdmin").checked }),
+    });
+    $("#inviteUrl").textContent = r.url;
+    $("#inviteResult").classList.remove("hidden");
+    try { await navigator.clipboard.writeText(r.url); } catch (e) { /* ignore */ }
+    toast("Invite link created & copied", "success");
+    loadInvites();
+  } catch (e) { toast(e.message, "error"); }
+});
+
+const _copyInvite = $("#copyInvite");
+if (_copyInvite) _copyInvite.addEventListener("click", () => {
+  navigator.clipboard.writeText($("#inviteUrl").textContent);
+  toast("Invite link copied", "success");
 });
 
 /**
@@ -1392,6 +1456,7 @@ async function boot() {
   connectDiscordStream();
   dsLoadTestPreset();
   setupBookmarklets();
+  loadAccount();
 
   setInterval(refreshStatus, 5000);
   setInterval(refreshOrders, 7000);

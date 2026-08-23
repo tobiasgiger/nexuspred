@@ -4,6 +4,26 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 4.0.0
+- **Multi-user with isolated areas — replaces Google login.** Fluxbridge is now a
+  multi-tenant app: every user signs in with **email + password** and gets their own
+  fully **isolated area** (token accounts, webhooks + their URL tokens, Discord
+  listener, symbol map, alerts, logs, and live Tradovate sessions are all private).
+  - **Invite-only.** First run sends you to `/setup` to create the first **admin**;
+    admins create/revoke **invite links** and manage users under **Settings → Account
+    & Users**. New users register via an invite and get their own area.
+  - **SQLite** persistence (`<data>/fluxbridge.db`: users, areas, memberships,
+    invites) — stdlib only, no new dependency. Passwords are salted **PBKDF2**;
+    the login session is a signed, HTTP-only cookie. Any pre-existing single-user
+    `data/settings.json` is migrated into the first admin's area on setup.
+  - **Per-area runtime.** Settings, in-memory logs/signals, Tradovate `SessionManager`s,
+    the Discord listener/SSE hub, and active-trade tracking are all keyed per area via
+    a request/task **area context**; the health loop and Discord supervisors run per
+    area; an inbound `/webhook/<token>` is routed to whichever area owns that token.
+  - Removed **Sign in with Google** and the `dashboard_password` / `DASHBOARD_PASSWORD`
+    fallback. (Shared areas between users are planned for a later release; the data
+    model already carries areas + memberships for it.)
+
 ## 3.0.0
 - **Renamed to Fluxbridge.** New display/brand name across the dashboard, login
   page, window title, and alerts. (Internal repo name, package, and env vars —

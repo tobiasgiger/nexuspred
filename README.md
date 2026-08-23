@@ -4,7 +4,7 @@ _(repository: `tobiasgiger/nexuspred`)_
 
 A self-hosted bridge that receives **TradingView** alerts via a webhook and routes them
 to **Tradovate** as live/demo orders. Ships with a dark, professional dashboard for
-configuration and monitoring, an optional Discord signal listener, **Sign in with Google**
+configuration and monitoring, an optional Discord signal listener, **multi-user accounts (invite-only)**
 access control, and a built-in GitHub auto-updater.
 
 ![dashboard](docs/dashboard.png)
@@ -91,9 +91,9 @@ includes a `render.yaml` blueprint.
 
 1. In Render: **New → Blueprint**, pick this repo (it reads `render.yaml`: a web service
    + a 1 GB persistent disk at `/var/data`).
-2. Set env vars: `NEXUSPRED_DATA_DIR=/var/data` (persists settings/tokens) and
-   `DASHBOARD_PASSWORD=<your-password>` (the dashboard is public — protect it). Render
-   injects `PORT` automatically.
+2. Set env var `NEXUSPRED_DATA_DIR=/var/data` (persists the SQLite DB + tokens). Render
+   injects `PORT` automatically. There's no auth env var — on first load you'll create
+   the admin account at `/setup`.
 3. Use the **Starter** plan (always-on); the free plan sleeps after ~15 min idle.
 4. Deploy → you get `https://YOUR-SERVICE.onrender.com`. Each strategy's TradingView
    webhook is `https://YOUR-SERVICE.onrender.com/webhook/YOUR_TOKEN` (from its card in
@@ -106,10 +106,11 @@ includes a `render.yaml` blueprint.
 > predates it, set `PYTHON_VERSION=3.11.9` and *Clear build cache & deploy*.
 
 > **Persistence & security on any public host:** point `NEXUSPRED_DATA_DIR` at a
-> persistent disk so settings survive deploys, and protect the dashboard — either
-> **Sign in with Google** (Settings → Security, see [Login & access](#login--access-sign-in-with-google))
-> or the fallback `DASHBOARD_PASSWORD`. The `/webhook/<token>` and `/healthz` paths
-> stay open (`GET /healthz` is an unauthenticated liveness probe).
+> persistent disk so the SQLite DB + settings survive deploys. The dashboard is
+> protected by the **account login** — on first run create the admin at `/setup`, then
+> invite users (see [Users, areas & login](#users-areas--login-multi-tenant)). The
+> `/webhook/<token>` and `/healthz` paths stay open (`GET /healthz` is an unauthenticated
+> liveness probe).
 
 1. Go to **Settings → Token Accounts** → add one row per Tradovate account with its own
    access token (start in **Demo**), then **Connect & Verify**.
@@ -357,31 +358,28 @@ Discord connection.
 all work even if it isn't installed (the tab shows "No library"). It's listed in
 `requirements.txt`, so a normal install/deploy picks it up.
 
-## Login & access (Sign in with Google)
+## Users, areas & login (multi-tenant)
 
-Protect the dashboard with **Sign in with Google**, restricted to an **email
-allowlist** — configure it under **Settings → Security** (or via env vars). Once a
-**Client ID + secret** *and* at least one **allowed email** are set, the dashboard
-requires Google sign-in and the legacy password is ignored. Until then, the bridge
-falls back to the `DASHBOARD_PASSWORD` (or is open if none) so you're never locked out.
+Fluxbridge is **multi-user**. Each user signs in with **email + password** and gets
+their own **isolated area** — token accounts, webhooks (each with its own URL token),
+Discord listener, symbol map, alerts and logs are all private to that user. Nothing
+is shared between areas (shared areas are planned for a later release).
 
-**One-time Google setup:**
+- **First run:** open the dashboard and you're sent to **`/setup`** to create the
+  **first admin** account. Any pre-existing single-user `data/settings.json` is
+  migrated into that admin's area.
+- **Invite-only:** there is no open sign-up. An admin creates **invite links** under
+  **Settings → Account & Users** (optionally granting admin). Share the link; the new
+  user registers and gets their own area.
+- **Admin** can list users, create/revoke invites, and delete users (which removes
+  their area and data).
 
-1. In the [Google Cloud Console](https://console.cloud.google.com/) → **APIs &
-   Services → Credentials**, create an **OAuth client ID** of type **Web application**.
-2. Add an **Authorised redirect URI**: your deployment's URL + `/auth/callback`
-   (the exact value is shown, with a Copy button, on **Settings → Security**), e.g.
-   `https://your-app.onrender.com/auth/callback`.
-3. Configure the **OAuth consent screen** (External is fine; add yourself as a test
-   user while it's in testing).
-4. Paste the **Client ID**, **Client Secret** and your **allowed email(s)** into
-   Settings → Security (or set `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` /
-   `GOOGLE_ALLOWED_EMAILS`). Behind a proxy, set **Public URL** / `PUBLIC_URL` so the
-   redirect uses your real HTTPS host.
-
-Sessions are a signed, HTTP-only cookie (no server-side store). Use **Sign out**
-(top-right) to end a session. The `/webhook/<token>` and `/healthz` paths are never
-behind login.
+Storage is a **SQLite** database at `<NEXUSPRED_DATA_DIR>/fluxbridge.db` (users, areas,
+memberships, invites). Passwords are salted **PBKDF2** hashes. The login session is a
+signed, HTTP-only cookie — no server-side store, no extra dependency. Use **Sign out**
+(top-right). Set `SESSION_SECRET` to pin the cookie-signing key across restarts (else
+it's generated and stored). The `/webhook/<token>` and `/healthz` paths are never
+behind login; a webhook token routes to whichever user's area owns it.
 
 ## Symbol mapping
 
@@ -459,7 +457,8 @@ the dashboard **Update** button works.
 | `GET`  | `/api/discord/stream` | Live signal feed (Server-Sent Events) |
 | `POST` | `/api/discord/test` | Push a synthetic embed through the pipeline |
 | `GET`  | `/api/extension/token-extractor.zip` | Download the browser token-extractor extension |
-| `GET`  | `/login` · `/auth/login` · `/auth/callback` · `/auth/logout` | Sign in with Google (OAuth) flow |
+| `GET/POST` | `/setup` · `/login` · `/register` · `/logout` | User auth (first-admin setup, login, invited signup, logout) |
+| `GET`  | `/api/me` · `/api/users` · `/api/invites` | Current user / admin user management |
 
 ---
 

@@ -78,8 +78,9 @@ def _parse_iso(value: str | None) -> datetime | None:
 class TradovateSession:
     """One Tradovate account, authenticated by its own (renewable) access token."""
 
-    def __init__(self, idx: int, entry: dict[str, Any]) -> None:
+    def __init__(self, idx: int, entry: dict[str, Any], area_id: int | None = None) -> None:
         self.idx = idx
+        self.area_id = area_id
         self.name = entry.get("name") or f"account {idx + 1}"
         self.environment = entry.get("environment") or "demo"
         self.enabled = bool(entry.get("enabled"))
@@ -173,7 +174,8 @@ class TradovateSession:
         # Persist best-effort so a redeploy keeps the renewed token.
         try:
             config.update_token_account(
-                self.idx, access_token=self._token, md_token=self._md_token or "",
+                self.idx, area_id=self.area_id,
+                access_token=self._token, md_token=self._md_token or "",
                 token_expires=self._token_expires.isoformat(),
             )
         except OSError as exc:
@@ -253,7 +255,7 @@ class TradovateSession:
                 self.account_id = primary["id"]
             try:
                 config.update_token_account(
-                    self.idx, accounts=self.accounts,
+                    self.idx, area_id=self.area_id, accounts=self.accounts,
                     account_spec=self.account_spec, account_id=self.account_id)
             except OSError:
                 pass
@@ -464,12 +466,14 @@ class SessionManager:
     switched on for execution.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, area_id: int | None = None) -> None:
+        self.area_id = area_id
         self._sessions: list[TradovateSession] | None = None
 
     def reload(self) -> None:
-        entries = config.load_settings().get("token_accounts") or []
-        self._sessions = [TradovateSession(i, e) for i, e in enumerate(entries)]
+        entries = config.load_settings(area_id=self.area_id).get("token_accounts") or []
+        self._sessions = [TradovateSession(i, e, area_id=self.area_id)
+                          for i, e in enumerate(entries)]
 
     def all(self) -> list[TradovateSession]:
         if self._sessions is None:
@@ -510,4 +514,28 @@ class SessionManager:
         return AccountExecutor(session, {**account, "qty_multiplier": qty_multiplier})
 
 
-manager = SessionManager()
+# One SessionManager per area (user workspace).
+import threading as _threading
+
+from . import context as _context
+
+_managers: dict[int, SessionManager] = {}
+_managers_lock = _threading.Lock()
+
+
+def manager_for(area_id: int) -> SessionManager:
+    with _managers_lock:
+        m = _managers.get(area_id)
+        if m is None:
+            m = _managers[area_id] = SessionManager(area_id)
+        return m
+
+
+def manager() -> SessionManager:
+    """The SessionManager for the current context area."""
+    return manager_for(_context.get_area())
+
+
+def all_managers() -> list[SessionManager]:
+    with _managers_lock:
+        return list(_managers.values())
