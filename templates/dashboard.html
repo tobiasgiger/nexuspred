@@ -486,6 +486,23 @@
           <code>chrome://extensions</code> (↻) to pick up changes.</p>
       </div>
 
+      <div class="card" id="bookmarkletCard">
+        <div class="card-head"><h2>No-install option: Bookmarklets</h2></div>
+        <p class="hint">Prefer not to install anything? <strong>Drag</strong> a button below to
+          your browser's <strong>bookmarks bar</strong> (once), then <strong>click it while on
+          the site</strong> (logged in) to copy the token. Works on Chrome, Edge and Firefox.
+          <br>Note: Discord's strict security policy can block bookmarklets — if the Discord
+          one does nothing, use the extension above instead. Tradovate works reliably.</p>
+        <div class="bm-row">
+          <a class="btn btn-secondary bm-link" id="bmDiscord" href="#" draggable="true">◈ Discord token</a>
+          <button type="button" class="btn btn-ghost" id="bmDiscordCopy">Copy code</button>
+        </div>
+        <div class="bm-row">
+          <a class="btn btn-secondary bm-link" id="bmTradovate" href="#" draggable="true">◈ Tradovate token + checkToken</a>
+          <button type="button" class="btn btn-ghost" id="bmTradovateCopy">Copy code</button>
+        </div>
+      </div>
+
       <div class="card">
         <div class="card-head"><h2>Your Webhook URL</h2></div>
         <label>Webhook <select id="testWebhookSelect"></select></label>

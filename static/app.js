@@ -1324,6 +1324,38 @@ $("#dsTestSend").addEventListener("click", async () => {
   }
 });
 
+/* ----------------------------------------------------- bookmarklets */
+// No-install alternative to the extension: drag to the bookmarks bar, click on
+// the site. Discord deletes window.localStorage in the page, so we read it from
+// a fresh same-origin iframe. Tradovate keeps tokens in normal storage.
+const BOOKMARKLETS = {
+  discord:
+    "javascript:%28function%28%29%7Btry%7Bvar%20f%3Ddocument.createElement%28%27iframe%27%29%3Bdocument.body.appendChild%28f%29%3Bvar%20r%3Df.contentWindow.localStorage.getItem%28%27token%27%29%3Bf.remove%28%29%3Bvar%20v%3Dr%3Fr.replace%28%2F%5E%22%2B%7C%22%2B%24%2Fg%2C%27%27%29%3Anull%3Bif%28v%29%7Bif%28navigator.clipboard%29navigator.clipboard.writeText%28v%29%3Bwindow.prompt%28%27Discord%20user%20token%20%28copied%29%3A%27%2Cv%29%3B%7Delse%7Balert%28%27No%20Discord%20token%20found.%20Log%20in%20on%20discord.com%20and%20try%20again.%27%29%3B%7D%7Dcatch%28e%29%7Balert%28%27Could%20not%20read%20token%3A%20%27%2Be%29%3B%7D%7D%29%28%29%3B",
+  tradovate:
+    "javascript:%28function%28%29%7Bfunction%20g%28k%29%7Btry%7Breturn%20localStorage.getItem%28k%29%7C%7CsessionStorage.getItem%28k%29%7Dcatch%28e%29%7Breturn%20null%7D%7Dfunction%20u%28x%29%7Breturn%20x%3Fx.replace%28%2F%5E%22%2B%7C%22%2B%24%2Fg%2C%27%27%29%3Ax%7Dvar%20t%3Du%28g%28%27token%27%29%29%2Cc%3Du%28g%28%27checkToken%27%29%29%3Bif%28navigator.clipboard%26%26t%29navigator.clipboard.writeText%28t%29%3Bwindow.prompt%28%27Tradovate%20token%20%28copied%29%3A%27%2Ct%7C%7C%27%28not%20found%29%27%29%3Bwindow.prompt%28%27Tradovate%20checkToken%3A%27%2Cc%7C%7C%27%28not%20found%29%27%29%3B%7D%29%28%29%3B",
+};
+
+function setupBookmarklets() {
+  const map = { bmDiscord: "discord", bmTradovate: "tradovate" };
+  for (const [id, key] of Object.entries(map)) {
+    const a = document.getElementById(id);
+    if (a) {
+      a.setAttribute("href", BOOKMARKLETS[key]);
+      a.addEventListener("click", (e) => {
+        e.preventDefault();
+        toast("Drag this to your bookmarks bar, then click it on the site.", "");
+      });
+    }
+    const copy = document.getElementById(id + "Copy");
+    if (copy) {
+      copy.addEventListener("click", () => {
+        navigator.clipboard.writeText(decodeURIComponent(BOOKMARKLETS[key]));
+        toast("Bookmarklet code copied", "success");
+      });
+    }
+  }
+}
+
 /* --------------------------------------------------------------- boot */
 async function boot() {
   await loadSettings();
@@ -1343,6 +1375,7 @@ async function boot() {
   loadDiscordSignals();
   connectDiscordStream();
   dsLoadTestPreset();
+  setupBookmarklets();
 
   setInterval(refreshStatus, 5000);
   setInterval(refreshOrders, 7000);

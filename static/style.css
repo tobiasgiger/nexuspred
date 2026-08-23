@@ -405,3 +405,8 @@ tr.wh-detail > td, tr.ds-cdetail > td { background: var(--bg); padding: 0; }
   .app-shell.collapsed .ni-caret, .app-shell.collapsed .nav-group-label,
   .app-shell.collapsed .nav-children { display: revert; }
 }
+
+/* bookmarklet buttons (Tools) */
+.bm-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+.bm-link { cursor: grab; }
+.bm-link:active { cursor: grabbing; }

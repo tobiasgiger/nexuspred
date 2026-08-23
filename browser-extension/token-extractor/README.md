@@ -28,6 +28,17 @@ Discord's ToS, which you've already accepted for this setup.)
   to the browser in plain text.
 - If one leaks: change that account's password — it invalidates existing tokens.
 
+## Get it
+
+- **From the bridge**: Tools tab → **Download extension (.zip)**, unzip, then Load
+  unpacked (below). Or clone the repo and point at this folder.
+- **No-install alternative**: the Tools tab also offers **bookmarklets** (drag to
+  your bookmarks bar, click on the site) — no extension needed. Discord's strict
+  CSP may block the Discord bookmarklet; Tradovate works reliably.
+- **Publishing to a store**: see `STORE.md` (icons + `PRIVACY.md` are included) —
+  note a token extractor is likely rejected from the public Chrome Web Store, so
+  unpacked/Unlisted is the practical route.
+
 ## Install (unpacked)
 
 1. Open `chrome://extensions` (or `edge://extensions`).

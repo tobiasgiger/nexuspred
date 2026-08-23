@@ -2,11 +2,21 @@
   "manifest_version": 3,
   "name": "Tradovate Bridge - Token Extractor Helper",
   "version": "1.1.0",
-  "description": "Show/copy YOUR OWN tokens from a logged-in tab: Discord user token, and Tradovate session token + checkToken. 100% local — it never sends anything anywhere.",
+  "description": "Show/copy YOUR OWN session tokens (Discord user token; Tradovate token + checkToken) from a logged-in tab. 100% local — nothing is sent anywhere.",
   "permissions": ["scripting", "activeTab"],
   "host_permissions": ["*://*.discord.com/*", "*://*.tradovate.com/*"],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Extract my tokens (Discord / Tradovate)"
+    "default_title": "Extract my tokens (Discord / Tradovate)",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
   }
 }

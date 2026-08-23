@@ -4,6 +4,17 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 2.11.0
+- **No-install token grab: bookmarklets.** The Tools tab now offers draggable
+  **Discord** and **Tradovate** bookmarklets — drag to the bookmarks bar, click on
+  the site to copy the token, no extension install. (Discord's CSP can block its
+  bookmarklet; the extension remains the fallback.)
+- **Extension prepped for a store listing.** Added PNG icons (16/48/128) and
+  `action.default_icon`, a privacy policy (`PRIVACY.md`), and a Chrome Web Store
+  submission checklist (`STORE.md`) with listing copy + permission justifications
+  and an honest note that a token extractor is likely rejected from the public
+  store (unpacked/Unlisted is the practical route).
+
 ## 2.10.0
 - **Browser Token Extractor available in-app.** The Tools tab now has a
   card that **downloads the extension as a .zip** (`GET
