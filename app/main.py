@@ -36,7 +36,7 @@ app.include_router(discord_router)  # Discord signal module (same server + auth)
 # auth), static assets, health check, guide/favicon, and the auth pages.
 _AUTH_EXEMPT = (
     "/webhook/", "/static/", "/healthz", "/guide", "/favicon.ico",
-    "/login", "/logout", "/register", "/setup",
+    "/login", "/logout", "/register", "/setup", "/reset",
 )
 
 
@@ -287,6 +287,68 @@ async def api_delete_user(request: Request, user_id: int) -> dict[str, Any]:
 async def api_audit(request: Request) -> list[dict[str, Any]]:
     _require_admin(request)
     return db.list_audit(100)
+
+
+@app.post("/api/account/password")
+async def api_change_password(request: Request) -> dict[str, Any]:
+    """Self-service password change: verify the current password, then set a new one."""
+    user = request.state.user
+    body = await request.json()
+    current = str(body.get("current", ""))
+    new = str(body.get("new", ""))
+    if len(new) < 8:
+        raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
+    if not db.authenticate(user["email"], current):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    db.set_password(user["id"], new)
+    db.log_action(user["id"], user["email"], "password_change", user["email"])
+    state.log_event("info", f"Password changed for {user['email']}")
+    return {"status": "ok"}
+
+
+@app.post("/api/users/{user_id}/reset")
+async def api_create_reset(request: Request, user_id: int) -> dict[str, Any]:
+    """Admin generates a one-time password-reset link for a user."""
+    admin = _require_admin(request)
+    target = db.get_user(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="No such user")
+    token = db.create_password_reset(user_id)
+    db.log_action(admin["id"], admin["email"], "password_reset", target["email"])
+    return {"user_id": user_id, "url": f"{_base_url(request)}/reset?token={token}"}
+
+
+@app.get("/reset", response_class=HTMLResponse)
+async def reset_page(request: Request, token: str = "", error: str = "") -> HTMLResponse:
+    rec = db.get_password_reset(token) if token else None
+    msgs = {"mismatch": "Passwords don't match.", "short": "Password must be at least 8 characters.",
+            "token": "This reset link is invalid or has expired."}
+    return templates.TemplateResponse(
+        "reset.html",
+        {"request": request, "token": token, "valid_token": bool(rec), "error": msgs.get(error, "")})
+
+
+@app.post("/reset")
+async def reset_submit(request: Request):
+    form = await request.form()
+    token = str(form.get("token", ""))
+    if not db.get_password_reset(token):
+        return RedirectResponse(f"/reset?token={token}&error=token", status_code=302)
+    pw = str(form.get("password", ""))
+    if pw != str(form.get("password2", "")):
+        return RedirectResponse(f"/reset?token={token}&error=mismatch", status_code=302)
+    if len(pw) < 8:
+        return RedirectResponse(f"/reset?token={token}&error=short", status_code=302)
+    uid = db.consume_password_reset(token, pw)
+    if uid is None:
+        return RedirectResponse(f"/reset?token={token}&error=token", status_code=302)
+    user = db.get_user(uid)
+    if user:
+        state.log_event("info", f"Password reset completed for {user['email']}")
+    resp = RedirectResponse("/", status_code=302)
+    if uid:
+        _set_session_cookie(resp, request, uid)  # log the user straight in
+    return resp
 
 
 @app.get("/favicon.ico")

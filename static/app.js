@@ -477,10 +477,24 @@ async function loadUsers() {
           <input type="checkbox" class="switch feat-toggle" data-id="${u.id}"
                  data-feature="discord_signals" ${on ? "checked" : ""} /></label></td>
         <td>${fmtDateTime(u.created_at)}</td>
-        <td>${u.id === me.id ? '<span class="hint">you</span>'
-          : `<button type="button" class="btn btn-ghost user-del" data-id="${u.id}" data-email="${escapeHtml(u.email)}">Delete</button>`}</td>
+        <td style="white-space:nowrap">
+          <button type="button" class="btn btn-ghost user-reset" data-id="${u.id}" data-email="${escapeHtml(u.email)}">Reset password</button>
+          ${u.id === me.id ? '<span class="hint">you</span>'
+            : `<button type="button" class="btn btn-ghost user-del" data-id="${u.id}" data-email="${escapeHtml(u.email)}">Delete</button>`}
+        </td>
       </tr>`;
     }).join("");
+    $("#usersTable tbody").querySelectorAll(".user-reset").forEach((b) =>
+      b.addEventListener("click", async () => {
+        try {
+          const r = await api(`/api/users/${b.dataset.id}/reset`, { method: "POST" });
+          $("#resetFor").textContent = b.dataset.email;
+          $("#resetUrl").value = r.url;
+          $("#resetResult").classList.remove("hidden");
+          copyText(r.url);
+          toast("Reset link created", "success"); loadAudit();
+        } catch (e) { toast(e.message, "error"); }
+      }));
     $("#usersTable tbody").querySelectorAll(".feat-toggle").forEach((cb) =>
       cb.addEventListener("change", async () => {
         try {
@@ -607,6 +621,33 @@ if (_testAlertBtn) _testAlertBtn.addEventListener("click", async () => {
     if (hint) { hint.textContent = e.message; hint.className = "save-hint err"; }
     toast(e.message, "error");
   }
+});
+
+const _changePwForm = $("#changePwForm");
+if (_changePwForm) _changePwForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const hint = $("#pwHint");
+  const cur = $("#pwCurrent").value, nw = $("#pwNew").value, nw2 = $("#pwNew2").value;
+  if (nw !== nw2) { hint.textContent = "New passwords don't match."; hint.className = "save-hint err"; return; }
+  if (nw.length < 8) { hint.textContent = "New password must be at least 8 characters."; hint.className = "save-hint err"; return; }
+  hint.textContent = "Saving…"; hint.className = "save-hint";
+  try {
+    await api("/api/account/password", { method: "POST", body: JSON.stringify({ current: cur, new: nw }) });
+    _changePwForm.reset();
+    hint.textContent = "Password changed."; hint.className = "save-hint ok";
+    toast("Password changed", "success");
+  } catch (err) {
+    hint.textContent = err.message; hint.className = "save-hint err";
+    toast(err.message, "error");
+  }
+});
+
+const _copyReset = $("#copyReset");
+if (_copyReset) _copyReset.addEventListener("click", () => {
+  const inp = $("#resetUrl");
+  inp.focus(); inp.select();
+  copyText(inp.value);
+  toast("Reset link copied", "success");
 });
 
 const _copyInvite = $("#copyInvite");

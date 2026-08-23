@@ -25,7 +25,7 @@ import os
 import secrets
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -119,6 +119,13 @@ def init() -> None:
                     action TEXT NOT NULL,
                     target TEXT,
                     detail TEXT
+                );
+                CREATE TABLE IF NOT EXISTS password_resets (
+                    token TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    used_at TEXT
                 );
                 """
             )
@@ -247,6 +254,13 @@ def create_user(email: str, password: str, is_admin: bool = False,
             (uid, area_id, "owner", _now()),
         )
     return get_user(uid)  # type: ignore[return-value]
+
+
+def set_password(user_id: int, new_password: str) -> None:
+    init()
+    with _connect() as c:
+        c.execute("UPDATE users SET password_hash=? WHERE id=?",
+                  (hash_password(new_password), user_id))
 
 
 def delete_user(user_id: int) -> None:
@@ -432,3 +446,45 @@ def list_audit(limit: int = 100) -> list[dict[str, Any]]:
         return [{"id": r["id"], "created_at": r["created_at"], "actor_email": r["actor_email"],
                  "action": r["action"], "target": r["target"], "detail": r["detail"]}
                 for r in rows]
+
+
+# ------------------------------------------------------- password resets
+def create_password_reset(user_id: int, ttl_hours: int = 24) -> str:
+    init()
+    token = secrets.token_urlsafe(24)
+    now = datetime.now(timezone.utc)
+    with _connect() as c:
+        c.execute(
+            "INSERT INTO password_resets(token,user_id,created_at,expires_at) VALUES(?,?,?,?)",
+            (token, user_id, now.isoformat(), (now + timedelta(hours=ttl_hours)).isoformat()),
+        )
+    return token
+
+
+def get_password_reset(token: str) -> Optional[dict[str, Any]]:
+    """A valid (unused, unexpired) reset record, else None."""
+    init()
+    if not token:
+        return None
+    with _connect() as c:
+        row = c.execute("SELECT * FROM password_resets WHERE token=?", (token,)).fetchone()
+    if not row or row["used_at"]:
+        return None
+    try:
+        if datetime.fromisoformat(row["expires_at"]) < datetime.now(timezone.utc):
+            return None
+    except ValueError:
+        return None
+    return {"token": row["token"], "user_id": row["user_id"]}
+
+
+def consume_password_reset(token: str, new_password: str) -> Optional[int]:
+    """Set the user's new password and mark the token used. Returns the user id."""
+    rec = get_password_reset(token)
+    if not rec:
+        return None
+    with _connect() as c:
+        c.execute("UPDATE users SET password_hash=? WHERE id=?",
+                  (hash_password(new_password), rec["user_id"]))
+        c.execute("UPDATE password_resets SET used_at=? WHERE token=?", (_now(), token))
+    return rec["user_id"]

@@ -4,6 +4,18 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 4.5.0
+- **Password management.** Every user can now **change their own password**
+  (Settings → Account → Change password): verify the current one, set a new one.
+  Admins can issue a **one-time password-reset link** for any user (Users table →
+  *Reset password*) — the link opens a set-a-new-password page, works once, and
+  **expires after 24 h**; completing it logs that user straight in. Resets are
+  recorded in the audit log. New `POST /api/account/password`,
+  `POST /api/users/{id}/reset`, and the `/reset` page; a `password_resets` table
+  backs the tokens.
+  - (Session cookies were already HTTP-only, `Secure` on HTTPS, `SameSite=Lax`,
+    with a signed 30-day expiry — no change needed there.)
+
 ## 4.4.0
 - **Admin audit log.** Admin actions — invites created/revoked, users deleted,
   feature entitlements changed, password resets — are recorded with a timestamp

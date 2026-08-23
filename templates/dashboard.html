@@ -465,6 +465,25 @@
         <div class="form-actions"><a class="btn btn-ghost" href="/logout">Sign out</a></div>
       </div>
 
+      <div class="card">
+        <div class="card-head"><h2>Change password</h2></div>
+        <form id="changePwForm" autocomplete="off">
+          <label>Current password
+            <input type="password" id="pwCurrent" autocomplete="current-password" required />
+          </label>
+          <label>New password (min 8 characters)
+            <input type="password" id="pwNew" autocomplete="new-password" required minlength="8" />
+          </label>
+          <label>Confirm new password
+            <input type="password" id="pwNew2" autocomplete="new-password" required minlength="8" />
+          </label>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Change password</button>
+            <span class="save-hint" id="pwHint"></span>
+          </div>
+        </form>
+      </div>
+
       <div class="card hidden" id="usersAdminCard">
         <div class="card-head">
           <h2>Users (admin)</h2>
@@ -494,6 +513,14 @@
           <thead><tr><th>Email</th><th>Role</th><th>Discord Signals</th><th>Created</th><th></th></tr></thead>
           <tbody><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
         </table>
+        </div>
+        <div class="hidden" id="resetResult" style="margin:10px 0 4px">
+          <label style="margin-bottom:6px">Password-reset link for <span id="resetFor"></span> — share it; it expires in 24 h and works once:
+            <input id="resetUrl" readonly onclick="this.select()" style="font-family:'SF Mono',Consolas,monospace;font-size:12px" />
+          </label>
+          <div class="form-actions" style="margin:0">
+            <button type="button" class="btn btn-primary" id="copyReset">Copy link</button>
+          </div>
         </div>
 
         <h3 class="sim-sub">Open invites</h3>
