@@ -33,7 +33,7 @@ const appShell = $("#appShell");
 const settingsChildren = $("#settingsChildren");
 const settingsParent = document.querySelector('.nav-parent[data-parent="settings"]');
 
-function activateTab(name) {
+function activateTab(name, closeDrawer = true) {
   const panel = $("#tab-" + name);
   if (!panel) return;
   $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
@@ -46,14 +46,17 @@ function activateTab(name) {
     settingsChildren.classList.add("open");
     settingsParent.classList.add("expanded");
   }
-  if (appShell) appShell.classList.remove("sidebar-open");   // close mobile drawer
+  // Close the mobile drawer only when the user picked a leaf (not on a group
+  // auto-expand, so its sub-items stay reachable).
+  if (closeDrawer && appShell) appShell.classList.remove("sidebar-open");
 }
 
 $$(".tab").forEach((tab) => {
   tab.addEventListener("click", () => activateTab(tab.dataset.tab));
 });
 
-// "Settings" group: expand/collapse; opening jumps to the first sub-page.
+// "Settings" group: expand/collapse. Keeps the (mobile) drawer open so the
+// sub-items are tappable; navigating happens when a sub-item is tapped.
 if (settingsParent && settingsChildren) {
   settingsParent.addEventListener("click", () => {
     if (appShell && appShell.classList.contains("collapsed")) setSidebarCollapsed(false);
@@ -61,7 +64,7 @@ if (settingsParent && settingsChildren) {
     settingsParent.classList.toggle("expanded", nowOpen);
     const active = document.querySelector(".panel.active");
     if (nowOpen && (!active || !active.id.startsWith("tab-settings-"))) {
-      activateTab("settings-general");
+      activateTab("settings-general", false);  // don't close the drawer
     }
   });
 }
@@ -152,6 +155,19 @@ $$('a[href^="#"]').forEach((a) => {
 });
 
 ["#tab-guide"].forEach((sel) => makeCardsCollapsible($(sel)));
+
+// Wrap every data table in a horizontal-scroll container so wide tables scroll
+// on their own on small screens instead of overflowing the page.
+function wrapTables(root = document) {
+  root.querySelectorAll(".data-table").forEach((t) => {
+    if (t.closest(".table-scroll")) return;
+    const w = document.createElement("div");
+    w.className = "table-scroll";
+    t.parentNode.insertBefore(w, t);
+    w.appendChild(t);
+  });
+}
+wrapTables();
 
 // "Configure →" shortcut (e.g. from the Discord tab) that switches to a tab.
 $$("[data-jump]").forEach((el) => {
@@ -793,10 +809,10 @@ function webhookDetail(w) {
       </div>
       <pre class="code wh-template">${escapeHtml(tmpl.json)}</pre>
       <p class="hint wh-template-hint">${tmpl.hint}</p>
-      <table class="data-table wh-accounts-table">
+      <div class="table-scroll"><table class="data-table wh-accounts-table">
         <thead><tr><th>Enabled</th><th>Login</th><th>Account</th><th>Env</th><th>Qty ×</th></tr></thead>
         <tbody>${webhookAccountRows(w)}</tbody>
-      </table>
+      </table></div>
       <div class="form-actions">
         <button type="button" class="btn btn-primary wh-save">Save</button>
         <button type="button" class="btn btn-ghost wh-regen">Regenerate token</button>
@@ -1192,10 +1208,10 @@ function dsChannelRows(c = {}, idx = 0) {
   </tr>
   <tr class="ds-cdetail hidden" data-idx="${idx}"><td colspan="6">
     <div class="row-detail">
-      <table class="data-table ds-targets">
+      <div class="table-scroll"><table class="data-table ds-targets">
         <thead><tr><th>On</th><th>Label</th><th>Target webhook</th><th></th></tr></thead>
         <tbody>${targets || '<tr class="ds-empty-row"><td colspan="4" class="empty">No targets — add one.</td></tr>'}</tbody>
-      </table>
+      </table></div>
       <div class="form-actions"><button type="button" class="btn btn-ghost ds-add-target">+ Add target</button></div>
     </div>
   </td></tr>`;

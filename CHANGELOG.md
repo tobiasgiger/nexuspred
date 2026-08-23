@@ -4,6 +4,20 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 4.1.0
+- **Mobile-friendly dashboard** (tested at iPhone Pro Max width, 440px). No more
+  horizontal page scroll on phones:
+  - Every data table is wrapped in a horizontal-scroll container, so wide tables
+    (Connection Health, Active Trades, Recent Orders, …) scroll inside their card
+    instead of overflowing the page.
+  - Status tiles reflow to a 2-up grid; topbar, forms, URL boxes and code blocks
+    adapt; safe-area insets for the notch / home indicator (`viewport-fit=cover`).
+  - The expandable **Webhooks** / **Discord channels** rows: heavy summary
+    columns (URL, counts) are hidden on phones, and the expanded edit panel no
+    longer inherits the table's nowrap — its inputs now fill the card cleanly.
+  - Tapping the **Settings** group in the mobile drawer expands its sub-pages
+    without closing the drawer, so they're reachable.
+
 ## 4.0.1
 - **Fix:** health check / token refresh logged `module 'app.state' has no
   attribute 'sessions'` and showed accounts as *0/1 connected* even when the

@@ -414,3 +414,48 @@ tr.wh-detail > td, tr.ds-cdetail > td { background: var(--bg); padding: 0; }
 /* signed-in user email in the topbar */
 .user-email { color: var(--text-dim); font-size: 12.5px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 640px) { .user-email { display: none; } }
+
+/* ===================================================== responsive tables */
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
+
+/* ============================================================ mobile ≤760 */
+@media (max-width: 760px) {
+  main { padding: 14px;
+    padding-left: max(14px, env(safe-area-inset-left));
+    padding-right: max(14px, env(safe-area-inset-right));
+    padding-bottom: max(20px, env(safe-area-inset-bottom)); }
+  .topbar { padding: 12px 14px; gap: 8px;
+    padding-top: max(12px, env(safe-area-inset-top));
+    padding-right: max(14px, env(safe-area-inset-right)); }
+  .topbar-right { gap: 10px; }
+  .conn-pill { font-size: 12px; padding: 5px 10px; }
+  .version { font-size: 12px; gap: 6px; }
+  .card { padding: 14px; }
+  .card h2 { font-size: 13.5px; }
+  /* wide tables scroll instead of squeezing/wrapping */
+  .data-table th, .data-table td { white-space: nowrap; }
+  .statusbar { gap: 8px; }
+  .status-item { flex: 1 1 44%; min-width: 0; }
+  .form-actions { flex-wrap: wrap; }
+  .url-box { flex-wrap: wrap; gap: 8px; }
+  .url-box code { min-width: 0; word-break: break-all; white-space: normal; }
+  pre, .code, .result-box, .log-stream { overflow-x: auto; }
+  .sidebar { padding-left: env(safe-area-inset-left); }
+  .preset-row { flex-wrap: wrap; }
+  .bm-row { flex-wrap: wrap; }
+  .bm-link { width: 100%; }
+  /* Expandable tables: hide the heavy summary columns so the row fits the phone
+     (the URL + account count are shown inside the expanded panel anyway). */
+  #webhooksTable th:nth-child(5), #webhooksTable th:nth-child(6),
+  #webhooksTable tr.wh-row > td:nth-child(5), #webhooksTable tr.wh-row > td:nth-child(6),
+  #dsChannelsTable th:nth-child(5), #dsChannelsTable tr.ds-crow > td:nth-child(5) {
+    display: none;
+  }
+  /* The expanded edit panel must NOT inherit the table cells' nowrap (that kept
+     each inline-block input on its label's line, pushing it past the edge). */
+  .row-detail { white-space: normal; }
+  .row-detail .grid-2 { grid-template-columns: 1fr; }
+  .row-detail input, .row-detail select, .row-detail textarea { box-sizing: border-box; }
+  /* Empty-state messages shouldn't force a table wide either. */
+  .data-table td.empty { white-space: normal; }
+}
