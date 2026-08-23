@@ -525,8 +525,15 @@ async def api_status() -> dict[str, Any]:
 
 
 @app.get("/api/settings")
-async def api_get_settings() -> dict[str, Any]:
-    return config.public_settings()
+async def api_get_settings(request: Request) -> dict[str, Any]:
+    s = config.public_settings()
+    # Default the alert notify-email to the signed-in user's own address when it
+    # hasn't been set, so the field is pre-filled per-user (they can override it).
+    if not s.get("alert_email_to"):
+        user = getattr(request.state, "user", None)
+        if user:
+            s["alert_email_to"] = user.get("email", "")
+    return s
 
 
 @app.post("/api/settings")
@@ -921,6 +928,13 @@ async def _discord_health_loop() -> None:
 async def _startup() -> None:
     import asyncio
     db.init()
+    # Default each area's alert "Notify email" to its owner's address where unset.
+    try:
+        if db.backfill_alert_emails():
+            for aid in db.all_area_ids():
+                config.invalidate(aid)
+    except Exception as exc:  # noqa: BLE001 - never let a migration block startup
+        state.log_event("warn", f"alert-email backfill failed: {exc}")
     state.log_event("info", f"Bridge started (v{config.get_version()})")
     asyncio.create_task(_health_loop())
     asyncio.create_task(_discord_health_loop())

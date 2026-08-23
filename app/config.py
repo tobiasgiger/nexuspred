@@ -95,7 +95,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "alert_discord_webhook_url": "",       # Discord "Webhook URL" from channel settings
     "alert_discord_mention_everyone": True,  # prefix messages with @everyone
     "alert_email_enabled": False,
-    "alert_email_to": "speckbrigade@gmail.com",
+    # Empty by default; the app fills this with the area owner's own email (see
+    # db.create_user / db.backfill_alert_emails and the /api/settings fallback),
+    # unless the user has set a different address.
+    "alert_email_to": "",
     "alert_smtp_host": "smtp.gmail.com",
     "alert_smtp_port": 587,
     "alert_smtp_username": "",             # e.g. your Gmail address

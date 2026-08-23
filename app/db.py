@@ -225,7 +225,12 @@ def create_user(email: str, password: str, is_admin: bool = False,
     """Create a user + their own area + an owner membership. Returns the user."""
     init()
     email = email.strip().lower()
-    settings_json = json.dumps(initial_settings or {})
+    # Default the alert "Notify email" to the owner's own address (unless the
+    # migrated/initial settings already carry one), so it's correct per-user.
+    init_settings = dict(initial_settings or {})
+    if not init_settings.get("alert_email_to"):
+        init_settings["alert_email_to"] = email
+    settings_json = json.dumps(init_settings)
     with _connect() as c:
         # First user is forced admin; area id of the very first user is DEFAULT_AREA_ID.
         first = c.execute("SELECT COUNT(*) n FROM users").fetchone()["n"] == 0
@@ -373,6 +378,30 @@ def set_area_feature(area_id: int, feature: str, enabled: bool) -> dict[str, boo
 def user_features(user_id: int) -> dict[str, bool]:
     aid = user_primary_area(user_id)
     return get_area_features(aid) if aid else default_area_features()
+
+
+def backfill_alert_emails() -> int:
+    """Set each area's alert 'Notify email' to its owner's address where unset.
+
+    Makes the per-user default correct for areas created before that behavior
+    (or before multi-tenancy), without touching areas where the user chose an
+    address. Returns how many areas were updated. Safe to run repeatedly."""
+    init()
+    updated = 0
+    with _connect() as c:
+        rows = c.execute(
+            "SELECT a.id AS id, a.settings AS settings, u.email AS email "
+            "FROM areas a JOIN users u ON u.id = a.owner_user_id").fetchall()
+        for r in rows:
+            try:
+                s = json.loads(r["settings"] or "{}")
+            except json.JSONDecodeError:
+                s = {}
+            if not s.get("alert_email_to") and r["email"]:
+                s["alert_email_to"] = r["email"]
+                c.execute("UPDATE areas SET settings=? WHERE id=?", (json.dumps(s), r["id"]))
+                updated += 1
+    return updated
 
 
 # --------------------------------------------------------------- invites

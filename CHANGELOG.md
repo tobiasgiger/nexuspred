@@ -4,6 +4,14 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 4.7.3
+- **Alerts “Notify email” now defaults to each user's own address.** It used to
+  default to a single hard-coded address for everyone (wrong in a multi-user app).
+  New users' areas are seeded with their own email, existing areas are backfilled
+  with the owner's email on startup where it was unset, and the field falls back
+  to the signed-in user's email whenever it's empty — while any address a user has
+  deliberately set is always preserved.
+
 ## 4.7.2
 - **Fix false “Cannot set properties of null” error when saving Settings.** The
   save handler wrote its “Saved ✓” confirmation to a `#saveHint` element that
