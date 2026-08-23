@@ -105,7 +105,7 @@
           <span class="status-v" id="statEnv">—</span>
         </div>
         <div class="status-item">
-          <span class="status-k">Accounts executing</span>
+          <span class="status-k">Trade accounts</span>
           <span class="status-v" id="statAccount">—</span>
         </div>
         <div class="status-item">
@@ -353,24 +353,21 @@
 
       <div class="card" id="tradeAccountsCard">
         <div class="card-head">
-          <h2>Trade Accounts — Execution On/Off</h2>
+          <h2>Discovered Accounts</h2>
           <button type="button" class="btn btn-secondary" id="refreshTradeAccounts">Discover / Refresh</button>
         </div>
         <p class="hint">Every Tradovate trade account found under your logins above — one
-          login can hold <strong>several accounts</strong>. Switch <strong>execution</strong>
-          on/off per account: each signal is sent to every account switched <strong>on</strong>.
-          <em>Qty ×</em> scales the contracts for that account. Click <strong>Discover /
-          Refresh</strong> (connects &amp; verifies) to load the accounts under each login.</p>
+          login can hold <strong>several accounts</strong>. Which accounts a signal actually
+          trades is chosen <strong>per webhook</strong> on the <strong>Webhooks</strong> tab
+          (with its own qty multiplier), so there's no separate on/off here. Click
+          <strong>Discover / Refresh</strong> (connects &amp; verifies) to load the accounts
+          under each login.</p>
         <table class="data-table" id="tradeAccountsTable">
           <thead>
-            <tr><th>Execute</th><th>Login</th><th>Account</th><th>Env</th><th>Qty ×</th><th>Status</th></tr>
+            <tr><th>Login</th><th>Account</th><th>Env</th><th>Status</th></tr>
           </thead>
-          <tbody><tr><td colspan="6" class="empty">No accounts yet — add a token above, then Discover / Refresh</td></tr></tbody>
+          <tbody><tr><td colspan="4" class="empty">No accounts yet — add a token above, then Discover / Refresh</td></tr></tbody>
         </table>
-        <div class="form-actions">
-          <button type="button" class="btn btn-primary" id="saveTradeAccountsBtn">Save Execution Settings</button>
-          <span class="save-hint" id="tradeAccountsHint"></span>
-        </div>
       </div>
       </section>
 

@@ -4,6 +4,21 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 2.9.0
+- **Discord target = pick an existing webhook.** A channel's target is now chosen
+  from a **dropdown of the bridge's own webhooks** (the signal is posted to that
+  webhook's URL and flows into your strategy routing), with a **Custom URL…**
+  option for external targets (URL + optional `X-Webhook-Secret`). Webhook targets
+  are stored by id and resolved to the local URL at send time, so regenerating a
+  webhook token keeps working. No manual URL/secret typing for the common case.
+- **Removed the per-account "Execution On/Off" from Settings.** Which accounts a
+  signal trades is decided **per webhook** (Webhooks tab); the global toggle was
+  redundant (the routing path already ignored it) and confusing. Settings →
+  Tradovate Accounts now shows a **read-only Discovered Accounts** list (Login ·
+  Account · Env · Status). Discovered accounts are simply made routable; the
+  login-level Enabled switch still disables a whole login. Dashboard stat relabelled
+  *Trade accounts* (connected/total).
+
 ## 2.8.0
 - **Left sidebar navigation + Settings sub-pages.** The top tab strip is replaced
   by a collapsible left sidebar, grouped into Monitoring (Dashboard, Discord,

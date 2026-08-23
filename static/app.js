@@ -181,8 +181,8 @@ async function refreshStatus() {
     $("#statEnv").textContent = total ? `${con}/${total} login${total === 1 ? "" : "s"}` : "—";
 
     const ta = s.trade_accounts || [];
-    const taOn = ta.filter((a) => a.enabled).length;
-    $("#statAccount").textContent = ta.length ? `${taOn}/${ta.length} on` : "—";
+    const taConn = ta.filter((a) => a.connected).length;
+    $("#statAccount").textContent = ta.length ? `${taConn}/${ta.length} connected` : "—";
 
     renderSessions(s.sessions || []);
     renderActive(s.active_trades || {});
@@ -629,44 +629,21 @@ function renderTradeAccounts(accounts) {
   KNOWN_ACCOUNTS = accounts || [];
   const tbody = $("#tradeAccountsTable tbody");
   if (!accounts || !accounts.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="empty">No accounts yet — add a token above, then Discover / Refresh</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">No accounts yet — add a token above, then Discover / Refresh</td></tr>';
     return;
   }
+  // Read-only: which accounts trade is chosen per webhook (Webhooks tab).
   tbody.innerHTML = accounts.map((a) => {
-    const conn = a.connected;
-    const status = conn
+    const status = a.connected
       ? '<span class="pos">Connected</span>'
       : '<span class="neg">Not connected</span>';
-    return `<tr data-token-idx="${a.token_idx}" data-spec="${escapeHtml(a.spec)}" data-id="${a.id}">
-      <td><input type="checkbox" class="switch ta-exec" ${a.enabled ? "checked" : ""} /></td>
+    return `<tr>
       <td>${escapeHtml(a.token_name || "—")}</td>
       <td>${escapeHtml(a.spec || "—")}</td>
       <td>${(a.environment || "—").toUpperCase()}</td>
-      <td><input type="number" class="ta-execmult" min="0.1" step="0.1" value="${a.qty_multiplier ?? 1}" style="width:70px" /></td>
       <td>${status}</td></tr>`;
   }).join("");
 }
-
-function collectTradeAccounts() {
-  return [...$$("#tradeAccountsTable tbody tr[data-spec]")].map((tr) => ({
-    token_idx: Number(tr.dataset.tokenIdx),
-    spec: tr.dataset.spec,
-    id: Number(tr.dataset.id) || 0,
-    enabled: tr.querySelector(".ta-exec").checked,
-    qty_multiplier: Number(tr.querySelector(".ta-execmult").value) || 1,
-  }));
-}
-
-$("#saveTradeAccountsBtn").addEventListener("click", async () => {
-  try {
-    renderTradeAccounts(await api("/api/trade-accounts",
-      { method: "POST", body: JSON.stringify(collectTradeAccounts()) }));
-    $("#tradeAccountsHint").textContent = "Saved ✓";
-    setTimeout(() => ($("#tradeAccountsHint").textContent = ""), 2500);
-    toast("Execution settings saved", "success");
-    refreshStatus();
-  } catch (e) { toast(e.message, "error"); }
-});
 
 $("#refreshTradeAccounts").addEventListener("click", connectAll);
 
@@ -1097,12 +1074,26 @@ async function loadDiscordConfig() {
   } catch (e) { /* ignore */ }
 }
 
+function dsWebhookOptions(selectedId) {
+  const opts = (WEBHOOKS || []).map((w) =>
+    `<option value="${w.id}" ${w.id === selectedId ? "selected" : ""}>${escapeHtml(w.name)} (${w.strategy})</option>`
+  ).join("");
+  return `<option value="" ${selectedId ? "" : "selected"}>Custom URL…</option>` + opts;
+}
+
 function dsTargetRow(t = {}) {
+  const wid = t.webhook_id || "";
+  const isCustom = !wid;
   return `<tr class="ds-target">
     <td><input type="checkbox" class="switch ds-t-enabled" ${t.enabled ? "checked" : ""} /></td>
-    <td><input class="ds-t-label" value="${escapeHtml(t.label || "")}" placeholder="bridge" style="width:120px" /></td>
-    <td><input class="ds-t-url" value="${escapeHtml(t.url || "")}" placeholder="https://…/webhook/&lt;token&gt;" style="width:100%;min-width:220px" /></td>
-    <td><input type="password" class="ds-t-secret" value="${escapeHtml(t.secret || "")}" placeholder="optional" autocomplete="off" style="width:120px" /></td>
+    <td><input class="ds-t-label" value="${escapeHtml(t.label || "")}" placeholder="(optional)" style="width:110px" /></td>
+    <td>
+      <select class="ds-t-webhook" style="min-width:200px">${dsWebhookOptions(wid)}</select>
+      <div class="ds-t-custom ${isCustom ? "" : "hidden"}" style="margin-top:6px">
+        <input class="ds-t-url" value="${escapeHtml(t.url || "")}" placeholder="https://…/webhook/&lt;token&gt; or external URL" style="width:100%;min-width:240px" />
+        <input type="password" class="ds-t-secret" value="${escapeHtml(t.secret || "")}" placeholder="X-Webhook-Secret (optional)" autocomplete="off" style="width:100%;margin-top:6px" />
+      </div>
+    </td>
     <td><button type="button" class="btn btn-ghost ds-t-del">✕</button></td>
   </tr>`;
 }
@@ -1122,8 +1113,8 @@ function dsChannelRows(c = {}, idx = 0) {
   <tr class="ds-cdetail hidden" data-idx="${idx}"><td colspan="6">
     <div class="row-detail">
       <table class="data-table ds-targets">
-        <thead><tr><th>On</th><th>Label</th><th>Webhook URL</th><th>Secret</th><th></th></tr></thead>
-        <tbody>${targets || '<tr class="ds-empty-row"><td colspan="5" class="empty">No targets — add one.</td></tr>'}</tbody>
+        <thead><tr><th>On</th><th>Label</th><th>Target webhook</th><th></th></tr></thead>
+        <tbody>${targets || '<tr class="ds-empty-row"><td colspan="4" class="empty">No targets — add one.</td></tr>'}</tbody>
       </table>
       <div class="form-actions"><button type="button" class="btn btn-ghost ds-add-target">+ Add target</button></div>
     </div>
@@ -1166,6 +1157,11 @@ function wireDsChannelRow(tbody, idx) {
 }
 
 function wireDiscordTarget(row, onChange) {
+  const sel = row.querySelector(".ds-t-webhook");
+  const custom = row.querySelector(".ds-t-custom");
+  if (sel && custom) {
+    sel.addEventListener("change", () => custom.classList.toggle("hidden", sel.value !== ""));
+  }
   row.querySelector(".ds-t-del").addEventListener("click", () => { row.remove(); if (onChange) onChange(); });
 }
 
@@ -1174,12 +1170,17 @@ function collectDiscordChannels() {
   return [...tbody.querySelectorAll("tr.ds-crow")].map((row) => {
     const detailRow = tbody.querySelector(`tr.ds-cdetail[data-idx="${row.dataset.idx}"]`);
     const targets = detailRow
-      ? [...detailRow.querySelectorAll(".ds-target")].map((r) => ({
-          label: r.querySelector(".ds-t-label").value.trim(),
-          url: r.querySelector(".ds-t-url").value.trim(),
-          secret: r.querySelector(".ds-t-secret").value,
-          enabled: r.querySelector(".ds-t-enabled").checked,
-        })).filter((t) => t.url)
+      ? [...detailRow.querySelectorAll(".ds-target")].map((r) => {
+          const label = r.querySelector(".ds-t-label").value.trim();
+          const enabled = r.querySelector(".ds-t-enabled").checked;
+          const wid = r.querySelector(".ds-t-webhook").value;
+          if (wid) return { label, webhook_id: wid, enabled };
+          return {
+            label, enabled,
+            url: r.querySelector(".ds-t-url").value.trim(),
+            secret: r.querySelector(".ds-t-secret").value,
+          };
+        }).filter((t) => t.webhook_id || t.url)
       : [];
     return {
       id: row.querySelector(".ds-c-id").value.trim(),

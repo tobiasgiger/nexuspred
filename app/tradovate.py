@@ -214,25 +214,19 @@ class TradovateSession:
     def _merge_accounts(self, discovered: list[dict[str, Any]]) -> None:
         """Merge the accounts returned by Tradovate with the stored toggles.
 
-        Existing on/off and qty-multiplier choices are preserved by account spec.
-        Newly discovered accounts default to enabled only if none existed before
-        (so adding a fresh login starts trading), otherwise they are added disabled
-        so a new account never starts trading without an explicit opt-in.
+        Discovered accounts are marked available (``enabled``) — actual execution
+        is decided per-webhook (Webhooks tab), not by a global per-account switch,
+        so every discovered account is simply made routable and left for each
+        webhook to opt in. Qty-multiplier choices are preserved by account spec.
         """
         prev = {a["spec"]: a for a in self.accounts if a.get("spec")}
-        first_time = not prev
         merged: list[dict[str, Any]] = []
-        for i, a in enumerate(discovered):
+        for a in discovered:
             spec = a.get("name") or ""
             old = prev.get(spec)
-            if old is not None:
-                enabled = bool(old.get("enabled", True))
-                mult = float(old.get("qty_multiplier", self.qty_multiplier) or 1)
-            else:
-                enabled = first_time and i == 0
-                mult = self.qty_multiplier
+            mult = float((old or {}).get("qty_multiplier", self.qty_multiplier) or 1)
             merged.append({"spec": spec, "id": a.get("id") or 0,
-                           "enabled": enabled, "qty_multiplier": mult})
+                           "enabled": True, "qty_multiplier": mult})
         self.accounts = merged
 
     async def _set_connected(self, connected: bool, **fields: Any) -> None:

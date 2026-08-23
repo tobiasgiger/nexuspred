@@ -10,6 +10,7 @@ the dashboard take effect without restarting the process.
 """
 from __future__ import annotations
 
+import os
 import time
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -21,6 +22,37 @@ from .parser import EmbedLike, parse_embed
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _find_webhook(webhook_id: str) -> Optional[dict[str, Any]]:
+    for wh in config.load_settings().get("webhooks", []):
+        if wh.get("id") == webhook_id:
+            return wh
+    return None
+
+
+def resolve_target(t: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Resolve a channel target to an effective {label, url, secret} for dispatch.
+
+    A target is either a reference to one of the bridge's own webhooks
+    (``webhook_id`` → posted to that webhook's local URL; the path token is the
+    auth, so no secret is needed) or a custom external ``url`` (+ optional
+    secret). Returns ``None`` if it can't be resolved (e.g. the referenced
+    webhook was deleted).
+    """
+    label = (t.get("label") or "").strip()
+    wid = t.get("webhook_id")
+    if wid:
+        wh = _find_webhook(wid)
+        if not wh or not wh.get("token"):
+            return None
+        port = os.environ.get("PORT", "9000")
+        url = f"http://127.0.0.1:{port}/webhook/{wh.get('token')}"
+        return {"label": label or wh.get("name") or "webhook", "url": url, "secret": ""}
+    url = (t.get("url") or "").strip()
+    if url:
+        return {"label": label or url, "url": url, "secret": t.get("secret") or ""}
+    return None
 
 
 def find_channel(channel_id: str) -> Optional[dict[str, Any]]:
@@ -99,7 +131,14 @@ async def process_embed(
     event["signal"] = signal.to_dict()
 
     targets = (channel or {}).get("targets") or []
-    active_targets = [t for t in targets if t.get("enabled") and t.get("url")]
+    # Resolve each enabled target (webhook reference -> local URL, or custom URL).
+    active_targets = []
+    for t in targets:
+        if not t.get("enabled"):
+            continue
+        resolved = resolve_target(t)
+        if resolved:
+            active_targets.append({**resolved, "enabled": True})
 
     payload = {**signal.to_dict(), "received_at": event["ts"], "source": source}
 

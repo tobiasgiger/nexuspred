@@ -260,15 +260,14 @@ authenticated by its **own Tradovate access token**. Add logins under
   that login.
 
 **Multiple trade accounts per login.** A single token often grants access to several trade
-accounts. After connecting, every discovered account appears in **Settings → Trade
-Accounts** — this is the discovery/reference list used to populate each webhook's account
-picker (and to aggregate Open Positions). It's not where routing happens anymore: **which
-accounts actually execute a given strategy's signals, and their qty multiplier, is chosen
-per webhook** in the **Webhooks** tab.
+accounts. After connecting, every discovered account appears under **Settings → Tradovate
+Accounts → Discovered Accounts** — a read-only reference list (Login · Account · Env ·
+Status) used to populate each webhook's account picker and to aggregate Open Positions.
+**Which accounts actually execute a given strategy's signals, and their qty multiplier, is
+chosen per webhook** in the **Webhooks** tab — there is no separate per-account execution
+switch (the login-level **Enabled** toggle still disables a whole login).
 
-- Newly discovered accounts default to **off** (except the first on a brand-new login), so
-  an account never starts trading without an explicit opt-in on some webhook.
-- The **Monitor** header shows *Logins connected* and *Accounts executing*;
+- The **Dashboard** header shows *Logins* and *Trade accounts* (connected/total);
   **Connection Health** shows each login's token expiry, and **Active Trades** shows one
   row per executing account with its own SL/TP order ids.
 
@@ -328,11 +327,13 @@ order execution.
 - **Enable listener** and paste your Discord **user token** (stored masked in
   `data/settings.json`, like every other secret).
 - **Global dry-run** — parse and display signals but send to **no** webhook.
-- **Channels** — each is a Discord channel ID with a label and one or more **webhook
-  targets**. Each target has a label, URL, optional **secret** (sent as the
-  `X-Webhook-Secret` header) and an on/off toggle. Every *enabled* target of a channel
-  receives each signal **in parallel**, each with its own 5 s timeout and isolated error
-  handling.
+- **Channels** — each is a Discord channel ID with a label and one or more **targets**.
+  A target is either one of the bridge's **own webhooks** (pick it from a dropdown — the
+  signal is posted to that webhook's URL, so it flows straight into your strategy routing)
+  or a **custom URL** (for an external logging system or second bridge, with an optional
+  **secret** sent as the `X-Webhook-Secret` header). Each target has an on/off toggle.
+  Every *enabled* target of a channel receives each signal **in parallel**, each with its
+  own 5 s timeout and isolated error handling.
 
 All of the above is read **live per event**, so changes take effect without a restart.
 

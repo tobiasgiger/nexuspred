@@ -67,16 +67,19 @@ def _merge_channels(incoming: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         targets: list[dict[str, Any]] = []
         for t in c.get("targets") or []:
+            webhook_id = str(t.get("webhook_id", "")).strip()
             url = str(t.get("url", "")).strip()
-            if not url:
+            # A target is either a bridge-webhook reference or a custom URL.
+            if not webhook_id and not url:
                 continue
             secret = t.get("secret", "")
             if secret == _MASK:
                 secret = prev_secret.get((cid, url), "")
             targets.append({
-                "label": str(t.get("label", "")).strip() or url,
-                "url": url,
-                "secret": secret,
+                "label": str(t.get("label", "")).strip(),
+                "webhook_id": webhook_id,
+                "url": "" if webhook_id else url,
+                "secret": "" if webhook_id else secret,
                 "enabled": bool(t.get("enabled", True)),
             })
         cleaned.append({
