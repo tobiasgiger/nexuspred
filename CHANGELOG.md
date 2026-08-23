@@ -4,6 +4,14 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 4.7.2
+- **Fix false “Cannot set properties of null” error when saving Settings.** The
+  save handler wrote its “Saved ✓” confirmation to a `#saveHint` element that
+  didn't exist, which threw *after* the settings had already been saved — so the
+  save actually worked but surfaced a scary error toast. Gave the Save Settings
+  button its `#saveHint` span and guarded the write so a missing element can never
+  turn a successful save into an error.
+
 ## 4.7.1
 - **Fix the Discord Live Signal Feed getting stuck on “reconnecting…”.** The SSE
   streams now send a real named **`ping` heartbeat** every 10 s (instead of a bare

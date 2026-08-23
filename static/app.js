@@ -383,8 +383,11 @@ $("#settingsForm").addEventListener("submit", async (e) => {
   try {
     await api("/api/settings", { method: "POST", body: JSON.stringify(payload) });
     toast("Settings saved", "success");
-    $("#saveHint").textContent = "Saved ✓";
-    setTimeout(() => ($("#saveHint").textContent = ""), 2500);
+    const hint = $("#saveHint");
+    if (hint) {
+      hint.textContent = "Saved ✓";
+      setTimeout(() => { const h = $("#saveHint"); if (h) h.textContent = ""; }, 2500);
+    }
     refreshStatus();
   } catch (err) { toast(err.message, "error"); }
 });
