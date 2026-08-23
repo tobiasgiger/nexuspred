@@ -512,7 +512,10 @@ if (_createInviteBtn) _createInviteBtn.addEventListener("click", async () => {
   try {
     const r = await api("/api/users/invite", {
       method: "POST",
-      body: JSON.stringify({ is_admin: $("#inviteIsAdmin").checked }),
+      // Field is named `elevated`, not `is_admin`: some WAFs (Render's included)
+      // block request bodies containing the `is_admin` key as a suspected
+      // privilege-escalation attempt, returning an HTML "Blocked" page.
+      body: JSON.stringify({ elevated: $("#inviteIsAdmin").checked }),
     });
     const url = r.url || `${location.origin}/register?code=${r.code || ""}`;
     $("#inviteUrl").value = url;

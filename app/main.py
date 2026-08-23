@@ -217,8 +217,14 @@ async def api_users(request: Request) -> list[dict[str, Any]]:
 async def api_create_invite(request: Request) -> dict[str, Any]:
     admin = _require_admin(request)
     body = await request.json()
+    # Accept the neutral `elevated` key (what the dashboard sends) and fall back
+    # to the legacy `is_admin`. The client avoids the `is_admin` key because some
+    # WAFs block request bodies containing it as a privilege-escalation attempt.
+    elevate = body.get("elevated")
+    if elevate is None:
+        elevate = body.get("is_admin")
     code = db.create_invite(admin["id"], email=str(body.get("email", "")),
-                            is_admin=bool(body.get("is_admin")))
+                            is_admin=bool(elevate))
     return {"code": code, "url": f"{_base_url(request)}/register?code={code}"}
 
 

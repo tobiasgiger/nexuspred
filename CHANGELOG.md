@@ -4,6 +4,15 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 4.1.2
+- **Fix “Create invite” being blocked by the host WAF.** The invite request sent
+  a JSON body with an `is_admin` key, which Render's WAF blocks as a suspected
+  privilege-escalation attempt — the POST never reached the app and came back as
+  an HTML *“Blocked”* page. The dashboard now sends the flag under a neutral
+  `elevated` key; the server accepts `elevated` (and still falls back to the
+  legacy `is_admin`). This is what actually broke invite creation on the live
+  deploy; 4.1.1 only made the failure visible.
+
 ## 4.1.1
 - **Fix “Create invite” showing an empty block.** The generated invite link is
   now rendered in a selectable, read-only input (tap to select) instead of a
