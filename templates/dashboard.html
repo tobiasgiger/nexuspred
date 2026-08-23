@@ -316,6 +316,26 @@
             <span>Trade executed (which accounts + strategy) — Discord only</span>
             <input type="checkbox" name="alert_on_trade_executed" class="switch" />
           </label>
+          <label class="switch-row">
+            <span>Discord listener went offline — Discord + email</span>
+            <input type="checkbox" name="alert_on_discord_lost" class="switch" />
+          </label>
+          <label class="switch-row">
+            <span>Discord listener came back online — Discord + email</span>
+            <input type="checkbox" name="alert_on_discord_restored" class="switch" />
+          </label>
+          <label class="switch-row">
+            <span>Signal received but not executed (webhook failure) — Discord + email</span>
+            <input type="checkbox" name="alert_on_webhook_failed" class="switch" />
+          </label>
+          <label>Discord health grace period (seconds before an outage alerts)
+            <input name="discord_health_grace" type="number" min="15" step="5"
+              placeholder="90" style="max-width:140px" />
+          </label>
+          <div class="form-actions" style="margin-top:10px">
+            <button type="button" class="btn btn-secondary" id="testAlertBtn">Send test alert</button>
+            <span class="save-hint" id="testAlertHint"></span>
+          </div>
         </div>
 
         <div class="form-actions">

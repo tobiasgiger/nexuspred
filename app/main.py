@@ -18,7 +18,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import auth, config, context, db, signals, state, tradovate, updater
+from . import alerts, auth, config, context, db, signals, state, tradovate, updater
 from .discord_signals import dispatcher as discord_dispatcher
 from .discord_signals import listener as discord_listener
 from .discord_signals.routes import router as discord_router
@@ -343,15 +343,18 @@ def _resolve_webhook(token: str) -> tuple[int | None, dict[str, Any] | None]:
 
 async def _process_signal_bg(payload: dict[str, Any], webhook: dict[str, Any]) -> None:
     """Run the signal pipeline in the background so the webhook returns instantly."""
+    name = webhook.get("name", "?")
     try:
         result = await signals.process(payload, webhook)
         state.log_signal(payload, result=result.get("status", "ok"))
     except (signals.SignalError, TradovateError) as exc:
         state.log_event("error", f"Signal error: {exc}", payload=payload)
         state.log_signal(payload, result=f"error: {exc}")
+        await alerts.webhook_failed(name, str(exc))
     except Exception as exc:  # noqa: BLE001 - never let a background task die silently
         state.log_event("error", f"Signal failed: {exc}", payload=payload)
         state.log_signal(payload, result=f"error: {exc}")
+        await alerts.webhook_failed(name, str(exc))
 
 
 @app.post("/webhook/{token}")
@@ -447,6 +450,16 @@ async def api_save_settings(request: Request) -> dict[str, Any]:
     config.save_settings(updates)
     state.log_event("info", "Settings updated")
     return config.public_settings()
+
+
+@app.post("/api/alerts/test")
+async def api_test_alert() -> dict[str, Any]:
+    """Send a test notification on every enabled channel (Discord / email)."""
+    channels = await alerts.test_alert()
+    if not any(channels.values()):
+        return {"status": "none", "channels": channels,
+                "detail": "No alert channel is enabled and fully configured."}
+    return {"status": "sent", "channels": channels}
 
 
 @app.get("/api/signals")
@@ -759,12 +772,32 @@ async def _health_loop() -> None:
         await asyncio.sleep(min(next_delays) if next_delays else 30.0)
 
 
+async def _discord_health_loop() -> None:
+    """Evaluate every area's Discord listener health on a steady cadence and fire
+    lost/restored alerts. Kept separate from the token health loop (which paces
+    itself to token expiry, sometimes minutes apart) so outages surface quickly."""
+    import asyncio
+    while True:
+        try:
+            area_ids = db.all_area_ids()
+        except Exception:  # noqa: BLE001
+            area_ids = []
+        for area_id in area_ids:
+            try:
+                with context.use_area(area_id):
+                    await discord_listener.manager_for(area_id).health_tick()
+            except Exception:  # noqa: BLE001 - a health tick must never crash the loop
+                pass
+        await asyncio.sleep(30.0)
+
+
 @app.on_event("startup")
 async def _startup() -> None:
     import asyncio
     db.init()
     state.log_event("info", f"Bridge started (v{config.get_version()})")
     asyncio.create_task(_health_loop())
+    asyncio.create_task(_discord_health_loop())
     # Start a Discord listener supervisor per existing area (isolated tasks; a
     # Discord failure can never crash order execution). New areas are picked up
     # by the health loop.

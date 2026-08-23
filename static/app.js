@@ -567,6 +567,26 @@ if (_createInviteBtn) _createInviteBtn.addEventListener("click", async () => {
   }
 });
 
+const _testAlertBtn = $("#testAlertBtn");
+if (_testAlertBtn) _testAlertBtn.addEventListener("click", async () => {
+  const hint = $("#testAlertHint");
+  if (hint) { hint.textContent = "Sending…"; hint.className = "save-hint"; }
+  try {
+    const r = await api("/api/alerts/test", { method: "POST" });
+    const on = Object.entries(r.channels || {}).filter(([, v]) => v).map(([k]) => k);
+    if (r.status === "none") {
+      if (hint) { hint.textContent = "No channel enabled — turn on Discord and/or email above, Save, then test."; hint.className = "save-hint err"; }
+      toast("No alert channel is enabled", "error");
+    } else {
+      if (hint) { hint.textContent = `Sent to: ${on.join(", ")}. Check that it arrived.`; hint.className = "save-hint ok"; }
+      toast("Test alert sent", "success");
+    }
+  } catch (e) {
+    if (hint) { hint.textContent = e.message; hint.className = "save-hint err"; }
+    toast(e.message, "error");
+  }
+});
+
 const _copyInvite = $("#copyInvite");
 if (_copyInvite) _copyInvite.addEventListener("click", () => {
   const inp = $("#inviteUrl");
@@ -1389,18 +1409,22 @@ async function refreshDiscordStatus() {
   try {
     const s = await api("/api/discord/status");
     const stateEl = $("#dsState");
-    const label = { connected: "Connected", connecting: "Connecting…", disabled: "Disabled",
-      error: "Error", library_missing: "No library", stopped: "Stopped" }[s.state] || s.state;
+    const down = s.health === "down";
+    const label = down ? "Offline"
+      : ({ connected: "Connected", connecting: "Connecting…", disabled: "Disabled",
+           error: "Error", library_missing: "No library", stopped: "Stopped",
+           not_entitled: "Not enabled" }[s.state] || s.state);
     const full = label + (s.user ? ` (${s.user})` : "");
+    const cls = "status-v " + (s.state === "connected" ? "on" : (down || s.state === "error") ? "off" : "");
     stateEl.textContent = full;
-    stateEl.className = "status-v " + (s.state === "connected" ? "on" : s.state === "error" ? "off" : "");
+    stateEl.className = cls;
     $("#dsDryRun").textContent = s.dry_run ? "ON" : "off";
     $("#dsWatched").textContent = (s.watched_channels || []).length;
     $("#dsLibWarn").classList.toggle("hidden", s.library_available);
     const bar = $("#dsBarState");
     if (bar) {
       bar.textContent = s.enabled ? full : "off";
-      bar.className = "status-v " + (s.state === "connected" ? "on" : s.state === "error" ? "off" : "");
+      bar.className = cls;
     }
   } catch (e) { /* ignore */ }
 }

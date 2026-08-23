@@ -103,6 +103,14 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "alert_on_connection_lost": True,
     "alert_on_connection_restored": True,
     "alert_on_trade_executed": True,
+    # Discord listener health (self-bot Gateway connection).
+    "alert_on_discord_lost": True,
+    "alert_on_discord_restored": True,
+    # Webhook → Tradovate delivery failures (a signal arrived but execution failed).
+    "alert_on_webhook_failed": True,
+    # Seconds the Discord listener may be "wanted but not connected" before it
+    # counts as an outage (avoids alerting on the library's transient reconnects).
+    "discord_health_grace": 90,
 
     # --- Discord signal listener (self-bot module) ----------------------------
     # Watches Discord channels via the Gateway using a personal USER token

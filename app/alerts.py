@@ -94,3 +94,49 @@ async def trade_executed(
         f"{contract} on {accts}"
     )
     await _send_discord(message)
+
+
+async def discord_listener_lost(error: str = "") -> None:
+    s = config.load_settings()
+    if not s.get("alert_on_discord_lost", True):
+        return
+    detail = f" — {error}" if error else ""
+    message = f"🔴 **Discord listener offline** — the signal listener lost its Gateway connection{detail}"
+    await _send_discord(message)
+    await _send_email("Fluxbridge: Discord listener offline", message)
+
+
+async def discord_listener_restored(user: str = "") -> None:
+    s = config.load_settings()
+    if not s.get("alert_on_discord_restored", True):
+        return
+    who = f" (as `{user}`)" if user else ""
+    message = f"🟢 **Discord listener online** — the signal listener reconnected to the Gateway{who}"
+    await _send_discord(message)
+    await _send_email("Fluxbridge: Discord listener online", message)
+
+
+async def webhook_failed(webhook_name: str, reason: str) -> None:
+    s = config.load_settings()
+    if not s.get("alert_on_webhook_failed", True):
+        return
+    message = (
+        f"⚠️ **Signal not executed** — webhook `{webhook_name}` received a signal but "
+        f"execution failed: {reason}"
+    )
+    await _send_discord(message)
+    await _send_email(f"Fluxbridge: signal not executed ({webhook_name})", message)
+
+
+async def test_alert() -> dict[str, Any]:
+    """Send a test notification on every enabled channel; report what was tried."""
+    s = config.load_settings()
+    message = "🔔 **Test alert** — Fluxbridge notifications are configured correctly."
+    channels = {"discord": bool(s.get("alert_discord_enabled") and s.get("alert_discord_webhook_url")),
+                "email": bool(s.get("alert_email_enabled") and s.get("alert_email_to")
+                              and s.get("alert_smtp_username") and s.get("alert_smtp_password"))}
+    if channels["discord"]:
+        await _send_discord(message)
+    if channels["email"]:
+        await _send_email("Fluxbridge: test alert", message)
+    return channels

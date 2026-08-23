@@ -4,6 +4,25 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 4.3.0
+- **Discord listener health checks + alerts.** The bridge now watches its own
+  Discord Gateway connection and **alerts when the listener goes offline and when
+  it recovers**, through the same Discord-webhook and email channels as the
+  Tradovate connection alerts. A configurable **grace period** (default 90 s,
+  Settings → Alerts) means the library's normal transient reconnects don't alert
+  — only a sustained outage of a *wanted* connection does. A dedicated 30 s health
+  loop keeps detection quick without changing the token-refresh cadence.
+  - The dashboard's **Discord listener** tile now shows a distinct red *Offline*
+    when the connection is actually down (vs. a transient *Connecting…*).
+- **Webhook-failure alerts.** When a signal is received but execution fails
+  (rejected order, unmapped symbol, bad payload…), you get an alert naming the
+  webhook and the reason, so a silently-dropped signal can't go unnoticed.
+- **“Send test alert” button** (Settings → Alerts) fires a test notification on
+  every enabled channel and reports which ones it reached, so you can confirm
+  Discord/SMTP is wired up correctly. New `POST /api/alerts/test`.
+- New alert toggles: *Discord listener offline / online*, *Signal received but
+  not executed*, and the *Discord health grace period*.
+
 ## 4.2.0
 - **Per-user feature entitlements (admin-managed).** Modules can now be switched
   on/off **per user** by an admin. The first module gated this way is **Discord

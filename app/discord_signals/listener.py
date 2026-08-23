@@ -23,7 +23,7 @@ import asyncio
 import time
 from typing import Any, Optional
 
-from .. import config, context, db, state
+from .. import alerts, config, context, db, state
 from . import pipeline
 from .parser import embed_from_discord
 
@@ -47,6 +47,10 @@ class ListenerManager:
         self._client: Any = None
         self._current_token: Optional[str] = None
         self._shutdown = False
+        # Health tracking: last time we were connected, and whether we've already
+        # fired an "offline" alert (so the outage/restore pair alerts once each).
+        self._last_connected_mono: float = time.monotonic()
+        self._health_down = False
         self._status: dict[str, Any] = {
             "state": "stopped",     # stopped|disabled|connecting|connected|error|library_missing
             "connected": False,
@@ -76,10 +80,58 @@ class ListenerManager:
             "library_available": self.library_available(),
             "library_error": self._lib_error or "",
             "watched_channels": watched,
+            "health": self.health(),
         }
 
     def _set_status(self, **fields: Any) -> None:
         self._status.update(fields)
+
+    def _desired(self, s: dict[str, Any]) -> bool:
+        """Is the listener supposed to be connected right now?"""
+        try:
+            entitled = bool(db.get_area_features(self._area()).get("discord_signals"))
+        except Exception:  # noqa: BLE001
+            entitled = True
+        return bool(entitled and s.get("discord_enabled") and s.get("discord_user_token")
+                    and self.library_available())
+
+    async def health_tick(self) -> None:
+        """Evaluate connection health and fire lost/restored alerts once each.
+
+        Called periodically by the health loop (in this area's context). A grace
+        period keeps the library's normal transient reconnects from alerting;
+        only a sustained outage of a *wanted* connection counts.
+        """
+        s = config.load_settings(area_id=self.area_id)
+        now = time.monotonic()
+        connected = bool(self._status.get("connected"))
+        if connected:
+            self._last_connected_mono = now
+            if self._health_down:
+                self._health_down = False
+                with context.use_area(self._area()):
+                    await alerts.discord_listener_restored(self._status.get("user", ""))
+            return
+        if not self._desired(s):
+            # Not meant to be connected (disabled / no token / not entitled): a
+            # gap here is expected, so reset the clock and clear any outage flag.
+            self._health_down = False
+            self._last_connected_mono = now
+            return
+        grace = float(s.get("discord_health_grace", 90) or 90)
+        if (now - self._last_connected_mono) >= grace and not self._health_down:
+            self._health_down = True
+            with context.use_area(self._area()):
+                await alerts.discord_listener_lost(self._status.get("error", ""))
+
+    def health(self) -> str:
+        """Coarse health label for the dashboard: ok | connecting | down | idle."""
+        s = config.load_settings(area_id=self.area_id)
+        if self._status.get("connected"):
+            return "ok"
+        if not self._desired(s):
+            return "idle"
+        return "down" if self._health_down else "connecting"
 
     # ------------------------------------------------------------ client build
     def _build_client(self) -> Any:
