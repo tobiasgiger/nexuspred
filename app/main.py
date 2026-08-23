@@ -217,7 +217,7 @@ async def api_users(request: Request) -> dict[str, Any]:
 @app.post("/api/users/{user_id}/features")
 async def api_set_user_feature(request: Request, user_id: int) -> dict[str, Any]:
     """Admin toggles a feature entitlement (e.g. Discord Signals) for a user."""
-    _require_admin(request)
+    admin = _require_admin(request)
     body = await request.json()
     feature = str(body.get("feature", ""))
     enabled = bool(body.get("enabled"))
@@ -227,6 +227,9 @@ async def api_set_user_feature(request: Request, user_id: int) -> dict[str, Any]
     if not area_id:
         raise HTTPException(status_code=404, detail="User has no area")
     feats = db.set_area_feature(area_id, feature, enabled)
+    target = (db.get_user(user_id) or {}).get("email", str(user_id))
+    db.log_action(admin["id"], admin["email"], "feature_set", target,
+                  f"{feature} = {'on' if enabled else 'off'}")
     # Nudge the area's Discord listener so it (dis)connects promptly; the
     # supervisor re-reads the entitlement each loop, so this is only a shortcut.
     try:
@@ -247,8 +250,10 @@ async def api_create_invite(request: Request) -> dict[str, Any]:
     elevate = body.get("elevated")
     if elevate is None:
         elevate = body.get("is_admin")
-    code = db.create_invite(admin["id"], email=str(body.get("email", "")),
-                            is_admin=bool(elevate))
+    email = str(body.get("email", ""))
+    code = db.create_invite(admin["id"], email=email, is_admin=bool(elevate))
+    db.log_action(admin["id"], admin["email"], "invite_create", email or "anyone",
+                  "admin invite" if elevate else "")
     return {"code": code, "url": f"{_base_url(request)}/register?code={code}"}
 
 
@@ -260,8 +265,9 @@ async def api_invites(request: Request) -> list[dict[str, Any]]:
 
 @app.delete("/api/invites/{code}")
 async def api_delete_invite(request: Request, code: str) -> dict[str, Any]:
-    _require_admin(request)
+    admin = _require_admin(request)
     db.delete_invite(code)
+    db.log_action(admin["id"], admin["email"], "invite_revoke", code[:8] + "…")
     return {"status": "deleted", "code": code}
 
 
@@ -270,9 +276,17 @@ async def api_delete_user(request: Request, user_id: int) -> dict[str, Any]:
     admin = _require_admin(request)
     if user_id == admin["id"]:
         raise HTTPException(status_code=400, detail="You can't delete your own account")
+    target = (db.get_user(user_id) or {}).get("email", str(user_id))
     db.delete_user(user_id)
+    db.log_action(admin["id"], admin["email"], "user_delete", target)
     state.log_event("info", f"User {user_id} deleted by {admin['email']}")
     return {"status": "deleted", "id": user_id}
+
+
+@app.get("/api/audit")
+async def api_audit(request: Request) -> list[dict[str, Any]]:
+    _require_admin(request)
+    return db.list_audit(100)
 
 
 @app.get("/favicon.ico")

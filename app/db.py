@@ -111,6 +111,15 @@ def init() -> None:
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    actor_user_id INTEGER,
+                    actor_email TEXT,
+                    action TEXT NOT NULL,
+                    target TEXT,
+                    detail TEXT
+                );
                 """
             )
             # --- migrations for databases created before a column existed ---
@@ -397,3 +406,29 @@ def delete_invite(code: str) -> None:
     init()
     with _connect() as c:
         c.execute("DELETE FROM invites WHERE code=?", (code,))
+
+
+# --------------------------------------------------------------- audit log
+def log_action(actor_user_id: Optional[int], actor_email: str, action: str,
+               target: str = "", detail: str = "") -> None:
+    """Record an admin action. Never raises — auditing must not break the action."""
+    try:
+        init()
+        with _connect() as c:
+            c.execute(
+                "INSERT INTO audit_log(created_at,actor_user_id,actor_email,action,target,detail) "
+                "VALUES(?,?,?,?,?,?)",
+                (_now(), actor_user_id, actor_email, action, target, detail),
+            )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def list_audit(limit: int = 100) -> list[dict[str, Any]]:
+    init()
+    with _connect() as c:
+        rows = c.execute(
+            "SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (int(limit),)).fetchall()
+        return [{"id": r["id"], "created_at": r["created_at"], "actor_email": r["actor_email"],
+                 "action": r["action"], "target": r["target"], "detail": r["detail"]}
+                for r in rows]

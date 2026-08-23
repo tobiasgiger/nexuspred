@@ -437,7 +437,7 @@ async function loadAccount() {
   const adminCard = $("#usersAdminCard");
   if (adminCard) {
     adminCard.classList.toggle("hidden", !me.is_admin);
-    if (me.is_admin) { loadUsers(); loadInvites(); }
+    if (me.is_admin) { loadUsers(); loadInvites(); loadAudit(); }
   }
   applyNavGating(me);
 }
@@ -488,15 +488,36 @@ async function loadUsers() {
             method: "POST",
             body: JSON.stringify({ feature: cb.dataset.feature, enabled: cb.checked }),
           });
-          toast(`Discord Signals ${cb.checked ? "enabled" : "disabled"}`, "success");
+          toast(`Discord Signals ${cb.checked ? "enabled" : "disabled"}`, "success"); loadAudit();
         } catch (e) { cb.checked = !cb.checked; toast(e.message, "error"); }
       }));
     $("#usersTable tbody").querySelectorAll(".user-del").forEach((b) =>
       b.addEventListener("click", async () => {
         if (!confirm(`Delete ${b.dataset.email}? Their area and all its data are removed. This cannot be undone.`)) return;
-        try { await api(`/api/users/${b.dataset.id}`, { method: "DELETE" }); toast("User deleted", "success"); loadUsers(); }
+        try { await api(`/api/users/${b.dataset.id}`, { method: "DELETE" }); toast("User deleted", "success"); loadUsers(); loadAudit(); }
         catch (e) { toast(e.message, "error"); }
       }));
+  } catch (e) { /* ignore */ }
+}
+
+async function loadAudit() {
+  try {
+    const rows = await api("/api/audit");
+    const body = $("#auditTable tbody");
+    if (!body) return;
+    const actionLabel = {
+      invite_create: "Invite created", invite_revoke: "Invite revoked",
+      user_delete: "User deleted", feature_set: "Feature changed",
+      password_reset: "Password reset", password_change: "Password changed",
+    };
+    body.innerHTML = rows.length ? rows.map((r) => `
+      <tr>
+        <td>${fmtDateTime(r.created_at)}</td>
+        <td>${escapeHtml(r.actor_email || "—")}</td>
+        <td>${escapeHtml(actionLabel[r.action] || r.action)}</td>
+        <td>${escapeHtml(r.target || "—")}</td>
+        <td>${escapeHtml(r.detail || "")}</td>
+      </tr>`).join("") : '<tr><td colspan="5" class="empty">None yet</td></tr>';
   } catch (e) { /* ignore */ }
 }
 
@@ -517,7 +538,7 @@ async function loadInvites() {
     }).join("") : '<tr><td colspan="5" class="empty">None</td></tr>';
     body.querySelectorAll(".inv-del").forEach((b) =>
       b.addEventListener("click", async () => {
-        try { await api(`/api/invites/${b.dataset.code}`, { method: "DELETE" }); loadInvites(); }
+        try { await api(`/api/invites/${b.dataset.code}`, { method: "DELETE" }); loadInvites(); loadAudit(); }
         catch (e) { toast(e.message, "error"); }
       }));
   } catch (e) { /* ignore */ }
@@ -561,6 +582,7 @@ if (_createInviteBtn) _createInviteBtn.addEventListener("click", async () => {
     copyText(url);
     toast("Invite link created", "success");
     loadInvites();
+    loadAudit();
   } catch (e) {
     if (err) { err.textContent = "Could not create invite: " + e.message; err.classList.remove("hidden"); }
     toast(e.message, "error");

@@ -4,6 +4,12 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 4.4.0
+- **Admin audit log.** Admin actions — invites created/revoked, users deleted,
+  feature entitlements changed, password resets — are recorded with a timestamp
+  and the acting admin, and shown under **Settings → Account → Admin activity**.
+  New `GET /api/audit` (admin only); stored in a new SQLite `audit_log` table.
+
 ## 4.3.0
 - **Discord listener health checks + alerts.** The bridge now watches its own
   Discord Gateway connection and **alerts when the listener goes offline and when
