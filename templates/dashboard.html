@@ -8,37 +8,91 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <span class="logo">◈</span>
-      <div>
-        <h1>Tradovate Bridge</h1>
-        <span class="subtitle">TradingView → Tradovate signal router</span>
+  <div class="app-shell" id="appShell">
+    <div class="scrim" id="scrim"></div>
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-brand">
+        <span class="logo">◈</span>
+        <div class="brand-text">
+          <h1>Tradovate Bridge</h1>
+          <span class="subtitle">TradingView → Tradovate</span>
+        </div>
       </div>
-    </div>
-    <div class="topbar-right">
-      <div class="conn-pill" id="connPill">
-        <span class="dot" id="connDot"></span>
-        <span id="connText">Disconnected</span>
-      </div>
-      <div class="version" id="versionBox">
-        <span id="versionText">v—</span>
-        <button id="updateBtn" class="btn btn-update hidden">Update available</button>
-      </div>
-    </div>
-  </header>
 
-  <nav class="tabs">
-    <button class="tab active" data-tab="dashboard">Dashboard</button>
-    <button class="tab" data-tab="webhooks">Webhooks</button>
-    <button class="tab" data-tab="discord">Discord</button>
-    <button class="tab" data-tab="logs">Logs</button>
-    <button class="tab" data-tab="settings">Settings</button>
-    <button class="tab" data-tab="tools">Tools</button>
-    <button class="tab" data-tab="guide">Setup Guide</button>
-  </nav>
+      <nav class="side-nav">
+        <div class="nav-group-label">Monitoring</div>
+        <button class="navitem tab active" data-tab="dashboard" title="Dashboard">
+          <svg viewBox="0 0 24 24" class="ni-ic"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+          <span class="ni-label">Dashboard</span>
+        </button>
+        <button class="navitem tab" data-tab="discord" title="Discord">
+          <svg viewBox="0 0 24 24" class="ni-ic"><path d="M4 5h16v11H8l-4 4z"/></svg>
+          <span class="ni-label">Discord</span>
+        </button>
+        <button class="navitem tab" data-tab="logs" title="Logs">
+          <svg viewBox="0 0 24 24" class="ni-ic"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+          <span class="ni-label">Logs</span>
+        </button>
 
-  <main>
+        <div class="nav-group-label">Routing</div>
+        <button class="navitem tab" data-tab="webhooks" title="Webhooks">
+          <svg viewBox="0 0 24 24" class="ni-ic"><path d="M9 12a3 3 0 1 1 3 3M15 12a3 3 0 1 1-3-3M12 15v4M8 8 5 11"/></svg>
+          <span class="ni-label">Webhooks</span>
+        </button>
+
+        <div class="nav-group-label">Configuration</div>
+        <button class="navitem nav-parent" data-parent="settings" title="Settings">
+          <svg viewBox="0 0 24 24" class="ni-ic"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg>
+          <span class="ni-label">Settings</span>
+          <svg viewBox="0 0 24 24" class="ni-caret"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
+        <div class="nav-children" id="settingsChildren">
+          <button class="navitem sub tab" data-tab="settings-general">General &amp; Trading</button>
+          <button class="navitem sub tab" data-tab="settings-accounts">Tradovate Accounts</button>
+          <button class="navitem sub tab" data-tab="settings-symbols">Symbol Mapping</button>
+          <button class="navitem sub tab" data-tab="settings-discord">Discord Listener</button>
+          <button class="navitem sub tab" data-tab="settings-alerts">Alerts</button>
+          <button class="navitem sub tab" data-tab="settings-security">Security</button>
+          <button class="navitem sub tab" data-tab="settings-updates">Updates</button>
+        </div>
+
+        <div class="nav-group-label">Tools</div>
+        <button class="navitem tab" data-tab="tools" title="Tools">
+          <svg viewBox="0 0 24 24" class="ni-ic"><path d="M14 7a4 4 0 0 1-5 5L5 16l3 3 4-4a4 4 0 0 0 5-5z"/></svg>
+          <span class="ni-label">Tools</span>
+        </button>
+
+        <div class="nav-group-label">Help</div>
+        <button class="navitem tab" data-tab="guide" title="Setup Guide">
+          <svg viewBox="0 0 24 24" class="ni-ic"><path d="M4 5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-2zM8 3v16"/></svg>
+          <span class="ni-label">Setup Guide</span>
+        </button>
+      </nav>
+
+      <button class="sidebar-collapse" id="sidebarCollapse" title="Collapse sidebar">
+        <svg viewBox="0 0 24 24" class="ni-ic"><path d="M15 6l-6 6 6 6"/></svg>
+        <span class="ni-label">Collapse</span>
+      </button>
+    </aside>
+
+    <div class="app-main">
+      <header class="topbar">
+        <button class="hamburger" id="hamburger" title="Menu">
+          <svg viewBox="0 0 24 24" class="ni-ic"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+        </button>
+        <div class="topbar-right">
+          <div class="conn-pill" id="connPill">
+            <span class="dot" id="connDot"></span>
+            <span id="connText">Disconnected</span>
+          </div>
+          <div class="version" id="versionBox">
+            <span id="versionText">v—</span>
+            <button id="updateBtn" class="btn btn-update hidden">Update available</button>
+          </div>
+        </div>
+      </header>
+
+      <main>
     <!-- ============================ DASHBOARD ============================ -->
     <section class="panel active" id="tab-dashboard">
       <div class="statusbar">
@@ -130,14 +184,14 @@
     </section>
 
     <!-- ============================ SETTINGS ============================ -->
-    <section class="panel" id="tab-settings">
       <form id="settingsForm">
-        <div class="grid grid-2">
+        <section class="panel" id="tab-settings-general">
+          <div class="grid grid-2">
           <div class="card">
             <div class="card-head"><h2>Connection</h2></div>
             <p class="hint">nexuspred connects to Tradovate using <strong>one access
-              token per account</strong> (no username/password). Add your accounts in the
-              <strong>Token Accounts</strong> card below, then click <em>Connect &amp; Verify</em>.</p>
+              token per account</strong> (no username/password). Add your accounts under
+              <strong>Tradovate Accounts</strong>, then click <em>Connect &amp; Verify</em>.</p>
             <label>Health check / token refresh interval (seconds)
               <input name="health_check_interval" type="number" min="0" placeholder="60 (0 = off)" />
             </label>
@@ -169,7 +223,14 @@
               <input name="allowed_symbols" placeholder="MNQ, MES" />
             </label>
           </div>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Save Settings</button>
+            <span class="save-hint"></span>
+          </div>
+        </section>
 
+        <section class="panel" id="tab-settings-security">
           <div class="card">
             <div class="card-head"><h2>Security</h2></div>
             <p class="hint">Each webhook's URL (with its own secret token) is managed in
@@ -183,7 +244,13 @@
               env var overrides it. Takes effect on the next request; the webhook URL is
               never behind it.</p>
           </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Save Settings</button>
+            <span class="save-hint"></span>
+          </div>
+        </section>
 
+        <section class="panel" id="tab-settings-updates">
           <div class="card">
             <div class="card-head"><h2>Updates</h2></div>
             <label class="switch-row">
@@ -193,8 +260,13 @@
             <div class="update-status" id="updateStatus">Checking…</div>
             <button type="button" class="btn btn-secondary" id="checkUpdateBtn">Check now</button>
           </div>
-        </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Save Settings</button>
+            <span class="save-hint"></span>
+          </div>
+        </section>
 
+        <section class="panel" id="tab-settings-alerts">
         <div class="card" id="alertsCard">
           <div class="card-head"><h2>Alerts</h2></div>
           <p class="hint">Notify a Discord channel and/or an email address when something
@@ -251,10 +323,12 @@
 
         <div class="form-actions">
           <button type="submit" class="btn btn-primary">Save Settings</button>
-          <span class="save-hint" id="saveHint"></span>
+          <span class="save-hint"></span>
         </div>
+        </section>
       </form>
 
+      <section class="panel" id="tab-settings-accounts">
       <div class="card" id="tokenAccountsCard">
         <div class="card-head">
           <h2>Token Accounts</h2>
@@ -298,7 +372,9 @@
           <span class="save-hint" id="tradeAccountsHint"></span>
         </div>
       </div>
+      </section>
 
+      <section class="panel" id="tab-settings-symbols">
       <div class="card" id="symbolMapCard">
         <div class="card-head">
           <h2>Current Symbol Mapping</h2>
@@ -319,7 +395,9 @@
           <span class="save-hint" id="symbolMapHint"></span>
         </div>
       </div>
+      </section>
 
+      <section class="panel" id="tab-settings-discord">
       <div class="card" id="discordListenerCard">
         <div class="card-head"><h2>Discord Listener</h2></div>
         <p class="hint">Watches Discord channels over the Gateway with your personal user
@@ -491,7 +569,7 @@
           <span class="status-v" id="dsWatched">—</span>
         </div>
         <div class="status-item">
-          <a href="#tab-settings" class="jump-to-settings" data-jump="settings">Configure →</a>
+          <a href="#tab-settings-discord" class="jump-to-settings" data-jump="settings-discord">Configure →</a>
         </div>
       </div>
 
@@ -888,7 +966,9 @@ $ ngrok http 9000</pre>
         </ol>
       </div>
     </section>
-  </main>
+      </main>
+    </div>
+  </div>
 
   <div id="toast" class="toast"></div>
   <script src="/static/app.js?v={{ version }}"></script>

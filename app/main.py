@@ -28,7 +28,7 @@ app.include_router(discord_router)  # Discord signal module (same server + auth)
 
 # Paths that must stay reachable without the dashboard password: the webhook
 # (TradingView can't send auth), static assets, and the health check.
-_AUTH_EXEMPT = ("/webhook/", "/static/", "/healthz", "/guide")
+_AUTH_EXEMPT = ("/webhook/", "/static/", "/healthz", "/guide", "/favicon.ico")
 
 
 def _dashboard_password() -> str:
@@ -57,6 +57,17 @@ async def _basic_auth(request: Request, call_next):
                 headers={"WWW-Authenticate": 'Basic realm="nexuspred"'},
             )
     return await call_next(request)
+
+
+@app.get("/favicon.ico")
+async def favicon() -> Response:
+    """Serve a tiny inline SVG favicon (matches the ◈ brand mark)."""
+    svg = (
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>"
+        "<rect width='32' height='32' rx='6' fill='#0b0e14'/>"
+        "<path d='M16 5l11 11-11 11L5 16z' fill='#4f8cff'/></svg>"
+    )
+    return Response(content=svg, media_type="image/svg+xml")
 
 
 @app.get("/healthz")

@@ -28,15 +28,61 @@ function fmtTime(iso) {
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
-/* --------------------------------------------------------------- tabs */
+/* ------------------------------------------------------- sidebar nav */
+const appShell = $("#appShell");
+const settingsChildren = $("#settingsChildren");
+const settingsParent = document.querySelector('.nav-parent[data-parent="settings"]');
+
+function activateTab(name) {
+  const panel = $("#tab-" + name);
+  if (!panel) return;
+  $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
+  $$(".panel").forEach((p) => p.classList.remove("active"));
+  panel.classList.add("active");
+  // Parent "Settings" is highlighted + expanded whenever a sub-page is shown.
+  const isSettings = name.startsWith("settings-");
+  if (settingsParent) settingsParent.classList.toggle("active", isSettings);
+  if (isSettings && settingsChildren) {
+    settingsChildren.classList.add("open");
+    settingsParent.classList.add("expanded");
+  }
+  if (appShell) appShell.classList.remove("sidebar-open");   // close mobile drawer
+}
+
 $$(".tab").forEach((tab) => {
-  tab.addEventListener("click", () => {
-    $$(".tab").forEach((t) => t.classList.remove("active"));
-    $$(".panel").forEach((p) => p.classList.remove("active"));
-    tab.classList.add("active");
-    $("#tab-" + tab.dataset.tab).classList.add("active");
-  });
+  tab.addEventListener("click", () => activateTab(tab.dataset.tab));
 });
+
+// "Settings" group: expand/collapse; opening jumps to the first sub-page.
+if (settingsParent && settingsChildren) {
+  settingsParent.addEventListener("click", () => {
+    if (appShell && appShell.classList.contains("collapsed")) setSidebarCollapsed(false);
+    const nowOpen = settingsChildren.classList.toggle("open");
+    settingsParent.classList.toggle("expanded", nowOpen);
+    const active = document.querySelector(".panel.active");
+    if (nowOpen && (!active || !active.id.startsWith("tab-settings-"))) {
+      activateTab("settings-general");
+    }
+  });
+}
+
+// Collapse the sidebar to an icon rail (persisted per browser).
+function setSidebarCollapsed(on) {
+  if (appShell) appShell.classList.toggle("collapsed", on);
+  try { localStorage.setItem("np_sidebar_collapsed", on ? "1" : "0"); } catch (e) { /* ignore */ }
+}
+const sidebarCollapseBtn = $("#sidebarCollapse");
+if (sidebarCollapseBtn) {
+  sidebarCollapseBtn.addEventListener("click", () =>
+    setSidebarCollapsed(!appShell.classList.contains("collapsed")));
+}
+try { if (localStorage.getItem("np_sidebar_collapsed") === "1") setSidebarCollapsed(true); } catch (e) { /* ignore */ }
+
+// Mobile off-canvas drawer.
+const hamburgerBtn = $("#hamburger");
+if (hamburgerBtn) hamburgerBtn.addEventListener("click", () => appShell.classList.toggle("sidebar-open"));
+const scrimEl = $("#scrim");
+if (scrimEl) scrimEl.addEventListener("click", () => appShell.classList.remove("sidebar-open"));
 
 /* ----------------------------------------------------- collapsible cards */
 // Only the Webhooks, Settings and Setup Guide tabs get the accordion
@@ -105,7 +151,7 @@ $$('a[href^="#"]').forEach((a) => {
   });
 });
 
-["#tab-settings", "#tab-guide"].forEach((sel) => makeCardsCollapsible($(sel)));
+["#tab-guide"].forEach((sel) => makeCardsCollapsible($(sel)));
 
 // "Configure →" shortcut (e.g. from the Discord tab) that switches to a tab.
 $$("[data-jump]").forEach((el) => {

@@ -4,6 +4,18 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 2.8.0
+- **Left sidebar navigation + Settings sub-pages.** The top tab strip is replaced
+  by a collapsible left sidebar, grouped into Monitoring (Dashboard, Discord,
+  Logs), Routing (Webhooks), Configuration (Settings), Tools and Help.
+  - **Settings is now an expandable nav group** with one sub-page each:
+    General & Trading, Tradovate Accounts, Symbol Mapping, Discord Listener,
+    Alerts, Security, Updates — only one shows at a time (no more long scroll).
+  - The sidebar **collapses to an icon rail** (state remembered per browser) and
+    becomes an off-canvas **drawer with a hamburger** on narrow screens.
+  - Added a small inline SVG favicon.
+  - Front-end only — no backend/API changes.
+
 ## 2.7.0
 - **Dashboard restructure & UI cleanup — table-first, consolidated settings.**
   - Tabs reorganised to **Dashboard · Webhooks · Discord · Logs · Settings ·
