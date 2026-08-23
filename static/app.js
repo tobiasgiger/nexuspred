@@ -439,20 +439,58 @@ async function loadAccount() {
     adminCard.classList.toggle("hidden", !me.is_admin);
     if (me.is_admin) { loadUsers(); loadInvites(); }
   }
+  applyNavGating(me);
+}
+
+/**
+ * Show/hide navigation that isn't for this user: Updates is admin-only, and the
+ * Discord module appears only for areas granted the `discord_signals` feature.
+ * If a hidden tab is the one currently open, fall back to the Dashboard.
+ */
+function applyNavGating(me) {
+  const feats = me.features || {};
+  const rules = [
+    ["#navSettingsUpdates", !!me.is_admin],
+    ["#navDiscord", feats.discord_signals !== false],
+    ["#navSettingsDiscord", feats.discord_signals !== false],
+  ];
+  for (const [sel, visible] of rules) {
+    const el = $(sel);
+    if (!el) continue;
+    el.classList.toggle("hidden", !visible);
+    if (!visible && el.classList.contains("active")) activateTab("dashboard");
+  }
 }
 
 async function loadUsers() {
   try {
-    const users = await api("/api/users");
+    const resp = await api("/api/users");
+    const users = resp.users || resp;  // tolerate old (list) and new ({users}) shapes
     const me = await api("/api/me");
-    $("#usersTable tbody").innerHTML = users.map((u) => `
+    $("#usersTable tbody").innerHTML = users.map((u) => {
+      const on = (u.features || {}).discord_signals === true;
+      return `
       <tr>
         <td>${escapeHtml(u.email)}</td>
         <td>${u.is_admin ? '<span class="tag">admin</span>' : "user"}</td>
+        <td><label class="switch-row" style="margin:0;justify-content:flex-start;gap:8px">
+          <input type="checkbox" class="switch feat-toggle" data-id="${u.id}"
+                 data-feature="discord_signals" ${on ? "checked" : ""} /></label></td>
         <td>${fmtDateTime(u.created_at)}</td>
         <td>${u.id === me.id ? '<span class="hint">you</span>'
           : `<button type="button" class="btn btn-ghost user-del" data-id="${u.id}" data-email="${escapeHtml(u.email)}">Delete</button>`}</td>
-      </tr>`).join("");
+      </tr>`;
+    }).join("");
+    $("#usersTable tbody").querySelectorAll(".feat-toggle").forEach((cb) =>
+      cb.addEventListener("change", async () => {
+        try {
+          await api(`/api/users/${cb.dataset.id}/features`, {
+            method: "POST",
+            body: JSON.stringify({ feature: cb.dataset.feature, enabled: cb.checked }),
+          });
+          toast(`Discord Signals ${cb.checked ? "enabled" : "disabled"}`, "success");
+        } catch (e) { cb.checked = !cb.checked; toast(e.message, "error"); }
+      }));
     $("#usersTable tbody").querySelectorAll(".user-del").forEach((b) =>
       b.addEventListener("click", async () => {
         if (!confirm(`Delete ${b.dataset.email}? Their area and all its data are removed. This cannot be undone.`)) return;

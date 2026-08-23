@@ -4,6 +4,25 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 4.2.0
+- **Per-user feature entitlements (admin-managed).** Modules can now be switched
+  on/off **per user** by an admin. The first module gated this way is **Discord
+  Signals**: under **Settings → Account**, each user row has a *Discord Signals*
+  toggle. When off, that user never sees the Discord navigation, the Discord
+  Listener settings sub-page, or a live Gateway connection — the listener
+  supervisor stays idle for their area regardless of their own settings, so the
+  entitlement is enforced on the backend, not just hidden in the UI.
+  - Stored per area in SQLite (new `areas.features` JSON column, auto-migrated).
+    Existing deployments keep **every feature on** so nothing is lost; brand-new
+    invited users start with Discord Signals **off** until an admin grants it.
+    The bootstrap admin's own area has all features on.
+  - `GET /api/me` now returns the caller's effective `features`; `GET /api/users`
+    returns `{users, features}` with each user's flags; `POST
+    /api/users/{id}/features` `{feature, enabled}` toggles one (admin only).
+- **Navigation: “Account & Users” renamed to “Account.”**
+- **“Updates” is now admin-only.** The Settings → Updates sub-page (version /
+  update button) is hidden for non-admin users.
+
 ## 4.1.2
 - **Fix “Create invite” being blocked by the host WAF.** The invite request sent
   a JSON body with an `is_admin` key, which Render's WAF blocks as a suspected

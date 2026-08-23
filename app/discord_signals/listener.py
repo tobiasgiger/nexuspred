@@ -23,7 +23,7 @@ import asyncio
 import time
 from typing import Any, Optional
 
-from .. import config, context, state
+from .. import config, context, db, state
 from . import pipeline
 from .parser import embed_from_discord
 
@@ -159,6 +159,17 @@ class ListenerManager:
         context.set_area(self._area())  # this task (and its child tasks) run in the area
         while not self._shutdown:
             try:
+                # Admin-controlled entitlement: if this area isn't granted the
+                # Discord Signals feature, stay idle no matter its own settings.
+                try:
+                    entitled = bool(db.get_area_features(self._area()).get("discord_signals"))
+                except Exception:  # noqa: BLE001 - never let a db hiccup crash the loop
+                    entitled = True
+                if not entitled:
+                    self._set_status(state="not_entitled", connected=False, error="")
+                    await asyncio.sleep(10)
+                    continue
+
                 s = config.load_settings(area_id=self.area_id)
                 enabled = bool(s.get("discord_enabled"))
                 token = s.get("discord_user_token") or ""

@@ -204,13 +204,37 @@ def _require_admin(request: Request) -> dict[str, Any]:
 @app.get("/api/me")
 async def api_me(request: Request) -> dict[str, Any]:
     u = request.state.user
-    return {"id": u["id"], "email": u["email"], "is_admin": u["is_admin"]}
+    return {"id": u["id"], "email": u["email"], "is_admin": u["is_admin"],
+            "features": db.user_features(u["id"])}
 
 
 @app.get("/api/users")
-async def api_users(request: Request) -> list[dict[str, Any]]:
+async def api_users(request: Request) -> dict[str, Any]:
     _require_admin(request)
-    return db.list_users()
+    return {"users": db.list_users(), "features": db.FEATURES}
+
+
+@app.post("/api/users/{user_id}/features")
+async def api_set_user_feature(request: Request, user_id: int) -> dict[str, Any]:
+    """Admin toggles a feature entitlement (e.g. Discord Signals) for a user."""
+    _require_admin(request)
+    body = await request.json()
+    feature = str(body.get("feature", ""))
+    enabled = bool(body.get("enabled"))
+    if feature not in db.FEATURES:
+        raise HTTPException(status_code=400, detail="Unknown feature")
+    area_id = db.user_primary_area(user_id)
+    if not area_id:
+        raise HTTPException(status_code=404, detail="User has no area")
+    feats = db.set_area_feature(area_id, feature, enabled)
+    # Nudge the area's Discord listener so it (dis)connects promptly; the
+    # supervisor re-reads the entitlement each loop, so this is only a shortcut.
+    try:
+        with context.use_area(area_id):
+            discord_listener.manager_for(area_id).start()
+    except Exception:  # noqa: BLE001
+        pass
+    return {"user_id": user_id, "features": feats}
 
 
 @app.post("/api/users/invite")

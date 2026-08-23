@@ -38,6 +38,21 @@ DB_FILE = DATA_DIR / "fluxbridge.db"
 _init_lock = threading.Lock()
 _initialized = False
 
+# Per-area feature entitlements. Admins turn these on/off per user (area); the
+# feature stays off by default for a freshly created area, so an admin decides
+# who gets it. `label` is what the admin UI shows.
+FEATURES: dict[str, dict[str, Any]] = {
+    "discord_signals": {"label": "Discord Signals", "default": False},
+}
+
+
+def default_area_features() -> dict[str, bool]:
+    return {k: bool(v["default"]) for k, v in FEATURES.items()}
+
+
+def _all_features_on() -> str:
+    return json.dumps({k: True for k in FEATURES})
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -73,6 +88,7 @@ def init() -> None:
                     name TEXT NOT NULL,
                     owner_user_id INTEGER NOT NULL,
                     settings TEXT NOT NULL DEFAULT '{}',
+                    features TEXT NOT NULL DEFAULT '{}',
                     created_at TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS memberships (
@@ -97,6 +113,13 @@ def init() -> None:
                 );
                 """
             )
+            # --- migrations for databases created before a column existed ---
+            area_cols = {r["name"] for r in c.execute("PRAGMA table_info(areas)").fetchall()}
+            if "features" not in area_cols:
+                c.execute("ALTER TABLE areas ADD COLUMN features TEXT NOT NULL DEFAULT '{}'")
+                # Preserve behavior for existing deployments: areas that predate
+                # feature gating keep every feature ON, so nobody loses Discord.
+                c.execute("UPDATE areas SET features=?", (_all_features_on(),))
         _initialized = True
 
 
@@ -175,7 +198,10 @@ def list_users() -> list[dict[str, Any]]:
     init()
     with _connect() as c:
         rows = c.execute("SELECT * FROM users ORDER BY id").fetchall()
-        return [_row_to_user(r) for r in rows]
+        users = [_row_to_user(r) for r in rows]
+    for u in users:  # attach each user's primary-area feature flags for the admin UI
+        u["features"] = user_features(u["id"])
+    return users
 
 
 def create_user(email: str, password: str, is_admin: bool = False,
@@ -195,9 +221,10 @@ def create_user(email: str, password: str, is_admin: bool = False,
         if first:
             # Seed the first area with the well-known DEFAULT_AREA_ID so migrated
             # single-tenant data keeps a stable home.
+            # The bootstrap admin's area gets every feature ON.
             c.execute(
-                "INSERT INTO areas(id,name,owner_user_id,settings,created_at) VALUES(?,?,?,?,?)",
-                (DEFAULT_AREA_ID, "My area", uid, settings_json, _now()),
+                "INSERT INTO areas(id,name,owner_user_id,settings,features,created_at) VALUES(?,?,?,?,?,?)",
+                (DEFAULT_AREA_ID, "My area", uid, settings_json, _all_features_on(), _now()),
             )
             area_id = DEFAULT_AREA_ID
         else:
@@ -279,6 +306,50 @@ def save_area_settings(area_id: int, settings: dict[str, Any]) -> None:
 def area_owner(area_id: int) -> Optional[int]:
     a = get_area(area_id)
     return a["owner_user_id"] if a else None
+
+
+def _load_features(area_id: int) -> dict[str, Any]:
+    with _connect() as c:
+        row = c.execute("SELECT features FROM areas WHERE id=?", (area_id,)).fetchone()
+    if not row:
+        return {}
+    try:
+        return json.loads(row["features"] or "{}")
+    except json.JSONDecodeError:
+        return {}
+
+
+def get_area_features(area_id: int) -> dict[str, bool]:
+    """Effective feature flags for an area (stored values merged over defaults)."""
+    init()
+    stored = _load_features(area_id)
+    merged = default_area_features()
+    for key in FEATURES:
+        if key in stored:
+            merged[key] = bool(stored[key])
+    return merged
+
+
+def set_area_feature(area_id: int, feature: str, enabled: bool) -> dict[str, bool]:
+    if feature not in FEATURES:
+        raise ValueError(f"unknown feature: {feature}")
+    init()
+    with _connect() as c:
+        row = c.execute("SELECT features FROM areas WHERE id=?", (area_id,)).fetchone()
+        stored: dict[str, Any] = {}
+        if row:
+            try:
+                stored = json.loads(row["features"] or "{}")
+            except json.JSONDecodeError:
+                stored = {}
+        stored[feature] = bool(enabled)
+        c.execute("UPDATE areas SET features=? WHERE id=?", (json.dumps(stored), area_id))
+    return get_area_features(area_id)
+
+
+def user_features(user_id: int) -> dict[str, bool]:
+    aid = user_primary_area(user_id)
+    return get_area_features(aid) if aid else default_area_features()
 
 
 # --------------------------------------------------------------- invites
