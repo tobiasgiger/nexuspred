@@ -485,24 +485,52 @@ async function loadInvites() {
   } catch (e) { /* ignore */ }
 }
 
+function copyText(text) {
+  // Clipboard API where allowed; fall back to a temp textarea + execCommand
+  // (needed on iOS Safari when the async gesture chain is broken).
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch(() => legacyCopy(text));
+      return;
+    }
+  } catch (e) { /* fall through */ }
+  legacyCopy(text);
+}
+function legacyCopy(text) {
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    document.execCommand("copy"); document.body.removeChild(ta);
+  } catch (e) { /* ignore */ }
+}
+
 const _createInviteBtn = $("#createInviteBtn");
 if (_createInviteBtn) _createInviteBtn.addEventListener("click", async () => {
+  const err = $("#inviteError");
+  if (err) err.classList.add("hidden");
   try {
     const r = await api("/api/users/invite", {
       method: "POST",
       body: JSON.stringify({ is_admin: $("#inviteIsAdmin").checked }),
     });
-    $("#inviteUrl").textContent = r.url;
+    const url = r.url || `${location.origin}/register?code=${r.code || ""}`;
+    $("#inviteUrl").value = url;
     $("#inviteResult").classList.remove("hidden");
-    try { await navigator.clipboard.writeText(r.url); } catch (e) { /* ignore */ }
-    toast("Invite link created & copied", "success");
+    copyText(url);
+    toast("Invite link created", "success");
     loadInvites();
-  } catch (e) { toast(e.message, "error"); }
+  } catch (e) {
+    if (err) { err.textContent = "Could not create invite: " + e.message; err.classList.remove("hidden"); }
+    toast(e.message, "error");
+  }
 });
 
 const _copyInvite = $("#copyInvite");
 if (_copyInvite) _copyInvite.addEventListener("click", () => {
-  navigator.clipboard.writeText($("#inviteUrl").textContent);
+  const inp = $("#inviteUrl");
+  inp.focus(); inp.select();
+  copyText(inp.value);
   toast("Invite link copied", "success");
 });
 

@@ -4,6 +4,16 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 4.1.1
+- **Fix “Create invite” showing an empty block.** The generated invite link is
+  now rendered in a selectable, read-only input (tap to select) instead of a
+  tiny inline `<code>` element that could render near-invisibly on some phones.
+  Added a **Copy link** button with an iOS-safe clipboard fallback
+  (`execCommand("copy")` via a hidden textarea when the async Clipboard API is
+  unavailable), and an inline error line so failures are never silent. If the
+  server response omits the URL, it is reconstructed client-side from the invite
+  code.
+
 ## 4.1.0
 - **Mobile-friendly dashboard** (tested at iPhone Pro Max width, 440px). No more
   horizontal page scroll on phones:

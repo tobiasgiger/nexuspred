@@ -455,9 +455,15 @@
           them manage users too.</p>
         <label class="switch-row" style="max-width:260px"><span>New invite is admin</span>
           <input type="checkbox" class="switch" id="inviteIsAdmin" /></label>
-        <div class="url-box hidden" id="inviteResult">
-          <code id="inviteUrl"></code><button type="button" class="btn btn-ghost" id="copyInvite">Copy</button>
+        <div class="hidden" id="inviteResult" style="margin:10px 0 4px">
+          <label style="margin-bottom:6px">Invite link — share it with the new user (opens the sign-up page):
+            <input id="inviteUrl" readonly onclick="this.select()" style="font-family:'SF Mono',Consolas,monospace;font-size:12px" />
+          </label>
+          <div class="form-actions" style="margin:0">
+            <button type="button" class="btn btn-primary" id="copyInvite">Copy link</button>
+          </div>
         </div>
+        <div class="save-hint err hidden" id="inviteError" style="margin-top:8px"></div>
 
         <h3 class="sim-sub">Accounts</h3>
         <table class="data-table" id="usersTable">
