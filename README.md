@@ -428,6 +428,7 @@ the dashboard **Update** button works.
 | `GET`  | `/api/discord/signals` | Recent Discord signal events (ring buffer) |
 | `GET`  | `/api/discord/stream` | Live signal feed (Server-Sent Events) |
 | `POST` | `/api/discord/test` | Push a synthetic embed through the pipeline |
+| `GET`  | `/api/extension/token-extractor.zip` | Download the browser token-extractor extension |
 
 ---
 

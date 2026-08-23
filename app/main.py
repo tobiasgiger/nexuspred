@@ -82,6 +82,29 @@ async def guide() -> FileResponse:
     return FileResponse(str(BASE_DIR / "docs" / "setup-guide.html"))
 
 
+@app.get("/api/extension/token-extractor.zip")
+async def extension_zip() -> Response:
+    """Serve the browser token-extractor extension as a downloadable .zip so it
+    can be installed via chrome://extensions -> Load unpacked (Tools tab)."""
+    import io
+    import zipfile
+
+    ext_dir = BASE_DIR / "browser-extension" / "token-extractor"
+    if not ext_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Extension not found")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for path in sorted(ext_dir.rglob("*")):
+            if path.is_file():
+                # Keep the top-level folder name so unzip yields token-extractor/.
+                z.write(path, path.relative_to(ext_dir.parent))
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="token-extractor.zip"'},
+    )
+
+
 # ============================================================== Dashboard view
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request) -> HTMLResponse:

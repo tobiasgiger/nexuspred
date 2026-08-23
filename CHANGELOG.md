@@ -4,6 +4,12 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 2.10.0
+- **Browser Token Extractor available in-app.** The Tools tab now has a
+  card that **downloads the extension as a .zip** (`GET
+  /api/extension/token-extractor.zip`) and walks through installing it
+  (Load unpacked) and using it — no need to clone the repo to get the helper.
+
 ## 2.9.0
 - **Discord target = pick an existing webhook.** A channel's target is now chosen
   from a **dropdown of the bridge's own webhooks** (the signal is posted to that

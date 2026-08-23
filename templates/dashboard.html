@@ -451,6 +451,41 @@
 
     <!-- ============================ TOOLS ============================ -->
     <section class="panel" id="tab-tools">
+      <div class="card" id="extensionCard">
+        <div class="card-head">
+          <h2>Browser Token Extractor (Chrome / Edge)</h2>
+          <a class="btn btn-primary" href="/api/extension/token-extractor.zip" download>Download extension (.zip)</a>
+        </div>
+        <p class="hint">A small browser extension that reads <strong>your own</strong> tokens
+          from a logged-in tab — the <strong>Discord</strong> user token (for Settings →
+          Discord Listener) and the <strong>Tradovate</strong> <code>token</code> +
+          <code>checkToken</code> (for Settings → Tradovate Accounts) — so you don't have to
+          dig through DevTools. It runs <strong>100% locally</strong> and never sends anything
+          anywhere. Each token is like a password for that account — only paste it back into
+          this bridge.</p>
+        <h3 class="sim-sub">Install (one time)</h3>
+        <ol class="steps">
+          <li><span class="step-num">1</span><div><strong>Download</strong> the .zip above and
+            <strong>unzip</strong> it. You'll get a <code>token-extractor</code> folder.</div></li>
+          <li><span class="step-num">2</span><div>Open <code>chrome://extensions</code>
+            (or <code>edge://extensions</code>) and turn on <strong>Developer mode</strong>
+            (top-right).</div></li>
+          <li><span class="step-num">3</span><div>Click <strong>Load unpacked</strong> and
+            select the unzipped <code>token-extractor</code> folder. Pin it if you like.</div></li>
+        </ol>
+        <h3 class="sim-sub">Use</h3>
+        <ol class="steps">
+          <li><span class="step-num">1</span><div>Open <a href="https://discord.com/app" target="_blank" rel="noopener">discord.com</a>
+            or the <a href="https://trader.tradovate.com" target="_blank" rel="noopener">Tradovate web trader</a>, logged in.</div></li>
+          <li><span class="step-num">2</span><div>Click the extension icon →
+            <strong>Extract from active tab</strong> → <strong>Reveal</strong> / <strong>Copy</strong>.</div></li>
+          <li><span class="step-num">3</span><div>Paste into the matching field here (Settings →
+            Discord Listener, or Settings → Tradovate Accounts) and Save.</div></li>
+        </ol>
+        <p class="hint">After a bridge update, re-download and reload the extension in
+          <code>chrome://extensions</code> (↻) to pick up changes.</p>
+      </div>
+
       <div class="card">
         <div class="card-head"><h2>Your Webhook URL</h2></div>
         <label>Webhook <select id="testWebhookSelect"></select></label>
