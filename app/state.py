@@ -54,6 +54,14 @@ def set_session_status(name: str, **fields: Any) -> None:
         s["name"] = name
 
 
+def has_session(name: str) -> bool:
+    """Whether this area has ever recorded a status for ``name`` (used to detect
+    the first observation vs. a connection transition)."""
+    st = _st()
+    with _lock:
+        return name in st.sessions
+
+
 def session_status(name: str) -> dict[str, Any]:
     st = _st()
     with _lock:

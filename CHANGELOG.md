@@ -4,6 +4,13 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 4.0.1
+- **Fix:** health check / token refresh logged `module 'app.state' has no
+  attribute 'sessions'` and showed accounts as *0/1 connected* even when the
+  token renewed fine. `tradovate` referenced the module-level `state.sessions`
+  dict that was removed in the per-area refactor; replaced with a
+  `state.has_session()` helper so connection status + lost/restored alerts work.
+
 ## 4.0.0
 - **Multi-user with isolated areas — replaces Google login.** Fluxbridge is now a
   multi-tenant app: every user signs in with **email + password** and gets their own

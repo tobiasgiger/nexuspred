@@ -235,7 +235,7 @@ class TradovateSession:
         """Update connection status, firing a connection lost/restored alert on
         transition. The very first observation of a session is never alerted
         on (there's no prior state to have transitioned from)."""
-        had_prior = self.name in state.sessions
+        had_prior = state.has_session(self.name)
         was_connected = state.session_status(self.name).get("connected") if had_prior else None
         state.set_session_status(self.name, connected=connected, **fields)
         if had_prior and was_connected and not connected:
