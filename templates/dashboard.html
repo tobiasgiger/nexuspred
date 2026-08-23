@@ -494,6 +494,12 @@
           them manage users too.</p>
         <label class="switch-row" style="max-width:260px"><span>New invite is admin</span>
           <input type="checkbox" class="switch" id="inviteIsAdmin" /></label>
+        <label style="max-width:360px">Invitee email (optional)
+          <input type="email" id="inviteEmail" placeholder="name@example.com" autocomplete="off" />
+        </label>
+        <label class="switch-row" style="max-width:360px"><span>Email the invite link to them
+          <span class="hint" id="inviteEmailHint" style="display:block">Requires SMTP configured in Settings → Alerts.</span></span>
+          <input type="checkbox" class="switch" id="inviteSendEmail" /></label>
         <div class="hidden" id="inviteResult" style="margin:10px 0 4px">
           <label style="margin-bottom:6px">Invite link — share it with the new user (opens the sign-up page):
             <input id="inviteUrl" readonly onclick="this.select()" style="font-family:'SF Mono',Consolas,monospace;font-size:12px" />

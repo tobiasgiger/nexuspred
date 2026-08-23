@@ -492,7 +492,8 @@ async function loadUsers() {
           $("#resetUrl").value = r.url;
           $("#resetResult").classList.remove("hidden");
           copyText(r.url);
-          toast("Reset link created", "success"); loadAudit();
+          toast(r.emailed ? `Reset link emailed to ${b.dataset.email}` : "Reset link created", "success");
+          loadAudit();
         } catch (e) { toast(e.message, "error"); }
       }));
     $("#usersTable tbody").querySelectorAll(".feat-toggle").forEach((cb) =>
@@ -583,18 +584,25 @@ if (_createInviteBtn) _createInviteBtn.addEventListener("click", async () => {
   const err = $("#inviteError");
   if (err) err.classList.add("hidden");
   try {
+    const email = ($("#inviteEmail") && $("#inviteEmail").value || "").trim();
+    const sendEmail = !!($("#inviteSendEmail") && $("#inviteSendEmail").checked);
     const r = await api("/api/users/invite", {
       method: "POST",
       // Field is named `elevated`, not `is_admin`: some WAFs (Render's included)
       // block request bodies containing the `is_admin` key as a suspected
       // privilege-escalation attempt, returning an HTML "Blocked" page.
-      body: JSON.stringify({ elevated: $("#inviteIsAdmin").checked }),
+      body: JSON.stringify({ elevated: $("#inviteIsAdmin").checked, email, send_email: sendEmail }),
     });
     const url = r.url || `${location.origin}/register?code=${r.code || ""}`;
     $("#inviteUrl").value = url;
     $("#inviteResult").classList.remove("hidden");
     copyText(url);
-    toast("Invite link created", "success");
+    if (sendEmail && email) {
+      toast(r.emailed ? `Invite emailed to ${email}` : "Invite created — email not sent (SMTP not configured)",
+            r.emailed ? "success" : "error");
+    } else {
+      toast("Invite link created", "success");
+    }
     loadInvites();
     loadAudit();
   } catch (e) {

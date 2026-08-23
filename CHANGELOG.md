@@ -4,6 +4,14 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 4.6.0
+- **Email delivery for invites & password resets.** Reusing the SMTP settings you
+  already configure for alerts, admins can now have the **invite link emailed
+  straight to the invitee** (enter their email + tick *Email the invite link*),
+  and a **password-reset link is emailed to the user automatically** when an admin
+  starts a reset. Both still show the copyable link as a fallback, and both
+  degrade gracefully (link only) when SMTP isn't configured.
+
 ## 4.5.0
 - **Password management.** Every user can now **change their own password**
   (Settings → Account → Change password): verify the current one, set a new one.

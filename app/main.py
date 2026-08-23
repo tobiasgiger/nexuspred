@@ -250,11 +250,18 @@ async def api_create_invite(request: Request) -> dict[str, Any]:
     elevate = body.get("elevated")
     if elevate is None:
         elevate = body.get("is_admin")
-    email = str(body.get("email", ""))
+    email = str(body.get("email", "")).strip()
     code = db.create_invite(admin["id"], email=email, is_admin=bool(elevate))
     db.log_action(admin["id"], admin["email"], "invite_create", email or "anyone",
                   "admin invite" if elevate else "")
-    return {"code": code, "url": f"{_base_url(request)}/register?code={code}"}
+    url = f"{_base_url(request)}/register?code={code}"
+    emailed = False
+    if email and "@" in email and bool(body.get("send_email")):
+        emailed = await alerts.send_email_to(
+            email, "You're invited to Fluxbridge",
+            f"You've been invited to Fluxbridge. Create your account here:\n\n{url}\n\n"
+            "This link is single-use. If you didn't expect this, you can ignore it.")
+    return {"code": code, "url": url, "emailed": emailed, "smtp_configured": alerts.smtp_configured()}
 
 
 @app.get("/api/invites")
@@ -315,7 +322,13 @@ async def api_create_reset(request: Request, user_id: int) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="No such user")
     token = db.create_password_reset(user_id)
     db.log_action(admin["id"], admin["email"], "password_reset", target["email"])
-    return {"user_id": user_id, "url": f"{_base_url(request)}/reset?token={token}"}
+    url = f"{_base_url(request)}/reset?token={token}"
+    emailed = await alerts.send_email_to(
+        target["email"], "Reset your Fluxbridge password",
+        f"An administrator started a password reset for your Fluxbridge account.\n\n"
+        f"Set a new password here (single-use, expires in 24 hours):\n\n{url}\n\n"
+        "If you didn't expect this, contact your administrator.")
+    return {"user_id": user_id, "url": url, "emailed": emailed, "smtp_configured": alerts.smtp_configured()}
 
 
 @app.get("/reset", response_class=HTMLResponse)

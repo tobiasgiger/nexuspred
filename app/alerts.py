@@ -63,6 +63,46 @@ async def _send_email(subject: str, body: str) -> None:
         state.log_event("warn", f"Email alert failed: {exc}")
 
 
+def smtp_configured() -> bool:
+    """True when SMTP is set up well enough to send a message to any recipient."""
+    s = config.load_settings()
+    return bool(s.get("alert_smtp_username") and s.get("alert_smtp_password"))
+
+
+def _send_to_sync(to_addr: str, subject: str, body: str) -> None:
+    s = config.load_settings()
+    username = s.get("alert_smtp_username")
+    password = s.get("alert_smtp_password")
+    if not to_addr or not username or not password:
+        return
+    msg = MIMEText(body)
+    msg["Subject"] = subject
+    msg["From"] = username
+    msg["To"] = to_addr
+    host = s.get("alert_smtp_host") or "smtp.gmail.com"
+    port = int(s.get("alert_smtp_port") or 587)
+    with smtplib.SMTP(host, port, timeout=15) as server:
+        server.starttls()
+        server.login(username, password)
+        server.send_message(msg)
+
+
+async def send_email_to(to_addr: str, subject: str, body: str) -> bool:
+    """Send a one-off email to an arbitrary recipient via the configured SMTP.
+
+    Returns True if a send was attempted (SMTP configured + recipient present).
+    Used for invite / password-reset delivery, independent of the alert toggles.
+    """
+    if not smtp_configured() or not to_addr:
+        return False
+    try:
+        await asyncio.to_thread(_send_to_sync, to_addr, subject, body)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        state.log_event("warn", f"Email send failed ({to_addr}): {exc}")
+        return False
+
+
 async def connection_lost(account: str, environment: str, error: str) -> None:
     s = config.load_settings()
     if not s.get("alert_on_connection_lost", True):
