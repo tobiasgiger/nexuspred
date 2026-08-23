@@ -41,7 +41,8 @@ configuration and monitoring, and a built-in GitHub auto-updater.
 - **Alerts** (Settings → Alerts): Discord webhook and/or email, each independently
   toggled, for connection lost/restored (which account + broker) and trade executed
   (which accounts + strategy, Discord only).
-- **Discord signal listener** (Discord Signals tab): watches Discord channels over the
+- **Discord signal listener** (configured under Settings → Discord Listener; live feed on
+  the Discord tab): watches Discord channels over the
   Gateway with a personal user token (self-bot) and fans parsed trade signals out to
   configurable webhook targets in parallel — see below.
 
@@ -322,7 +323,7 @@ order execution.
 > module simply implements it. It uses [`discord.py-self`](https://pypi.org/project/discord.py-self/)
 > and the **Gateway** (WebSocket push, never polling) so latency stays low.
 
-**Configure it on the Discord Signals tab:**
+**Configure it under Settings → Discord Listener** (the live feed is on the Discord tab):
 
 - **Enable listener** and paste your Discord **user token** (stored masked in
   `data/settings.json`, like every other secret).

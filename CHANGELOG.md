@@ -4,6 +4,24 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 2.7.0
+- **Dashboard restructure & UI cleanup — table-first, consolidated settings.**
+  - Tabs reorganised to **Dashboard · Webhooks · Discord · Logs · Settings ·
+    Tools · Guide**. Configuration now lives entirely under **Settings**
+    (Connection, Trading Rules, Security, Updates, Alerts, Tradovate Token/Trade
+    Accounts, Symbol Mapping, and the new **Discord Listener** section). The
+    Discord tab is now the live signal feed + status only; its channel/token/
+    dry-run config moved into Settings → Discord Listener.
+  - **Test & Webhook** and **Simulator** merged into a single **Tools** tab
+    (webhook test, Discord test-inject, and the trade simulator).
+  - **Stat tiles → slim status bar.** Dashboard and Discord open with a compact
+    status strip instead of large tiles.
+  - **Webhooks and Discord channels are now expandable tables** — one compact
+    row per item (toggle, name, strategy/targets, URL); click a row to expand its
+    full settings inline, instead of tall stacked cards.
+  - No backend/API changes — same endpoints, same behaviour; purely a
+    presentation reorganisation.
+
 ## 2.6.0
 - **New module: Discord signal listener** (`app/discord_signals/`). Watches one
   or more Discord channels over the **Gateway** (WebSocket push, not polling)

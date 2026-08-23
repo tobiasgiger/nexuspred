@@ -105,7 +105,16 @@ $$('a[href^="#"]').forEach((a) => {
   });
 });
 
-["#tab-webhooks", "#tab-settings", "#tab-guide"].forEach((sel) => makeCardsCollapsible($(sel)));
+["#tab-settings", "#tab-guide"].forEach((sel) => makeCardsCollapsible($(sel)));
+
+// "Configure →" shortcut (e.g. from the Discord tab) that switches to a tab.
+$$("[data-jump]").forEach((el) => {
+  el.addEventListener("click", (e) => {
+    e.preventDefault();
+    const btn = document.querySelector(`.tab[data-tab="${el.dataset.jump}"]`);
+    if (btn) btn.click();
+  });
+});
 
 /* --------------------------------------------------------------- status */
 async function refreshStatus() {
@@ -122,7 +131,7 @@ async function refreshStatus() {
     const trading = s.trading_enabled;
     const te = $("#statTrading");
     te.textContent = trading ? "ENABLED" : "DISABLED";
-    te.className = "stat-value " + (trading ? "on" : "off");
+    te.className = "status-v " + (trading ? "on" : "off");
     $("#statEnv").textContent = total ? `${con}/${total} login${total === 1 ? "" : "s"}` : "—";
 
     const ta = s.trade_accounts || [];
@@ -650,93 +659,109 @@ function webhookAccountRows(webhook) {
   }).join("");
 }
 
-function webhookCard(w) {
+function webhookDetail(w) {
   const url = `${location.origin}/webhook/${w.token}`;
   const tmpl = alertMessageTemplate(w.strategy);
   return `
-  <div class="card wh-card" data-id="${w.id}">
-    <div class="card-head">
-      <h2>${escapeHtml(w.name)}</h2>
-      <label class="switch-row" style="margin:0">
-        <span>Enabled</span>
-        <input type="checkbox" class="switch wh-enabled" ${w.enabled ? "checked" : ""} />
-      </label>
-    </div>
-    <div class="grid grid-2">
-      <label>Name <input class="wh-name" value="${escapeHtml(w.name)}" /></label>
-      <label>Strategy
-        <select class="wh-strategy">
-          <option value="simple" ${w.strategy === "simple" ? "selected" : ""}>simple (buy/sell only)</option>
-          <option value="bracket" ${w.strategy === "bracket" ? "selected" : ""}>bracket (entry + TP/SL)</option>
-          <option value="ts_hunter" ${w.strategy === "ts_hunter" ? "selected" : ""}>TS-Hunter (signal + partial closes)</option>
-        </select>
-      </label>
-      <label class="wh-default-qty-label" style="${w.strategy === "ts_hunter" ? "display:none" : ""}">Default qty (fallback if payload omits qty)
-        <input class="wh-default-qty" type="number" min="1" value="${w.default_qty ?? 1}" />
-      </label>
-      <label class="wh-tp-qty-label" style="${w.strategy === "bracket" ? "" : "display:none"}">TP qty (bracket only)
-        <input class="wh-tp-qty" type="number" min="1" value="${w.tp_qty ?? 1}" />
-      </label>
-    </div>
-    <div class="url-box">
-      <code class="wh-url">${url}</code>
-      <button type="button" class="btn btn-ghost wh-copy">Copy</button>
-    </div>
-    <div class="card-head" style="margin-top:14px">
-      <span class="hint">Alert message — paste into the TradingView alert's "Message" box</span>
-      <button type="button" class="btn btn-ghost wh-copy-template">Copy</button>
-    </div>
-    <pre class="code wh-template">${escapeHtml(tmpl.json)}</pre>
-    <p class="hint wh-template-hint">${tmpl.hint}</p>
-    <table class="data-table wh-accounts-table">
-      <thead><tr><th>Enabled</th><th>Login</th><th>Account</th><th>Env</th><th>Qty ×</th></tr></thead>
-      <tbody>${webhookAccountRows(w)}</tbody>
-    </table>
-    <div class="form-actions">
-      <button type="button" class="btn btn-primary wh-save">Save</button>
-      <button type="button" class="btn btn-ghost wh-regen">Regenerate token</button>
-      <button type="button" class="btn btn-ghost wh-delete">Delete</button>
-      <span class="save-hint wh-hint"></span>
-    </div>
-  </div>`;
+    <div class="row-detail wh-edit">
+      <div class="grid grid-2">
+        <label>Name <input class="wh-name" value="${escapeHtml(w.name)}" /></label>
+        <label>Strategy
+          <select class="wh-strategy">
+            <option value="simple" ${w.strategy === "simple" ? "selected" : ""}>simple (buy/sell only)</option>
+            <option value="bracket" ${w.strategy === "bracket" ? "selected" : ""}>bracket (entry + TP/SL)</option>
+            <option value="ts_hunter" ${w.strategy === "ts_hunter" ? "selected" : ""}>TS-Hunter (signal + partial closes)</option>
+          </select>
+        </label>
+        <label class="wh-default-qty-label" style="${w.strategy === "ts_hunter" ? "display:none" : ""}">Default qty (fallback if payload omits qty)
+          <input class="wh-default-qty" type="number" min="1" value="${w.default_qty ?? 1}" />
+        </label>
+        <label class="wh-tp-qty-label" style="${w.strategy === "bracket" ? "" : "display:none"}">TP qty (bracket only)
+          <input class="wh-tp-qty" type="number" min="1" value="${w.tp_qty ?? 1}" />
+        </label>
+      </div>
+      <div class="url-box">
+        <code class="wh-url">${url}</code>
+        <button type="button" class="btn btn-ghost wh-copy">Copy</button>
+      </div>
+      <div class="card-head" style="margin-top:14px">
+        <span class="hint">Alert message — paste into the TradingView alert's "Message" box</span>
+        <button type="button" class="btn btn-ghost wh-copy-template">Copy</button>
+      </div>
+      <pre class="code wh-template">${escapeHtml(tmpl.json)}</pre>
+      <p class="hint wh-template-hint">${tmpl.hint}</p>
+      <table class="data-table wh-accounts-table">
+        <thead><tr><th>Enabled</th><th>Login</th><th>Account</th><th>Env</th><th>Qty ×</th></tr></thead>
+        <tbody>${webhookAccountRows(w)}</tbody>
+      </table>
+      <div class="form-actions">
+        <button type="button" class="btn btn-primary wh-save">Save</button>
+        <button type="button" class="btn btn-ghost wh-regen">Regenerate token</button>
+        <button type="button" class="btn btn-ghost wh-delete">Delete</button>
+        <span class="save-hint wh-hint"></span>
+      </div>
+    </div>`;
+}
+
+function webhookRow(w) {
+  const url = `${location.origin}/webhook/${w.token}`;
+  const accCount = (w.accounts || []).filter((a) => a.enabled).length;
+  return `
+  <tr class="wh-row" data-id="${w.id}">
+    <td class="col-exp"><span class="row-exp">▸</span></td>
+    <td><input type="checkbox" class="switch wh-enabled" ${w.enabled ? "checked" : ""} /></td>
+    <td class="wh-name-cell">${escapeHtml(w.name)}</td>
+    <td><span class="tag wh-strategy-tag">${w.strategy}</span></td>
+    <td class="wh-acc-count">${accCount}</td>
+    <td class="url-cell"><code class="wh-url-sm">${url}</code></td>
+  </tr>
+  <tr class="wh-detail hidden" data-id="${w.id}"><td colspan="6">${webhookDetail(w)}</td></tr>`;
 }
 
 function renderWebhooks() {
-  const list = $("#webhooksList");
+  const tbody = $("#webhooksTable tbody");
   if (!WEBHOOKS.length) {
-    list.innerHTML = '<div class="card"><p class="empty">No webhooks yet — click "+ Add Webhook" above.</p></div>';
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">No webhooks yet — click "+ Add Webhook".</td></tr>';
     return;
   }
-  list.innerHTML = WEBHOOKS.map(webhookCard).join("");
-  list.querySelectorAll(".wh-card").forEach(wireWebhookCard);
-  makeCardsCollapsible(list);
+  tbody.innerHTML = WEBHOOKS.map(webhookRow).join("");
+  WEBHOOKS.forEach((w) => wireWebhookRow(tbody, w.id));
 }
 
-function wireWebhookCard(card) {
-  const id = card.dataset.id;
-  const strategySel = card.querySelector(".wh-strategy");
-  const tpLabel = card.querySelector(".wh-tp-qty-label");
-  const defaultQtyLabel = card.querySelector(".wh-default-qty-label");
+function wireWebhookRow(tbody, id) {
+  const row = tbody.querySelector(`tr.wh-row[data-id="${id}"]`);
+  const detailRow = tbody.querySelector(`tr.wh-detail[data-id="${id}"]`);
+  const detail = detailRow.querySelector(".wh-edit");
+
+  // Expand/collapse when the row (not an interactive control) is clicked.
+  row.addEventListener("click", (e) => {
+    if (e.target.closest("input,button,select,textarea,code,a")) return;
+    const open = detailRow.classList.toggle("hidden");
+    row.classList.toggle("expanded", !open);
+  });
+
+  const strategySel = detail.querySelector(".wh-strategy");
+  const tpLabel = detail.querySelector(".wh-tp-qty-label");
+  const defaultQtyLabel = detail.querySelector(".wh-default-qty-label");
   strategySel.addEventListener("change", () => {
     tpLabel.style.display = strategySel.value === "bracket" ? "" : "none";
     defaultQtyLabel.style.display = strategySel.value === "ts_hunter" ? "none" : "";
     const t = alertMessageTemplate(strategySel.value);
-    card.querySelector(".wh-template").textContent = t.json;
-    card.querySelector(".wh-template-hint").textContent = t.hint;
+    detail.querySelector(".wh-template").textContent = t.json;
+    detail.querySelector(".wh-template-hint").textContent = t.hint;
   });
 
-  card.querySelector(".wh-copy-template").addEventListener("click", () => {
-    navigator.clipboard.writeText(card.querySelector(".wh-template").textContent);
+  detail.querySelector(".wh-copy-template").addEventListener("click", () => {
+    navigator.clipboard.writeText(detail.querySelector(".wh-template").textContent);
     toast("Alert message copied", "success");
   });
-
-  card.querySelector(".wh-copy").addEventListener("click", () => {
-    navigator.clipboard.writeText(card.querySelector(".wh-url").textContent);
+  detail.querySelector(".wh-copy").addEventListener("click", () => {
+    navigator.clipboard.writeText(detail.querySelector(".wh-url").textContent);
     toast("Webhook URL copied", "success");
   });
 
-  card.querySelector(".wh-save").addEventListener("click", async () => {
-    const accounts = [...card.querySelectorAll(".wh-accounts-table tbody tr[data-spec]")]
+  detail.querySelector(".wh-save").addEventListener("click", async () => {
+    const accounts = [...detail.querySelectorAll(".wh-accounts-table tbody tr[data-spec]")]
       .map((tr) => ({
         token_idx: Number(tr.dataset.tokenIdx),
         spec: tr.dataset.spec,
@@ -745,18 +770,22 @@ function wireWebhookCard(card) {
       }))
       .filter((a) => a.enabled);
     const body = {
-      name: card.querySelector(".wh-name").value.trim() || "Untitled",
-      enabled: card.querySelector(".wh-enabled").checked,
+      name: detail.querySelector(".wh-name").value.trim() || "Untitled",
+      enabled: row.querySelector(".wh-enabled").checked,
       strategy: strategySel.value,
-      default_qty: Number(card.querySelector(".wh-default-qty").value) || 1,
-      tp_qty: Number(card.querySelector(".wh-tp-qty").value) || 1,
+      default_qty: Number(detail.querySelector(".wh-default-qty").value) || 1,
+      tp_qty: Number(detail.querySelector(".wh-tp-qty").value) || 1,
       accounts,
     };
     try {
       const updated = await api(`/api/webhooks/${id}`, { method: "PUT", body: JSON.stringify(body) });
       const i = WEBHOOKS.findIndex((w) => w.id === id);
       if (i >= 0) WEBHOOKS[i] = updated;
-      const hint = card.querySelector(".wh-hint");
+      // Sync the summary row in place (keeps the detail open).
+      row.querySelector(".wh-name-cell").textContent = updated.name;
+      row.querySelector(".wh-strategy-tag").textContent = updated.strategy;
+      row.querySelector(".wh-acc-count").textContent = (updated.accounts || []).filter((a) => a.enabled).length;
+      const hint = detail.querySelector(".wh-hint");
       hint.textContent = "Saved ✓";
       setTimeout(() => (hint.textContent = ""), 2500);
       toast("Webhook saved", "success");
@@ -764,7 +793,7 @@ function wireWebhookCard(card) {
     } catch (e) { toast(e.message, "error"); }
   });
 
-  card.querySelector(".wh-regen").addEventListener("click", async () => {
+  detail.querySelector(".wh-regen").addEventListener("click", async () => {
     if (!confirm("Regenerate this webhook's token? The old URL will stop working — update your TradingView alert.")) return;
     try {
       const updated = await api(`/api/webhooks/${id}/regenerate-token`, { method: "POST" });
@@ -776,8 +805,8 @@ function wireWebhookCard(card) {
     } catch (e) { toast(e.message, "error"); }
   });
 
-  card.querySelector(".wh-delete").addEventListener("click", async () => {
-    const name = card.querySelector(".wh-name").value || "this webhook";
+  detail.querySelector(".wh-delete").addEventListener("click", async () => {
+    const name = detail.querySelector(".wh-name").value || "this webhook";
     if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
     try {
       await api(`/api/webhooks/${id}`, { method: "DELETE" });
@@ -1032,64 +1061,87 @@ function dsTargetRow(t = {}) {
   </tr>`;
 }
 
-function dsChannelCard(c = {}) {
+function dsChannelRows(c = {}, idx = 0) {
   const targets = (c.targets || []).map(dsTargetRow).join("");
-  return `<div class="card ds-channel">
-    <div class="card-head">
-      <label class="switch-row" style="margin:0"><span>Enabled</span>
-        <input type="checkbox" class="switch ds-c-enabled" ${c.enabled ? "checked" : ""} /></label>
-      <button type="button" class="btn btn-ghost ds-c-del">Delete channel</button>
+  const count = (c.targets || []).length;
+  return `
+  <tr class="ds-crow" data-idx="${idx}">
+    <td class="col-exp"><span class="row-exp">▸</span></td>
+    <td><input type="checkbox" class="switch ds-c-enabled" ${c.enabled ? "checked" : ""} /></td>
+    <td><input class="ds-c-label" value="${escapeHtml(c.label || "")}" placeholder="Signal channel" /></td>
+    <td><input class="ds-c-id" value="${escapeHtml(c.id || "")}" placeholder="123456789012345678" style="width:100%;min-width:170px" /></td>
+    <td class="ds-c-count">${count}</td>
+    <td><button type="button" class="btn btn-ghost ds-c-del">✕</button></td>
+  </tr>
+  <tr class="ds-cdetail hidden" data-idx="${idx}"><td colspan="6">
+    <div class="row-detail">
+      <table class="data-table ds-targets">
+        <thead><tr><th>On</th><th>Label</th><th>Webhook URL</th><th>Secret</th><th></th></tr></thead>
+        <tbody>${targets || '<tr class="ds-empty-row"><td colspan="5" class="empty">No targets — add one.</td></tr>'}</tbody>
+      </table>
+      <div class="form-actions"><button type="button" class="btn btn-ghost ds-add-target">+ Add target</button></div>
     </div>
-    <div class="grid grid-2">
-      <label>Label <input class="ds-c-label" value="${escapeHtml(c.label || "")}" placeholder="Signal channel" /></label>
-      <label>Channel ID <input class="ds-c-id" value="${escapeHtml(c.id || "")}" placeholder="123456789012345678" /></label>
-    </div>
-    <table class="data-table ds-targets">
-      <thead><tr><th>On</th><th>Label</th><th>Webhook URL</th><th>Secret</th><th></th></tr></thead>
-      <tbody>${targets || '<tr class="ds-empty-row"><td colspan="5" class="empty">No targets — add one.</td></tr>'}</tbody>
-    </table>
-    <div class="form-actions"><button type="button" class="btn btn-ghost ds-add-target">+ Add target</button></div>
-  </div>`;
+  </td></tr>`;
 }
 
 function renderDiscordChannels() {
-  const box = $("#dsChannels");
+  const tbody = $("#dsChannelsTable tbody");
   if (!DS_CHANNELS.length) {
-    box.innerHTML = '<p class="empty">No channels yet — click "+ Add channel".</p>';
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">No channels yet — click "+ Add channel".</td></tr>';
     return;
   }
-  box.innerHTML = DS_CHANNELS.map(dsChannelCard).join("");
-  box.querySelectorAll(".ds-channel").forEach(wireDiscordChannel);
+  tbody.innerHTML = DS_CHANNELS.map(dsChannelRows).join("");
+  DS_CHANNELS.forEach((c, i) => wireDsChannelRow(tbody, i));
 }
 
-function wireDiscordChannel(card) {
-  card.querySelector(".ds-c-del").addEventListener("click", () => { card.remove(); });
-  card.querySelector(".ds-add-target").addEventListener("click", () => {
-    const tbody = card.querySelector(".ds-targets tbody");
-    const empty = tbody.querySelector(".ds-empty-row");
-    if (empty) empty.remove();
-    tbody.insertAdjacentHTML("beforeend", dsTargetRow({ enabled: true }));
-    wireDiscordTarget(tbody.lastElementChild);
+function wireDsChannelRow(tbody, idx) {
+  const row = tbody.querySelector(`tr.ds-crow[data-idx="${idx}"]`);
+  const detailRow = tbody.querySelector(`tr.ds-cdetail[data-idx="${idx}"]`);
+  const tgtBody = detailRow.querySelector(".ds-targets tbody");
+  const updateCount = () => {
+    row.querySelector(".ds-c-count").textContent = tgtBody.querySelectorAll(".ds-target").length;
+  };
+
+  row.addEventListener("click", (e) => {
+    if (e.target.closest("input,button,select,textarea,code,a")) return;
+    const open = detailRow.classList.toggle("hidden");
+    row.classList.toggle("expanded", !open);
   });
-  card.querySelectorAll(".ds-target").forEach(wireDiscordTarget);
+  row.querySelector(".ds-c-del").addEventListener("click", () => { row.remove(); detailRow.remove(); });
+
+  detailRow.querySelector(".ds-add-target").addEventListener("click", () => {
+    const empty = tgtBody.querySelector(".ds-empty-row");
+    if (empty) empty.remove();
+    tgtBody.insertAdjacentHTML("beforeend", dsTargetRow({ enabled: true }));
+    wireDiscordTarget(tgtBody.lastElementChild, updateCount);
+    updateCount();
+  });
+  tgtBody.querySelectorAll(".ds-target").forEach((r) => wireDiscordTarget(r, updateCount));
 }
 
-function wireDiscordTarget(row) {
-  row.querySelector(".ds-t-del").addEventListener("click", () => row.remove());
+function wireDiscordTarget(row, onChange) {
+  row.querySelector(".ds-t-del").addEventListener("click", () => { row.remove(); if (onChange) onChange(); });
 }
 
 function collectDiscordChannels() {
-  return [...$("#dsChannels").querySelectorAll(".ds-channel")].map((card) => ({
-    id: card.querySelector(".ds-c-id").value.trim(),
-    label: card.querySelector(".ds-c-label").value.trim(),
-    enabled: card.querySelector(".ds-c-enabled").checked,
-    targets: [...card.querySelectorAll(".ds-target")].map((r) => ({
-      label: r.querySelector(".ds-t-label").value.trim(),
-      url: r.querySelector(".ds-t-url").value.trim(),
-      secret: r.querySelector(".ds-t-secret").value,
-      enabled: r.querySelector(".ds-t-enabled").checked,
-    })).filter((t) => t.url),
-  })).filter((c) => c.id);
+  const tbody = $("#dsChannelsTable tbody");
+  return [...tbody.querySelectorAll("tr.ds-crow")].map((row) => {
+    const detailRow = tbody.querySelector(`tr.ds-cdetail[data-idx="${row.dataset.idx}"]`);
+    const targets = detailRow
+      ? [...detailRow.querySelectorAll(".ds-target")].map((r) => ({
+          label: r.querySelector(".ds-t-label").value.trim(),
+          url: r.querySelector(".ds-t-url").value.trim(),
+          secret: r.querySelector(".ds-t-secret").value,
+          enabled: r.querySelector(".ds-t-enabled").checked,
+        })).filter((t) => t.url)
+      : [];
+    return {
+      id: row.querySelector(".ds-c-id").value.trim(),
+      label: row.querySelector(".ds-c-label").value.trim(),
+      enabled: row.querySelector(".ds-c-enabled").checked,
+      targets,
+    };
+  }).filter((c) => c.id);
 }
 
 $("#dsAddChannel").addEventListener("click", () => {
@@ -1127,10 +1179,17 @@ async function refreshDiscordStatus() {
     const stateEl = $("#dsState");
     const label = { connected: "Connected", connecting: "Connecting…", disabled: "Disabled",
       error: "Error", library_missing: "No library", stopped: "Stopped" }[s.state] || s.state;
-    stateEl.textContent = label + (s.user ? ` (${s.user})` : "");
+    const full = label + (s.user ? ` (${s.user})` : "");
+    stateEl.textContent = full;
+    stateEl.className = "status-v " + (s.state === "connected" ? "on" : s.state === "error" ? "off" : "");
     $("#dsDryRun").textContent = s.dry_run ? "ON" : "off";
     $("#dsWatched").textContent = (s.watched_channels || []).length;
     $("#dsLibWarn").classList.toggle("hidden", s.library_available);
+    const bar = $("#dsBarState");
+    if (bar) {
+      bar.textContent = s.enabled ? full : "off";
+      bar.className = "status-v " + (s.state === "connected" ? "on" : s.state === "error" ? "off" : "");
+    }
   } catch (e) { /* ignore */ }
 }
 

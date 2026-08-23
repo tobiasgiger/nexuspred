@@ -296,3 +296,34 @@ pre.code {
   background: var(--bg); border: 1px solid var(--border); border-radius: 5px;
   padding: 1px 6px; font-size: 12px; color: var(--accent);
 }
+
+/* ============================================================ status bar */
+.statusbar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
+.status-item {
+  display: flex; flex-direction: column; gap: 2px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 8px 14px; min-width: 130px;
+}
+.status-k { color: var(--text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+.status-v { font-size: 15px; font-weight: 600; }
+.status-v.on { color: var(--green); }
+.status-v.off { color: var(--red); }
+.status-item .jump-to-settings { align-self: center; margin: auto 0; font-size: 13px; }
+
+/* ==================================================== expandable tables */
+.data-table.expandable tbody tr.wh-row,
+.data-table.expandable tbody tr.ds-crow { cursor: pointer; }
+.data-table.expandable tbody tr.wh-row:hover,
+.data-table.expandable tbody tr.ds-crow:hover { background: rgba(79, 140, 255, 0.06); }
+.col-exp { width: 26px; text-align: center; }
+.row-exp { display: inline-block; color: var(--text-dim); transition: transform 0.15s ease; }
+tr.expanded .row-exp { transform: rotate(90deg); color: var(--accent); }
+.wh-row td, .ds-crow td { vertical-align: middle; }
+.url-cell { max-width: 320px; }
+.url-cell code, code.wh-url-sm {
+  display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; vertical-align: bottom; color: var(--text-dim); font-size: 12px;
+}
+tr.wh-detail > td, tr.ds-cdetail > td { background: var(--bg); padding: 0; }
+.row-detail { padding: 12px 14px 6px; }
+.data-table td > input, .data-table td > select { margin-top: 0; }

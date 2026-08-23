@@ -47,7 +47,7 @@ Then **Reveal**/**Copy** each token and paste it into the bridge:
 
 | Token | Where it comes from | Where it goes in the bridge |
 |---|---|---|
-| Discord user token | `discord.com` tab | Discord Signals → *Discord user token* |
+| Discord user token | `discord.com` tab | Settings → Discord Listener → *Discord user token* |
 | Tradovate `token` | `tradovate.com` web trader | Settings → Token Accounts → *access token* |
 | Tradovate `checkToken` | `tradovate.com` web trader | Settings → Token Accounts (renewal token) |
 

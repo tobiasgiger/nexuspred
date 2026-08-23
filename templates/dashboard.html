@@ -29,31 +29,34 @@
   </header>
 
   <nav class="tabs">
-    <button class="tab active" data-tab="monitor">Monitor</button>
+    <button class="tab active" data-tab="dashboard">Dashboard</button>
     <button class="tab" data-tab="webhooks">Webhooks</button>
-    <button class="tab" data-tab="discord">Discord Signals</button>
-    <button class="tab" data-tab="settings">Settings</button>
+    <button class="tab" data-tab="discord">Discord</button>
     <button class="tab" data-tab="logs">Logs</button>
-    <button class="tab" data-tab="test">Test &amp; Webhook</button>
-    <button class="tab" data-tab="simulator">Simulator</button>
+    <button class="tab" data-tab="settings">Settings</button>
+    <button class="tab" data-tab="tools">Tools</button>
     <button class="tab" data-tab="guide">Setup Guide</button>
   </nav>
 
   <main>
-    <!-- ============================ MONITOR ============================ -->
-    <section class="panel active" id="tab-monitor">
-      <div class="grid grid-3">
-        <div class="card stat">
-          <div class="stat-label">Trading</div>
-          <div class="stat-value" id="statTrading">—</div>
+    <!-- ============================ DASHBOARD ============================ -->
+    <section class="panel active" id="tab-dashboard">
+      <div class="statusbar">
+        <div class="status-item">
+          <span class="status-k">Trading</span>
+          <span class="status-v" id="statTrading">—</span>
         </div>
-        <div class="card stat">
-          <div class="stat-label">Logins connected</div>
-          <div class="stat-value" id="statEnv">—</div>
+        <div class="status-item">
+          <span class="status-k">Logins</span>
+          <span class="status-v" id="statEnv">—</span>
         </div>
-        <div class="card stat">
-          <div class="stat-label">Accounts executing</div>
-          <div class="stat-value" id="statAccount">—</div>
+        <div class="status-item">
+          <span class="status-k">Accounts executing</span>
+          <span class="status-v" id="statAccount">—</span>
+        </div>
+        <div class="status-item">
+          <span class="status-k">Discord listener</span>
+          <span class="status-v" id="dsBarState">—</span>
         </div>
       </div>
 
@@ -112,13 +115,18 @@
           <button class="btn btn-primary" id="addWebhookBtn">+ Add Webhook</button>
         </div>
         <p class="hint">Each strategy gets its own webhook URL and its own routed trade
-          accounts + qty multipliers, so signals never cross strategies.
-          <strong>simple</strong> just executes buy/sell for the qty in the alert (no
-          TP/SL) — <strong>bracket</strong> adds TP/SL orders from tp1/tp2/tp3/sl in the
-          payload. Accounts come from <strong>Settings → Trade Accounts</strong> — add/
-          discover them there first, then enable the ones each webhook should trade.</p>
+          accounts + qty multipliers, so signals never cross strategies. Click a row to
+          expand its settings. <strong>simple</strong> executes buy/sell for the qty in the
+          alert (no TP/SL); <strong>bracket</strong> adds TP/SL orders from tp1/tp2/tp3/sl;
+          <strong>TS-Hunter</strong> matches the TS-Hunter Pine contract. Accounts come from
+          <strong>Settings → Tradovate Accounts</strong>.</p>
+        <table class="data-table expandable" id="webhooksTable">
+          <thead>
+            <tr><th class="col-exp"></th><th>On</th><th>Name</th><th>Strategy</th><th>Accounts</th><th>Webhook URL</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
       </div>
-      <div id="webhooksList"></div>
     </section>
 
     <!-- ============================ SETTINGS ============================ -->
@@ -163,7 +171,7 @@
           </div>
 
           <div class="card">
-            <div class="card-head"><h2>Webhook Security</h2></div>
+            <div class="card-head"><h2>Security</h2></div>
             <p class="hint">Each webhook's URL (with its own secret token) is managed in
               the <strong>Webhooks</strong> tab. This passphrase, if set, is an optional
               extra check applied to every webhook's JSON body.</p>
@@ -311,6 +319,44 @@
           <span class="save-hint" id="symbolMapHint"></span>
         </div>
       </div>
+
+      <div class="card" id="discordListenerCard">
+        <div class="card-head"><h2>Discord Listener</h2></div>
+        <p class="hint">Watches Discord channels over the Gateway with your personal user
+          token (self-bot) and forwards parsed signals to webhook targets. The live feed is
+          on the <strong>Discord</strong> tab. Only a <strong>channel ID</strong> is needed
+          per channel — no server ID.</p>
+        <div class="grid grid-2">
+          <label class="switch-row"><span>Enable listener</span>
+            <input type="checkbox" class="switch" id="dsEnabled" /></label>
+          <label class="switch-row"><span>Global dry-run (parse only, send to no webhook)</span>
+            <input type="checkbox" class="switch" id="dsDryRunToggle" /></label>
+        </div>
+        <label>Discord user token (self-bot)
+          <input type="password" id="dsToken" placeholder="your personal Discord user token" autocomplete="off" />
+        </label>
+        <p class="hint">Logs in as a normal client using your personal token. Leave as
+          <code>********</code> to keep the stored token.</p>
+
+        <div class="card-head" style="margin-top:16px">
+          <h2 class="sim-sub">Channels</h2>
+          <button type="button" class="btn btn-ghost" id="dsAddChannel">+ Add channel</button>
+        </div>
+        <p class="hint">Each channel = a Discord channel ID with one or more webhook targets.
+          Click a row to edit its targets. Every enabled target receives each signal in
+          parallel; a target's secret is sent as the <code>X-Webhook-Secret</code> header.</p>
+        <table class="data-table expandable" id="dsChannelsTable">
+          <thead>
+            <tr><th class="col-exp"></th><th>On</th><th>Label</th><th>Channel ID</th><th>Targets</th><th></th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+
+        <div class="form-actions">
+          <button type="button" class="btn btn-primary" id="dsSave">Save Discord Settings</button>
+          <span class="save-hint" id="dsSaveHint"></span>
+        </div>
+      </div>
     </section>
 
     <!-- ============================ LOGS ============================ -->
@@ -328,8 +374,8 @@
       </div>
     </section>
 
-    <!-- ============================ TEST ============================ -->
-    <section class="panel" id="tab-test">
+    <!-- ============================ TOOLS ============================ -->
+    <section class="panel" id="tab-tools">
       <div class="card">
         <div class="card-head"><h2>Your Webhook URL</h2></div>
         <label>Webhook <select id="testWebhookSelect"></select></label>
@@ -361,10 +407,32 @@
         </div>
         <pre class="result-box hidden" id="testResult"></pre>
       </div>
-    </section>
 
-    <!-- ============================ SIMULATOR ============================ -->
-    <section class="panel" id="tab-simulator">
+      <div class="card">
+        <div class="card-head"><h2>Send Test Discord Signal</h2></div>
+        <p class="hint">Runs a synthetic Discord embed through the full listener pipeline for
+          a channel (parse → dispatch), respecting the dry-run switch — verify fan-out
+          without a live Discord connection.</p>
+        <div class="grid grid-2">
+          <label>Channel ID <input id="dsTestChannel" placeholder="e.g. 123456789012345678" /></label>
+          <label>Preset
+            <select id="dsTestPreset">
+              <option value="entry">Entry (SELL)</option>
+              <option value="update">Stop / target moved</option>
+              <option value="close">Closed</option>
+              <option value="junk">Unrecognised</option>
+            </select>
+          </label>
+        </div>
+        <label>Embed (JSON: title + fields)
+          <textarea id="dsTestEmbed" rows="8" class="code"></textarea>
+        </label>
+        <div class="form-actions">
+          <button type="button" class="btn btn-primary" id="dsTestSend">Send test</button>
+        </div>
+        <pre class="result-box" id="dsTestResult">—</pre>
+      </div>
+
       <div class="card">
         <div class="card-head"><h2>Trade Simulator</h2></div>
         <p class="hint">
@@ -407,20 +475,23 @@
       </div>
     </section>
 
-    <!-- ============================ DISCORD SIGNALS ============================ -->
+    <!-- ============================ DISCORD (monitoring) ============================ -->
     <section class="panel" id="tab-discord">
-      <div class="grid grid-3">
-        <div class="card stat">
-          <div class="stat-label">Listener</div>
-          <div class="stat-value" id="dsState">—</div>
+      <div class="statusbar">
+        <div class="status-item">
+          <span class="status-k">Listener</span>
+          <span class="status-v" id="dsState">—</span>
         </div>
-        <div class="card stat">
-          <div class="stat-label">Dry-run</div>
-          <div class="stat-value" id="dsDryRun">—</div>
+        <div class="status-item">
+          <span class="status-k">Dry-run</span>
+          <span class="status-v" id="dsDryRun">—</span>
         </div>
-        <div class="card stat">
-          <div class="stat-label">Watched channels</div>
-          <div class="stat-value" id="dsWatched">—</div>
+        <div class="status-item">
+          <span class="status-k">Watched channels</span>
+          <span class="status-v" id="dsWatched">—</span>
+        </div>
+        <div class="status-item">
+          <a href="#tab-settings" class="jump-to-settings" data-jump="settings">Configure →</a>
         </div>
       </div>
 
@@ -432,73 +503,17 @@
         watched until it's installed and the process restarts.
       </div>
 
-      <!-- Live feed -->
       <div class="card">
         <div class="card-head">
           <h2>Live Signal Feed</h2>
           <span class="conn-pill"><span class="dot" id="dsStreamDot"></span>
             <span id="dsStreamText">connecting…</span></span>
         </div>
-        <p class="hint">Signals appear here in real time (Server-Sent Events, no reload).
-          Unrecognised messages are shown too — so a change in the provider's format is
-          never silently lost.</p>
+        <p class="hint">Incoming Discord signals in real time (Server-Sent Events, no
+          reload). Unrecognised messages are shown too — so a change in the provider's
+          format is never silently lost. Set up channels &amp; targets under
+          <strong>Settings → Discord Listener</strong>.</p>
         <div id="dsFeed" class="log-stream"><div class="empty">No signals yet.</div></div>
-      </div>
-
-      <!-- Settings -->
-      <div class="card">
-        <div class="card-head"><h2>Listener &amp; Channels</h2></div>
-        <div class="grid grid-2">
-          <label class="switch-row"><span>Enable listener</span>
-            <input type="checkbox" class="switch" id="dsEnabled" /></label>
-          <label class="switch-row"><span>Global dry-run (parse only, send to no webhook)</span>
-            <input type="checkbox" class="switch" id="dsDryRunToggle" /></label>
-        </div>
-        <label>Discord user token (self-bot)
-          <input type="password" id="dsToken" placeholder="your personal Discord user token" autocomplete="off" />
-        </label>
-        <p class="hint">Uses your personal user token to log in as a normal client
-          (self-bot). Leave as <code>********</code> to keep the stored token.</p>
-
-        <div class="card-head" style="margin-top:16px">
-          <h2 class="sim-sub">Channels</h2>
-          <button type="button" class="btn btn-ghost" id="dsAddChannel">+ Add channel</button>
-        </div>
-        <p class="hint">Each channel is a Discord channel ID plus one or more webhook
-          targets. Every enabled target of a channel receives each signal in parallel.
-          A target's secret is sent as the <code>X-Webhook-Secret</code> header.</p>
-        <div id="dsChannels"></div>
-
-        <div class="form-actions">
-          <button type="button" class="btn btn-primary" id="dsSave">Save</button>
-          <span class="save-hint" id="dsSaveHint"></span>
-        </div>
-      </div>
-
-      <!-- Test -->
-      <div class="card">
-        <div class="card-head"><h2>Send Test Signal</h2></div>
-        <p class="hint">Runs a synthetic embed through the full pipeline for a channel
-          (parse → dispatch), respecting the dry-run switch — verify fan-out without a
-          live Discord connection.</p>
-        <div class="grid grid-2">
-          <label>Channel ID <input id="dsTestChannel" placeholder="e.g. 123456789012345678" /></label>
-          <label>Preset
-            <select id="dsTestPreset">
-              <option value="entry">Entry (SELL)</option>
-              <option value="update">Stop / target moved</option>
-              <option value="close">Closed</option>
-              <option value="junk">Unrecognised</option>
-            </select>
-          </label>
-        </div>
-        <label>Embed (JSON: title + fields)
-          <textarea id="dsTestEmbed" rows="8" class="code"></textarea>
-        </label>
-        <div class="form-actions">
-          <button type="button" class="btn btn-primary" id="dsTestSend">Send test</button>
-        </div>
-        <pre class="result-box" id="dsTestResult">—</pre>
       </div>
     </section>
 
