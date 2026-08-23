@@ -141,14 +141,18 @@ async def stream(request: Request) -> StreamingResponse:
         try:
             # Prime the stream so proxies flush headers immediately.
             yield ": connected\n\n"
+            yield "event: ping\ndata: {}\n\n"  # immediate liveness ping
             while True:
                 if await request.is_disconnected():
                     break
                 try:
-                    event = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    event = await asyncio.wait_for(queue.get(), timeout=10.0)
                     yield f"data: {json.dumps(event)}\n\n"
                 except asyncio.TimeoutError:
-                    yield ": keepalive\n\n"  # heartbeat keeps the connection open
+                    # Named heartbeat (not a bare comment): reaches the client as a
+                    # `ping` event so it can affirm liveness, and its bytes keep
+                    # proxies from closing the connection as idle.
+                    yield "event: ping\ndata: {}\n\n"
         finally:
             hub.unsubscribe(queue, area)
 

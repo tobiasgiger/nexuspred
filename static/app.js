@@ -1565,20 +1565,35 @@ async function loadDiscordSignals() {
 }
 
 let DS_FEED = [];
+let _dsStream = null, _dsReconnTimer = null;
+function _dsSetLive() {
+  if (_dsReconnTimer) { clearTimeout(_dsReconnTimer); _dsReconnTimer = null; }
+  const dot = $("#dsStreamDot"), txt = $("#dsStreamText");
+  if (dot) dot.className = "dot on";
+  if (txt) txt.textContent = "live";
+}
 function connectDiscordStream() {
-  let es;
-  try { es = new EventSource("/api/discord/stream"); }
-  catch (e) { return; }
-  es.onopen = () => {
-    $("#dsStreamDot").className = "dot on";
-    $("#dsStreamText").textContent = "live";
-  };
+  try {
+    if (_dsStream) _dsStream.close();
+    _dsStream = new EventSource("/api/discord/stream");
+  } catch (e) { return; }
+  const es = _dsStream;
+  es.onopen = _dsSetLive;
+  // Named heartbeat from the server — proves the connection is alive even with
+  // no signals, and cancels a pending "reconnecting" indicator.
+  es.addEventListener("ping", _dsSetLive);
   es.onerror = () => {
-    $("#dsStreamDot").className = "dot";
-    $("#dsStreamText").textContent = "reconnecting…";
-    // EventSource auto-reconnects; nothing to do.
+    // EventSource auto-reconnects; only surface "reconnecting…" if it stays down
+    // for a few seconds, so a normal quick reconnect never flashes an alarm.
+    if (_dsReconnTimer) return;
+    _dsReconnTimer = setTimeout(() => {
+      const dot = $("#dsStreamDot"), txt = $("#dsStreamText");
+      if (dot) dot.className = "dot";
+      if (txt) txt.textContent = "reconnecting…";
+    }, 4000);
   };
   es.onmessage = (msg) => {
+    _dsSetLive();
     try {
       const ev = JSON.parse(msg.data);
       DS_FEED.unshift(ev);

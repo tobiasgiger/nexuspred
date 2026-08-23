@@ -583,14 +583,15 @@ async def api_stream(request: Request) -> StreamingResponse:
     async def gen():
         try:
             yield ": connected\n\n"  # prime so proxies flush headers
+            yield "event: ping\ndata: {}\n\n"
             while True:
                 if await request.is_disconnected():
                     break
                 try:
-                    msg = await asyncio.wait_for(sub.queue.get(), timeout=15.0)
+                    msg = await asyncio.wait_for(sub.queue.get(), timeout=10.0)
                     yield f"data: {json.dumps(msg)}\n\n"
                 except asyncio.TimeoutError:
-                    yield ": keepalive\n\n"  # heartbeat keeps the connection open
+                    yield "event: ping\ndata: {}\n\n"  # named heartbeat; keeps proxies open
         finally:
             state.unsubscribe(sub, area)
 

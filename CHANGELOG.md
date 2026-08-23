@@ -4,6 +4,16 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 4.7.1
+- **Fix the Discord Live Signal Feed getting stuck on “reconnecting…”.** The SSE
+  streams now send a real named **`ping` heartbeat** every 10 s (instead of a bare
+  comment), which the client uses to affirm the connection is alive even when no
+  signals are flowing, and which keeps intermediary proxies from treating the
+  connection as idle. The status indicator is also **debounced** — a normal quick
+  auto-reconnect no longer flashes an alarming “reconnecting…”; it only appears if
+  the stream is genuinely down for more than a few seconds. Applies to both the
+  Discord feed and the new event/signal log stream.
+
 ## 4.7.0
 - **Live event & signal logs (real-time, no polling wait).** The Logs view now
   streams new entries the instant they happen over **Server-Sent Events**
