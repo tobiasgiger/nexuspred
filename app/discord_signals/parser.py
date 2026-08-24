@@ -124,10 +124,15 @@ def field_map(embed: EmbedLike) -> dict[str, str]:
 
 
 def to_float(value: Optional[str]) -> Optional[float]:
-    """Best-effort numeric parse: strip currency/symbols, keep sign + decimal."""
+    """Best-effort numeric parse: strip currency/symbols, keep sign + decimal.
+
+    Normalises the Unicode minus variants (−, –, —) that signal providers often
+    use to an ASCII '-' first, so a negative P&L keeps its sign.
+    """
     if value is None:
         return None
-    cleaned = re.sub(r"[^\d.\-]", "", str(value))
+    text = str(value).replace("−", "-").replace("–", "-").replace("—", "-")
+    cleaned = re.sub(r"[^\d.\-]", "", text)
     if not cleaned or cleaned in ("-", ".", "-."):
         return None
     try:
@@ -149,6 +154,9 @@ def parse_embed(embed: EmbedLike, channel_id: int) -> Optional[Signal]:
         title = (embed.title or "").strip()
         fields = field_map(embed)
         title_lower = title.lower()
+        # Providers often prefix the title with an emoji (🔴/⚪/🎯). Strip leading
+        # non-word characters so title-type detection isn't thrown off by them.
+        title_core = re.sub(r"^[\W_]+", "", title_lower)
 
         # --- 1. Entry -----------------------------------------------------
         if "sell" in title_lower or "buy" in title_lower:
@@ -181,14 +189,21 @@ def parse_embed(embed: EmbedLike, channel_id: int) -> Optional[Signal]:
             )
 
         # --- 3. Trade closed ---------------------------------------------
-        if title_lower.startswith("closed"):
+        # Tolerate a leading emoji (🔴/⚪/…): match "closed" on the stripped title.
+        if title_core.startswith("closed"):
             symbol_match = re.search(r"closed\s+(\S+)", title, re.IGNORECASE)
+            # P&L points may be a field ("Move") or in the title ("· −83.00 pts").
+            pnl_points = to_float(fields.get("move"))
+            if pnl_points is None:
+                m = re.search(r"([-−–]?\s*\d[\d.,]*)\s*pts", title, re.IGNORECASE)
+                if m:
+                    pnl_points = to_float(m.group(1))
             return Signal(
                 event_type="close",
                 symbol=symbol_match.group(1) if symbol_match else None,
                 exit_price=to_float(fields.get("exit")),
                 pnl_usd=to_float(fields.get("p&l") or fields.get("pnl")),
-                pnl_points=to_float(fields.get("move")),
+                pnl_points=pnl_points,
                 source_channel_id=channel_id,
                 raw_title=title,
             )

@@ -4,6 +4,16 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 4.7.5
+- **Fix “Closed …” signals being flagged as unrecognised.** The parser's
+  trade-closed detection required the title to *start* with “Closed”, but the
+  provider prefixes it with an emoji (`🔴 Closed MNQ · −83.00 pts`, `⚪ Closed MNQ`),
+  so it fell through to “Unrecognised message”. Title-type detection now ignores a
+  leading emoji/symbol prefix, the Unicode minus sign (`−`) is parsed correctly so
+  a negative P&L keeps its sign, and the P&L points are read from the title
+  (`· −83.00 pts`) when there's no dedicated field. Entry and stop/target messages
+  are unaffected.
+
 ## 4.7.4
 - **Discord listener: rock-solid reconnection + accurate status.** Fixes the
   listener showing **Offline** while it was actually connected, and makes real
