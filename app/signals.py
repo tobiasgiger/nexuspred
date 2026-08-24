@@ -201,7 +201,11 @@ async def process(
         return await _handle_close_all(root, target, executors, active_map, tag, webhook)
     if action == "move_sl":
         if strategy == "simple":
-            raise SignalError("'move_sl' is not supported on a 'simple' strategy webhook")
+            # A 'simple' webhook has no tracked bracket to move — skip cleanly
+            # (not an error) so a stop/target-move signal doesn't spam failures.
+            state.log_event("info", f"{tag}move_sl ignored for {root} — 'simple' "
+                            "strategy has no bracket to move")
+            return {"status": "skipped", "reason": "move_sl_unsupported_simple", "action": action}
         return await _handle_move_sl(payload, root, executors, active_map, tag, webhook)
     if action == "trail_active":
         if strategy == "simple":

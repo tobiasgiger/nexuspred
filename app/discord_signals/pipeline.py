@@ -55,6 +55,52 @@ def resolve_target(t: dict[str, Any]) -> Optional[dict[str, Any]]:
     return None
 
 
+def _webhook_action(sig: dict[str, Any]) -> Optional[str]:
+    """Map a parsed Discord signal to a bridge webhook action, or None."""
+    et = sig.get("event_type")
+    side = (sig.get("side") or "").lower()
+    if et == "entry":
+        return "buy" if side == "long" else "sell" if side == "short" else None
+    if et == "close":
+        return "close_all"
+    if et == "sl_tp_update":
+        return "move_sl"
+    return None
+
+
+def build_trade_payload(sig: dict[str, Any], *, received_at: str, source: str) -> dict[str, Any]:
+    """Translate a parsed Discord signal into a webhook (TradingView-style) payload.
+
+    The bridge's own webhooks expect ``action`` + ``symbol`` (+ qty / entry / sl /
+    tp), while a Discord signal is shaped as ``event_type`` / ``side`` / prices.
+    This overlays the executable fields so a routed webhook can act on it, while
+    keeping the original signal fields for any external/custom target:
+
+      * entry  → ``buy`` / ``sell`` (qty from ``contracts``; entry/sl/tp if present)
+      * close  → ``close_all`` (flatten the symbol)
+      * SL/TP move → ``move_sl`` (new stop from ``stop_price``; bracket webhooks)
+    """
+    p: dict[str, Any] = {**sig, "received_at": received_at, "source": source}
+    action = _webhook_action(sig)
+    if not action:
+        return p
+    p["action"] = action
+    p["symbol"] = sig.get("symbol") or ""
+    if action in ("buy", "sell"):
+        if sig.get("contracts") is not None:
+            p["qty"] = sig["contracts"]
+        if sig.get("entry_price") is not None:
+            p["entry"] = sig["entry_price"]
+        if sig.get("stop_price") is not None:
+            p["sl"] = sig["stop_price"]
+        if sig.get("target_price") is not None:
+            p["tp1"] = sig["target_price"]
+    elif action == "move_sl":
+        if sig.get("stop_price") is not None:
+            p["new_sl"] = sig["stop_price"]
+    return p
+
+
 def find_channel(channel_id: str) -> Optional[dict[str, Any]]:
     """Return the live config for a channel id (string compare), or None."""
     cid = str(channel_id)
@@ -140,7 +186,7 @@ async def process_embed(
         if resolved:
             active_targets.append({**resolved, "enabled": True})
 
-    payload = {**signal.to_dict(), "received_at": event["ts"], "source": source}
+    payload = build_trade_payload(signal.to_dict(), received_at=event["ts"], source=source)
 
     if dry_run:
         event["targets"] = [

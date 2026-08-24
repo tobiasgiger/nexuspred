@@ -4,6 +4,21 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 4.8.0
+- **Discord signals now actually execute on the routed webhook.** Previously a
+  Discord signal was forwarded in its own shape (`event_type`/`side`/prices) but
+  the bridge's webhooks expect a TradingView-style payload (`action`/`symbol`/…),
+  so every routed signal was rejected with *“Payload missing 'action' or 'symbol'”*.
+  The pipeline now **translates** each parsed Discord signal before dispatch:
+  - **Entry (BUY/SELL)** → `buy` / `sell` (quantity from the signal's *Contracts*,
+    else the webhook's default; entry/SL/TP prices included when present).
+  - **“Closed …”** → `close_all` (flattens the symbol on the routed account).
+  - **“Stop / target moved”** → `move_sl` (moves the tracked stop; applied on
+    **bracket** webhooks, cleanly skipped — no longer an error — on *simple* ones).
+  - Trades still only fire when the global **Trading** switch and the webhook's
+    per-account toggles are on, and the symbol must be in your symbol map /
+    allowed list (the Discord symbol is the root, e.g. `MNQ`).
+
 ## 4.7.5
 - **Fix “Closed …” signals being flagged as unrecognised.** The parser's
   trade-closed detection required the title to *start* with “Closed”, but the
