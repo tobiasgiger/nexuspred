@@ -1515,7 +1515,8 @@ async function refreshDiscordStatus() {
     const s = await api("/api/discord/status");
     const stateEl = $("#dsState");
     const down = s.health === "down";
-    const label = down ? "Offline"
+    const label = (s.state === "token_invalid") ? "Token rejected"
+      : down ? "Offline"
       : ({ connected: "Connected", connecting: "Connecting…", disabled: "Disabled",
            error: "Error", library_missing: "No library", stopped: "Stopped",
            not_entitled: "Not enabled" }[s.state] || s.state);

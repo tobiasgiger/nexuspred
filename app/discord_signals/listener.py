@@ -20,6 +20,7 @@ Runtime control (spec: config changes take effect without a process restart):
 from __future__ import annotations
 
 import asyncio
+import random
 import time
 from typing import Any, Optional
 
@@ -47,6 +48,7 @@ class ListenerManager:
         self._client: Any = None
         self._current_token: Optional[str] = None
         self._shutdown = False
+        self._reconnect_attempts = 0  # for exponential backoff between full reconnects
         # Health tracking: last time we were connected, and whether we've already
         # fired an "offline" alert (so the outage/restore pair alerts once each).
         self._last_connected_mono: float = time.monotonic()
@@ -141,15 +143,29 @@ class ListenerManager:
         class _SignalClient(discord.Client):  # type: ignore[misc]
             async def on_ready(self) -> None:
                 user = str(getattr(self, "user", "") or "")
-                manager._set_status(state="connected", connected=True, error="", user=user)
-                state.log_event("info", f"[discord] listener connected as {user}")
+                manager._mark_connected(user=user, how="connected")
+
+            async def on_resumed(self) -> None:
+                # A transient drop was recovered by RESUMING the session. The
+                # library fires this (NOT on_ready), so we must mark ourselves
+                # connected again here — otherwise the status would stay stuck on
+                # "connecting" after the first blip even though the gateway is up.
+                manager._mark_connected(how="resumed")
+
+            async def on_connect(self) -> None:
+                # Socket connected (before READY). Reflect progress, not "down".
+                if not manager._status.get("connected"):
+                    manager._set_status(state="connecting", error="")
 
             async def on_disconnect(self) -> None:
-                # The library auto-reconnects; just reflect the transient drop.
-                if manager._status.get("state") == "connected":
+                # A socket drop. The library auto-reconnects/resumes; reflect the
+                # transient state but don't treat it as an outage — the health
+                # loop's grace period + a missing resume is what flags a real one.
+                if manager._status.get("connected"):
                     manager._set_status(connected=False, state="connecting")
 
             async def on_message(self, message: Any) -> None:
+                manager._mark_connected(how="message")  # receiving = definitely up
                 await manager._handle_message(message, source="message")
 
             async def on_message_edit(self, before: Any, after: Any) -> None:
@@ -157,6 +173,21 @@ class ListenerManager:
                 await manager._handle_message(after, source="edit")
 
         return _SignalClient()
+
+    def _mark_connected(self, *, user: str | None = None, how: str = "connected") -> None:
+        """Record a healthy connection (ready / resumed / traffic) and reset backoff."""
+        was_connected = bool(self._status.get("connected"))
+        fields: dict[str, Any] = {"state": "connected", "connected": True, "error": ""}
+        if user is not None:
+            fields["user"] = user
+        self._set_status(**fields)
+        self._reconnect_attempts = 0
+        self._last_connected_mono = time.monotonic()
+        if not was_connected and how in ("connected", "resumed"):
+            who = user or self._status.get("user", "")
+            verb = "connected" if how == "connected" else "resumed"
+            state.log_event("info", f"[discord] listener {verb}"
+                            + (f" as {who}" if who else ""))
 
     async def _handle_message(self, message: Any, *, source: str) -> None:
         received = time.monotonic()  # capture ASAP for the latency measurement
@@ -182,13 +213,27 @@ class ListenerManager:
                 state.log_event("warn", f"[discord] message handler error: {exc}")
 
     # -------------------------------------------------------------- lifecycle
+    def _is_auth_error(self, exc: BaseException) -> bool:
+        """Whether an exception means Discord rejected the token (don't hammer)."""
+        d = self._discord
+        login_failure = getattr(d, "LoginFailure", None)
+        if login_failure and isinstance(exc, login_failure):
+            return True
+        http = getattr(d, "HTTPException", None)
+        if http and isinstance(exc, http) and getattr(exc, "status", None) in (401, 403):
+            return True
+        return False
+
     async def _run_client(self, token: str) -> None:
-        """Run one client connection until it disconnects or is closed."""
+        """Run one client connection until it disconnects or is closed.
+
+        ``reconnect=True`` keeps discord.py's own resume/reconnect loop running,
+        so this only returns on a hard failure — where the supervisor backs off."""
         self._current_token = token
         self._client = self._build_client()
         self._set_status(state="connecting", connected=False, error="")
         try:
-            await self._client.start(token)
+            await self._client.start(token, reconnect=True)
         finally:
             try:
                 if not self._client.is_closed():
@@ -238,13 +283,39 @@ class ListenerManager:
                     await asyncio.sleep(3)
                     continue
 
-                # Enabled + have a token + library present -> run a client.
-                await self._run_client(token)
+                # Enabled + have a token + library present -> run a client. Its
+                # own reconnect loop handles transient drops; this returns/raises
+                # only on a hard failure, which we back off from below.
+                auth_failed = False
+                try:
+                    await self._run_client(token)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    auth_failed = self._is_auth_error(exc)
+                    if auth_failed:
+                        self._set_status(state="token_invalid", connected=False,
+                                         error="Discord rejected the token — re-extract it "
+                                               "(Settings → Discord Listener).")
+                        state.log_event("warn", "[discord] token rejected by Discord — "
+                                        "listener paused until the token is updated")
+                    else:
+                        self._set_status(state="error", connected=False, error=str(exc))
+                        state.log_event("warn", f"[discord] connection error: {exc}")
 
-                # Client returned (disconnected / closed). If still wanted, retry.
-                if not self._shutdown:
-                    self._set_status(connected=False)
-                    await asyncio.sleep(5)  # backoff before reconnect attempt
+                if self._shutdown:
+                    break
+
+                # Back off before reconnecting: jittered exponential (3→60s). This
+                # is essential for a self-bot — reconnecting in a tight loop makes
+                # Discord rate-limit the token, which itself causes more drops. A
+                # rejected token backs off hard so we never hammer identify.
+                self._reconnect_attempts += 1
+                step = min(self._reconnect_attempts - 1, 5)
+                base = 60.0 if auth_failed else min(60.0, 3.0 * (2 ** step))
+                delay = base * (0.5 + random.random())  # 0.5x–1.5x jitter
+                self._set_status(connected=False)
+                await asyncio.sleep(min(delay, 90.0))
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - never let the supervisor die

@@ -4,6 +4,26 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 4.7.4
+- **Discord listener: rock-solid reconnection + accurate status.** Fixes the
+  listener showing **Offline** while it was actually connected, and makes real
+  reconnects reliable:
+  - **Handle session RESUMEs.** discord.py fires `on_resumed` (not `on_ready`)
+    after a transient blip, and the old code only marked itself connected in
+    `on_ready` — so after the first blip the status stuck on “connecting” and,
+    past the health grace, flipped to **Offline** even though the gateway was
+    live. Now `on_resumed`, `on_connect`, and any received message all restore the
+    connected state. Incoming traffic counts as proof-of-life.
+  - **Jittered exponential backoff (3→60 s) between full reconnects**, instead of a
+    fixed 5 s retry. Reconnecting a self-bot in a tight loop makes Discord
+    rate-limit the token — which *causes* more drops — so the backoff is what keeps
+    the connection stable over time.
+  - **A rejected token is detected** (Discord 401/403 / login failure): the
+    listener shows **“Token rejected”** and backs off hard instead of hammering
+    Discord, so one bad token can't spiral into a reconnect storm.
+  - Note: each app deploy restarts the listener for a few seconds — that brief
+    reconnect is normal and now shows/handles cleanly.
+
 ## 4.7.3
 - **Alerts “Notify email” now defaults to each user's own address.** It used to
   default to a single hard-coded address for everyone (wrong in a multi-user app).
