@@ -4,6 +4,15 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 4.9.0
+- **🆘 “Flatten all” emergency button in the header.** A one-click kill-switch that
+  cancels every working order and closes every open position on **all** trade
+  accounts (across every enabled login), regardless of per-account execution
+  toggles or webhook routing. It runs **even when the Trading switch is paused**,
+  asks for confirmation first, and reports how many positions/orders it handled.
+  New `POST /api/flatten-all`; the action is recorded in the admin audit log. On
+  phones the button collapses to just the 🆘 glyph.
+
 ## 4.8.0
 - **Discord signals now actually execute on the routed webhook.** Previously a
   Discord signal was forwarded in its own shape (`event_type`/`side`/prices) but

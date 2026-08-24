@@ -549,6 +549,20 @@ async def api_save_settings(request: Request) -> dict[str, Any]:
     return config.public_settings()
 
 
+@app.post("/api/flatten-all")
+async def api_flatten_all(request: Request) -> dict[str, Any]:
+    """Emergency kill-switch: flatten every position and cancel every working order
+    on all trade accounts in the caller's area. Runs even if trading is paused."""
+    user = getattr(request.state, "user", None)
+    result = await signals.flatten_all()
+    if user:
+        db.log_action(user["id"], user["email"], "flatten_all", "",
+                      f"{result.get('flattened', 0)} flattened, "
+                      f"{result.get('cancelled', 0)} cancelled, "
+                      f"{result.get('accounts', 0)} account(s)")
+    return result
+
+
 @app.post("/api/alerts/test")
 async def api_test_alert() -> dict[str, Any]:
     """Send a test notification on every enabled channel (Discord / email)."""

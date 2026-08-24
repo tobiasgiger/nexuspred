@@ -408,6 +408,33 @@ async function connectAll() {
 $("#connectBtn").addEventListener("click", connectAll);
 $("#connectTokenBtn").addEventListener("click", connectAll);
 
+/* ------------------------------------------------- SOS: flatten all accounts */
+const _sosBtn = $("#sosBtn");
+if (_sosBtn) _sosBtn.addEventListener("click", async () => {
+  if (!confirm("🆘 FLATTEN ALL\n\nCancel every working order and close every open "
+      + "position on ALL of your Tradovate accounts, right now?\n\nThis cannot be undone.")) return;
+  const label = _sosBtn.innerHTML;
+  _sosBtn.disabled = true;
+  _sosBtn.innerHTML = "🆘 <span class=\"sos-label\">Flattening…</span>";
+  try {
+    const r = await api("/api/flatten-all", { method: "POST" });
+    const msg = `Flattened ${r.flattened} position(s), cancelled ${r.cancelled} order(s) `
+      + `on ${r.accounts} account(s)`;
+    if (r.errors && r.errors.length) {
+      toast(msg + ` — ${r.errors.length} error(s), see log`, "error");
+    } else {
+      toast(msg, "success");
+    }
+    refreshStatus(); refreshOrders(); refreshLogs();
+    if (typeof refreshPositions === "function") refreshPositions();
+  } catch (e) {
+    toast("Flatten all failed: " + e.message, "error");
+  } finally {
+    _sosBtn.disabled = false;
+    _sosBtn.innerHTML = label;
+  }
+});
+
 /* --------------------------------------------------------------- updates */
 async function checkUpdate() {
   const box = $("#updateStatus");

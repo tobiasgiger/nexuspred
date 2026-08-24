@@ -39,7 +39,7 @@ from typing import Any
 
 from . import alerts, config, context, state
 from .simulator import sim_client
-from .tradovate import TradovateError, manager
+from .tradovate import AccountExecutor, TradovateError, manager
 
 
 class SignalError(Exception):
@@ -407,6 +407,83 @@ async def _handle_close_all(root, target, executors, active_map, tag, webhook):
     )
     return {"status": "ok", "action": "close_all", "accounts": len(executors),
             "cancelled": cancelled, "simulated": tag != ""}
+
+
+async def flatten_all() -> dict[str, Any]:
+    """EMERGENCY kill-switch: cancel every working order and flatten every open
+    position on **all** trade accounts under **all** enabled logins in the current
+    area — regardless of per-account execution toggles or webhook routing.
+
+    Independent of the Trading switch: an emergency flatten must work even when
+    trading is paused. Never raises; returns a summary of what it did.
+    """
+    mgr = manager()
+    mgr.reload()
+    executors: list[AccountExecutor] = []
+    for s in mgr.all():
+        if not s.enabled:
+            continue
+        for a in s.accounts:
+            executors.append(AccountExecutor(s, a))
+
+    if not executors:
+        state.log_event("warn", "🆘 SOS flatten-all: no trade accounts found")
+        return {"status": "ok", "accounts": 0, "cancelled": 0, "flattened": 0, "errors": []}
+
+    async def flatten(ex: AccountExecutor) -> tuple[int, int, list[str]]:
+        cancelled = 0
+        flattened = 0
+        errors: list[str] = []
+        # 1) Cancel every working order first (so stops/targets don't re-fill).
+        try:
+            for order in await ex.working_orders():
+                oid = order.get("id")
+                if oid is None:
+                    continue
+                try:
+                    await ex.cancel_order(oid)
+                    cancelled += 1
+                except TradovateError as exc:
+                    errors.append(f"cancel {oid}: {exc}")
+        except TradovateError as exc:
+            errors.append(f"list orders: {exc}")
+        # 2) Flatten every open position (any symbol) on this account.
+        try:
+            for pos in await ex.positions():
+                sym = pos.get("symbol")
+                if not sym:
+                    continue
+                try:
+                    await ex.liquidate_position(sym)
+                    flattened += 1
+                except TradovateError as exc:
+                    errors.append(f"flatten {sym}: {exc}")
+        except TradovateError as exc:
+            errors.append(f"list positions: {exc}")
+        return cancelled, flattened, errors
+
+    results = await asyncio.gather(*(flatten(ex) for ex in executors), return_exceptions=True)
+
+    cancelled = flattened = 0
+    all_errors: list[str] = []
+    for ex, r in zip(executors, results):
+        if isinstance(r, Exception):
+            all_errors.append(f"{ex.name}: {r}")
+            state.log_event("error", f"🆘 SOS flatten failed for {ex.name}: {r}")
+            continue
+        c, f, errs = r
+        cancelled += c
+        flattened += f
+        all_errors += [f"{ex.name}: {e}" for e in errs]
+
+    state.log_event(
+        "warn",
+        f"🆘 SOS flatten-all: {flattened} position(s) flattened, {cancelled} order(s) "
+        f"cancelled across {len(executors)} account(s)"
+        + (f"; {len(all_errors)} error(s)" if all_errors else ""),
+    )
+    return {"status": "ok", "accounts": len(executors), "cancelled": cancelled,
+            "flattened": flattened, "errors": all_errors}
 
 
 def _remaining_qty(info: dict[str, Any], tp_index: int | None) -> int:

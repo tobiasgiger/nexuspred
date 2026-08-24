@@ -78,6 +78,12 @@ body {
   background: var(--amber); border-color: var(--amber); color: #1a1300; font-weight: 600;
   animation: pulse 2s infinite;
 }
+.btn-sos {
+  background: #b3261e; border-color: #e5484d; color: #fff; font-weight: 700;
+  letter-spacing: 0.3px;
+}
+.btn-sos:hover { background: #e5484d; border-color: #ff6166; }
+.btn-sos:disabled { opacity: 0.6; cursor: default; }
 @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(255,180,84,0.5);} 50% { box-shadow: 0 0 0 6px rgba(255,180,84,0);} }
 .hidden { display: none !important; }
 
@@ -428,6 +434,7 @@ tr.wh-detail > td, tr.ds-cdetail > td { background: var(--bg); padding: 0; }
     padding-top: max(12px, env(safe-area-inset-top));
     padding-right: max(14px, env(safe-area-inset-right)); }
   .topbar-right { gap: 10px; }
+  .sos-label { display: none; }  /* keep just the 🆘 glyph on phones */
   .conn-pill { font-size: 12px; padding: 5px 10px; }
   .version { font-size: 12px; gap: 6px; }
   .card { padding: 14px; }
