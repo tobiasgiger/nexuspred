@@ -64,7 +64,7 @@ def _webhook_action(sig: dict[str, Any]) -> Optional[str]:
     if et == "close":
         return "close_all"
     if et == "sl_tp_update":
-        return "move_sl"
+        return "set_sl_tp"
     return None
 
 
@@ -78,7 +78,8 @@ def build_trade_payload(sig: dict[str, Any], *, received_at: str, source: str) -
 
       * entry  → ``buy`` / ``sell`` (qty from ``contracts``; entry/sl/tp if present)
       * close  → ``close_all`` (flatten the symbol)
-      * SL/TP move → ``move_sl`` (new stop from ``stop_price``; bracket webhooks)
+      * SL/TP move → ``set_sl_tp`` (places/replaces the stop and/or target on the
+        open position; ``stop_price`` / ``target_price`` are already in the payload)
     """
     p: dict[str, Any] = {**sig, "received_at": received_at, "source": source}
     action = _webhook_action(sig)
@@ -95,9 +96,8 @@ def build_trade_payload(sig: dict[str, Any], *, received_at: str, source: str) -
             p["sl"] = sig["stop_price"]
         if sig.get("target_price") is not None:
             p["tp1"] = sig["target_price"]
-    elif action == "move_sl":
-        if sig.get("stop_price") is not None:
-            p["new_sl"] = sig["stop_price"]
+    # For set_sl_tp the handler reads stop_price / target_price straight from the
+    # payload (already present via {**sig}), so no extra mapping is needed here.
     return p
 
 

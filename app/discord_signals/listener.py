@@ -49,6 +49,7 @@ class ListenerManager:
         self._current_token: Optional[str] = None
         self._shutdown = False
         self._reconnect_attempts = 0  # for exponential backoff between full reconnects
+        self._recent: dict[str, float] = {}  # (msg id+content) -> ts, for edit de-dup
         # Health tracking: last time we were connected, and whether we've already
         # fired an "offline" alert (so the outage/restore pair alerts once each).
         self._last_connected_mono: float = time.monotonic()
@@ -189,6 +190,30 @@ class ListenerManager:
             state.log_event("info", f"[discord] listener {verb}"
                             + (f" as {who}" if who else ""))
 
+    def _is_duplicate(self, message: Any, embed: Any) -> bool:
+        """True if this exact (message id + embed content) was already handled.
+
+        Providers post a message and then EDIT it (e.g. to attach a GIF), which
+        fires on_message *and* on_message_edit for the same signal — without this
+        guard the trade would be placed twice. Keyed by message id + a hash of the
+        embed's title/fields, so a genuinely changed edit still gets through while
+        an identical re-render is ignored. Entries expire after 1 hour."""
+        mid = str(getattr(message, "id", "") or "")
+        if not mid:
+            return False
+        fp = f"{embed.title}|" + "|".join(f"{f.name}={f.value}" for f in embed.fields)
+        key = f"{mid}:{hash(fp)}"
+        now = time.monotonic()
+        # prune old entries so the dict can't grow unbounded
+        if len(self._recent) > 512:
+            for k, ts in list(self._recent.items()):
+                if now - ts > 3600:
+                    self._recent.pop(k, None)
+        if key in self._recent and now - self._recent[key] < 3600:
+            return True
+        self._recent[key] = now
+        return False
+
     async def _handle_message(self, message: Any, *, source: str) -> None:
         received = time.monotonic()  # capture ASAP for the latency measurement
         with context.use_area(self._area()):  # this listener's area
@@ -201,6 +226,8 @@ class ListenerManager:
                     return
                 for raw in embeds:
                     embed = embed_from_discord(raw)
+                    if self._is_duplicate(message, embed):
+                        continue  # message + its edit fire twice for one signal
                     event = await pipeline.process_embed(
                         embed, channel_id, source=source, received_monotonic=received
                     )

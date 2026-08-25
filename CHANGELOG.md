@@ -4,6 +4,24 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 4.10.0
+- **Discord auto-trading fixes for the CoSniper/CoLifetime flow.**
+  - **No more double orders.** A provider posts a message and then *edits* it (to
+    attach a GIF, etc.), which fired the signal twice → two entries. Signals are
+    now de-duplicated by message id + content, so an edit of the same signal is
+    ignored (a genuinely changed edit still goes through).
+  - **Correct position size.** A bracket-strategy entry ignored the signal's
+    *Contracts* and always used the webhook's `default_qty` (so `Contracts: 3`
+    opened 1). It now uses the signal's contract count, falling back to the
+    default only when the signal omits it. (Simple-strategy entries already did.)
+  - **SL & TP are actually placed and kept in sync.** CoSniper sends the entry
+    with no stop/target, then separate “Stop / target moved” messages. The old
+    `move_sl` only *moved an existing* stop and errored on a missing `new_sl`, so
+    nothing was ever placed. A new **set-SL/TP** action now looks at the live
+    position and places/replaces the **stop and/or target** to match each update —
+    handling stop-only, target-only (stop `—`), and repeated moves — on any
+    strategy that has an open position.
+
 ## 4.9.0
 - **🆘 “Flatten all” emergency button in the header.** A one-click kill-switch that
   cancels every working order and closes every open position on **all** trade
