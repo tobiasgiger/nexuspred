@@ -4,6 +4,17 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 4.11.0
+- **Fix: simultaneous TP/management signals no longer race (one getting lost).**
+  When two signals for the *same* trade arrived almost together (e.g. two take-
+  profit partial-closes), they were processed in parallel background tasks and
+  both read the same “remaining quantity” before either wrote it back — so one
+  update overwrote the other and only one TP effectively executed. Signals that
+  touch the same position are now **serialised with a per-trade lock** (keyed by
+  trade_id for TS-Hunter, by webhook+symbol otherwise), so concurrent TPs, SL/TP
+  moves and closes apply one after another with consistent state. Signals for
+  different trades/symbols still run in parallel.
+
 ## 4.10.0
 - **Discord auto-trading fixes for the CoSniper/CoLifetime flow.**
   - **No more double orders.** A provider posts a message and then *edits* it (to

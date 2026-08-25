@@ -51,6 +51,24 @@ class SignalError(Exception):
 # webhooks trading the same symbol never share state. Reset when the position
 # is closed. Live and simulated trades are tracked separately.
 _lock = threading.Lock()
+
+# Per-trade async locks: serialise signals that touch the SAME position so two
+# near-simultaneous events (e.g. two TP partial-closes) can't race on the shared
+# active-trade state — otherwise both read the same "remaining qty" and one
+# overwrites the other, so only one TP effectively executes. Signals for
+# different trades/symbols still run in parallel.
+_trade_locks: dict[str, asyncio.Lock] = {}
+_trade_locks_guard = threading.Lock()
+
+
+def _trade_lock(key: str) -> asyncio.Lock:
+    with _trade_locks_guard:
+        lk = _trade_locks.get(key)
+        if lk is None:
+            lk = _trade_locks[key] = asyncio.Lock()
+        return lk
+
+
 # Active-trade records are isolated per area (user workspace). Each maps
 # "<webhook_id>:<root>" -> trade record. Live and simulated tracked separately.
 _active: dict[int, dict[str, dict[str, Any]]] = {}
@@ -193,27 +211,31 @@ async def process(
     tag = "[SIM] " if simulate else ""
     strategy = webhook.get("strategy", "simple")
 
-    if action in ("buy", "sell"):
-        if strategy == "simple":
-            return await _handle_simple_entry(payload, action, root, target, executors, active_map, tag, webhook)
-        return await _handle_entry(payload, action, root, target, executors, active_map, tag, webhook)
-    if action == "close_all":
-        return await _handle_close_all(root, target, executors, active_map, tag, webhook)
-    if action == "set_sl_tp":
-        return await _handle_set_sl_tp(payload, root, target, executors, active_map, tag, webhook)
-    if action == "move_sl":
-        if strategy == "simple":
-            # A 'simple' webhook has no tracked bracket to move — skip cleanly
-            # (not an error) so a stop/target-move signal doesn't spam failures.
-            state.log_event("info", f"{tag}move_sl ignored for {root} — 'simple' "
-                            "strategy has no bracket to move")
-            return {"status": "skipped", "reason": "move_sl_unsupported_simple", "action": action}
-        return await _handle_move_sl(payload, root, executors, active_map, tag, webhook)
-    if action == "trail_active":
-        if strategy == "simple":
-            state.log_event("info", f"{tag}Trailing active for {root} (no-op on 'simple' strategy)")
-            return {"status": "ok", "action": action, "note": "acknowledged", "simulated": simulate}
-        return await _handle_trail_active(payload, root, executors, active_map, tag, webhook)
+    # Serialise all signals for this webhook+symbol so concurrent events (e.g. two
+    # TP moves arriving together) don't race on the shared active-trade state.
+    lock_key = f"{context.get_area()}:{'sim' if simulate else 'live'}:{webhook['id']}:{root}"
+    async with _trade_lock(lock_key):
+        if action in ("buy", "sell"):
+            if strategy == "simple":
+                return await _handle_simple_entry(payload, action, root, target, executors, active_map, tag, webhook)
+            return await _handle_entry(payload, action, root, target, executors, active_map, tag, webhook)
+        if action == "close_all":
+            return await _handle_close_all(root, target, executors, active_map, tag, webhook)
+        if action == "set_sl_tp":
+            return await _handle_set_sl_tp(payload, root, target, executors, active_map, tag, webhook)
+        if action == "move_sl":
+            if strategy == "simple":
+                # A 'simple' webhook has no tracked bracket to move — skip cleanly
+                # (not an error) so a stop/target-move signal doesn't spam failures.
+                state.log_event("info", f"{tag}move_sl ignored for {root} — 'simple' "
+                                "strategy has no bracket to move")
+                return {"status": "skipped", "reason": "move_sl_unsupported_simple", "action": action}
+            return await _handle_move_sl(payload, root, executors, active_map, tag, webhook)
+        if action == "trail_active":
+            if strategy == "simple":
+                state.log_event("info", f"{tag}Trailing active for {root} (no-op on 'simple' strategy)")
+                return {"status": "ok", "action": action, "note": "acknowledged", "simulated": simulate}
+            return await _handle_trail_active(payload, root, executors, active_map, tag, webhook)
 
     raise SignalError(f"Unknown action '{action}'")
 
@@ -760,21 +782,25 @@ async def _process_ts_hunter(payload, webhook, active_map, simulate):
         )
         return {"status": "skipped", "reason": "no_enabled_accounts"}
 
-    if event == "signal":
-        return await _handle_ts_hunter_entry(
-            payload, side, root, target, trade_id, executors, active_map, tag, webhook
-        )
-    if event == "management":
-        mgmt_action = str(payload.get("action", "")).lower().strip()
-        if mgmt_action == "partial_close_percent":
-            return await _handle_ts_hunter_partial_close(
-                payload, trade_id, executors, active_map, tag
+    # Serialise all events for this trade_id so two TP/management signals arriving
+    # together can't race on the trade's shared remaining-qty state.
+    lock_key = f"{context.get_area()}:{'sim' if simulate else 'live'}:ts:{trade_id}"
+    async with _trade_lock(lock_key):
+        if event == "signal":
+            return await _handle_ts_hunter_entry(
+                payload, side, root, target, trade_id, executors, active_map, tag, webhook
             )
-        if mgmt_action == "full_close":
-            return await _handle_ts_hunter_full_close(
-                payload, trade_id, target, executors, active_map, tag
-            )
-        raise SignalError(f"Unknown TS-Hunter management action '{mgmt_action}'")
+        if event == "management":
+            mgmt_action = str(payload.get("action", "")).lower().strip()
+            if mgmt_action == "partial_close_percent":
+                return await _handle_ts_hunter_partial_close(
+                    payload, trade_id, executors, active_map, tag
+                )
+            if mgmt_action == "full_close":
+                return await _handle_ts_hunter_full_close(
+                    payload, trade_id, target, executors, active_map, tag
+                )
+            raise SignalError(f"Unknown TS-Hunter management action '{mgmt_action}'")
 
     raise SignalError(f"Unknown TS-Hunter event '{event}'")
 
