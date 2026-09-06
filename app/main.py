@@ -13,7 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, config, context, crypto, db, health, history, http, journal, security, state
+from . import auth, config, context, crypto, db, health, history, http, journal, pnl, security, state
 from .discord_signals.routes import router as discord_router
 from .routers import ROUTERS
 from .web import BASE_DIR, is_auth_exempt, wants_html
@@ -54,7 +54,8 @@ async def _startup() -> None:
     _loop_tasks[:] = [asyncio.create_task(health.health_loop(), name="health-loop"),
                       asyncio.create_task(health.discord_health_loop(), name="discord-health-loop"),
                       asyncio.create_task(_history_prune_loop(), name="history-prune-loop"),
-                      asyncio.create_task(journal.scheduler_loop(), name="journal-import-loop")]
+                      asyncio.create_task(journal.scheduler_loop(), name="journal-import-loop"),
+                      asyncio.create_task(pnl.pnl_loop(), name="pnl-loop")]
 
 
 async def _history_prune_loop() -> None:

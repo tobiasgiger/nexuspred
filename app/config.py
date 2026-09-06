@@ -138,6 +138,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # carry a secret sent as the X-Webhook-Secret header.
     "discord_channels": [],
 
+    # --- Live P&L (Overview) --------------------------------------------------
+    # Seconds between cash-balance snapshots while a dashboard is open (0 = off).
+    # Idle areas are polled once a minute regardless.
+    "pnl_poll_seconds": 5,
+
     # --- Trading journal ------------------------------------------------------
     "journal_auto_import": True,        # import fills/trades from Tradovate once a day
     "journal_import_time": "23:30",     # local time (journal_timezone) — after the CME close

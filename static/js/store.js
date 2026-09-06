@@ -35,6 +35,7 @@ export function createStore(initial = {}) {
 export const store = createStore({
   me: null,            // {id, email, is_admin, features}
   status: null,        // /api/status
+  pnl: null,           // live account P&L (from /api/status, then the stream)
   settings: null,      // /api/settings (secrets masked)
   webhooks: [],
   tradeAccounts: [],

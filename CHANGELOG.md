@@ -4,6 +4,17 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.12
+- **Live P&L on the Overview** (`app/pnl.py`). A new *Today's P&L* card at the top of the
+  start page shows, per connected trade account and in total, today's realised P&L, the
+  open (unrealised) P&L of current positions, the week's realised P&L and the cash
+  balance — the broker's own figures from Tradovate's cash-balance snapshot, so no
+  market-data feed is needed. Polled every `pnl_poll_seconds` (default 5, Settings →
+  General) while a dashboard is open, once a minute when idle, backing off on errors;
+  changes are pushed over the live stream (`kind: "pnl"`), so the number moves within a
+  few seconds of a fill or a tick. `GET /api/pnl` (add `?refresh=1` to poll now);
+  `/api/status` carries the last snapshot for the first paint.
+
 ## 5.0.0-alpha.11
 - **Report windows adapt to the service.** Tradovate's reporting service answers
   "Too long range" above a certain span; the history import now starts with 30-day

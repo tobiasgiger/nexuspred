@@ -30,6 +30,7 @@ export const general = {
         ] },
         { title: "Connection", hint: "Fluxbridge connects to Tradovate with one access token per login (no username/password). Add logins under Tradovate Accounts, then Connect & Verify.", fields: [
           { name: "health_check_interval", type: "number", label: "Health check / token refresh interval (seconds)", min: 0, placeholder: "60 (0 = off)", hint: "How often sessions are verified and tokens renewed ahead of expiry." },
+          { name: "pnl_poll_seconds", type: "number", label: "Live P&L refresh (seconds)", min: 0, placeholder: "5 (0 = off)", width: "160px", hint: "How often the Overview's Today's P&L card asks Tradovate for realised / open P&L while a dashboard is open (idle: once a minute)." },
         ], after: h("div", { class: "form-actions" }, connectBtn) },
         { title: "Trading journal", hint: "Executed trades are imported from every enabled Tradovate login once a day (after the CME close) into the Journal page.", fields: [
           { name: "journal_auto_import", type: "switch", label: "Automatic daily import" },

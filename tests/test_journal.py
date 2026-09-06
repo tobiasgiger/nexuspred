@@ -399,23 +399,26 @@ async def test_history_from_performance_report(admin, monkeypatch):
         config.save_settings({"journal_history_days": 200, "journal_fee_per_side": 1.0})
     rec = await journal.import_area(1)
     assert rec["status"] == "ok", rec
-    # 200 days back from today (2026-09-06) → 7 windows of 30 days for the one account
+    # 200 days back from today → 7 windows of 30 days for the one account
+    from datetime import datetime as _dt, timedelta as _td
+    today = _dt.now(ZH).date()
     assert [r[1] for r in stub.requests] == ["DEMO11"] * 7 and stub.requests[0][0] == "Performance"
-    assert stub.requests[0][2] == "02/18/2026" and stub.requests[0][3] == "03/19/2026" and stub.requests[-1][3] == "09/06/2026"
+    assert stub.requests[0][2] == (today - _td(days=200)).strftime("%m/%d/%Y")
+    assert stub.requests[0][3] == (today - _td(days=171)).strftime("%m/%d/%Y") and stub.requests[-1][3] == today.strftime("%m/%d/%Y")
     assert rec["history_new"] == 2 and rec["trades_new"] == 2
     hist = [t for t in db.list_journal_trades(1) if t["source"] == "report"]
     assert [(t["exit_ts"][:10], t["symbol"], t["side"], t["gross_pnl"], t["fees"], t["net_pnl"]) for t in hist] == [
         ("2026-07-10", "MNQU6", "long", 20.0, 2.0, 18.0), ("2026-08-15", "MESU6", "short", -100.0, 4.0, -104.0)]
     assert hist[0]["pair_id"] == "pair:7001:7002" and hist[0]["value_per_point"] == 2.0
     with context.use_area(1):
-        assert config.load_settings()["journal_report_cursor"] == {"DEMO11": "2026-09-06"}
+        assert config.load_settings()["journal_report_cursor"] == {"DEMO11": today.isoformat()}
     import json as _json
     diag = _json.loads(rec["detail"])["Login A"]["reports"]["DEMO11"]
     assert diag["windows"] == 7 and diag["rows"] == 2 and diag["new"] == 2 and diag["columns"].startswith("symbol,")
     # incremental: one window from the cursor minus the overlap, nothing new
     stub.requests.clear()
     rec2 = await journal.import_area(1)
-    assert len(stub.requests) == 1 and stub.requests[0][2] == "09/03/2026" and rec2["history_new"] == 0
+    assert len(stub.requests) == 1 and stub.requests[0][2] == (today - _td(days=3)).strftime("%m/%d/%Y") and rec2["history_new"] == 0
     assert len([t for t in db.list_journal_trades(1) if t["source"] == "report"]) == 2
 
 
@@ -471,7 +474,8 @@ async def test_report_window_shrinks_on_too_long_range(admin, monkeypatch):
     assert rec["history_new"] == 2
     with context.use_area(1):
         s = config.load_settings()
-    assert s["journal_report_window"] == 7 and s["journal_report_cursor"] == {"DEMO11": "2026-09-06"}
+    from datetime import datetime as _dt
+    assert s["journal_report_window"] == 7 and s["journal_report_cursor"] == {"DEMO11": _dt.now(ZH).date().isoformat()}
     # next run starts with the remembered span, no probing
     seen.clear()
     await journal.import_area(1)

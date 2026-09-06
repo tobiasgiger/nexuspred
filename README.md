@@ -539,6 +539,7 @@ the dashboard **Update** button works.
 | `GET`  | `/api/status` | Connection + trading status, trade accounts, active trades |
 | `GET/POST` | `/api/settings` | Read / update settings (secrets masked; only the keys you send change) |
 | `GET`  | `/api/orders` `/api/signals` `/api/events` | Rolling logs |
+| `GET`  | `/api/pnl` | Live account P&L: today's realised, open, week, cash per account (`?refresh=1` polls Tradovate now) |
 | `GET`  | `/api/journal/overview` | Journal stats, per-period buckets, equity curve for a filter slice (`range`/`frm`/`to`, `account`, `symbol`, `side`, `period`) |
 | `GET`  | `/api/journal/calendar` | Daily net P&L for a month (`month=YYYY-MM`) |
 | `GET`  | `/api/journal/trades` | Imported round-trip trades (filters as above, `limit`, `before`) |
@@ -552,7 +553,7 @@ the dashboard **Update** button works.
 | `GET`  | `/api/history/orders` | Persisted orders; `limit`, `before`, `symbol`, `account` |
 | `GET`  | `/api/history/stats` | Per-day signal outcomes + order counts for the last `days` (default 7) |
 | `POST` | `/api/rollover/check` | Re-run the contract-rollover check for the caller's area |
-| `GET`  | `/api/stream` | Live feed (Server-Sent Events): `event`, `signal`, `order`, `session`, `discord` messages + `ping` heartbeat |
+| `GET`  | `/api/stream` | Live feed (Server-Sent Events): `event`, `signal`, `order`, `session`, `discord`, `pnl` messages + `ping` heartbeat |
 | `POST` | `/api/flatten-all` | 🆘 Cancel every working order and flatten every position on all accounts (ignores the trading switch) |
 | `POST` | `/api/alerts/test` | Send a test notification on every enabled alert channel |
 | `GET`  | `/api/positions` | Live Tradovate positions |

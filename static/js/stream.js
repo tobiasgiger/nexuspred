@@ -52,6 +52,7 @@ export function connectStream() {
       case "order": prepend("orders", d); store.set("statusDirty", Date.now()); break;
       case "session": store.update("status", (s) => patchSession(s, d)); store.set("statusDirty", Date.now()); break;
       case "discord": prepend("discordFeed", d); break;
+      case "pnl": store.set("pnl", d); break;
       default: break;
     }
   };

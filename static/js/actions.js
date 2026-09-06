@@ -26,6 +26,7 @@ export const actions = {
   refreshStatus: () => quiet(async () => {
     const s = await api.get("/api/status");
     setPublicOrigin(s.public_url);
+    if (s.pnl && s.pnl.ts) store.set("pnl", s.pnl);
     store.set("status", s);
     return s;
   }),

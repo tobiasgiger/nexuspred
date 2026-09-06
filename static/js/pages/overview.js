@@ -1,6 +1,8 @@
 /* Overview: KPIs, connection health, positions, active trades, recent orders — all live. */
-import { h, tag, card, fmtTime, fmtDateTime, pageHead, debounce, clear } from "../ui.js";
+import { h, tag, card, fmtTime, fmtDateTime, pageHead, debounce, clear, toast } from "../ui.js";
 import { icon } from "../icons.js";
+import { api } from "../api.js";
+import { fmtMoney, fmtSigned } from "../charts.js";
 import { store, can } from "../store.js";
 import { actions } from "../actions.js";
 import { dataTable } from "../components/table.js";
@@ -97,11 +99,43 @@ export default {
         h("button", { class: "btn btn-sm", onClick: () => navigate("/settings/symbols") }, "Open symbol map"));
     }
 
+    // ---- live P&L (today's realised + open, per account) -----------------
+    const pnlHero = h("div", { class: "journal-hero" }, "—");
+    const pnlSub = h("div", { class: "muted", style: "font-size:12.5px" }, "Waiting for the first snapshot from Tradovate…");
+    const pnlRows = h("div", { class: "pnl-rows" });
+    const pnlStamp = h("span", { class: "muted", style: "font-size:11px" }, "");
+    const pnlTone = (v) => (Number(v) > 0 ? "pos" : Number(v) < 0 ? "neg" : "");
+    const money = (v) => h("span", { class: `pnl ${pnlTone(v)}` }, fmtSigned(v, 2));
+    function paintPnl(p) {
+      if (!p || !p.ts) return;
+      pnlHero.textContent = fmtSigned(p.total, 2);
+      pnlHero.className = "journal-hero " + pnlTone(p.total);
+      clear(pnlSub);
+      pnlSub.append("Today · realised ", money(p.realized), " · open ", money(p.open), " · week ", money(p.week));
+      if (p.error) pnlSub.append(h("span", { class: "neg" }, ` · ${p.error}`));
+      clear(pnlRows);
+      for (const a of p.accounts || []) {
+        pnlRows.append(h("div", { class: "pnl-row" },
+          h("span", { class: "pnl-acct" }, a.spec || String(a.account_id), a.environment === "live" ? [" ", tag("live", "accent")] : null),
+          h("span", { class: "pnl-cell" }, h("span", { class: "k" }, "realised"), money(a.realized)),
+          h("span", { class: "pnl-cell" }, h("span", { class: "k" }, "open"), money(a.open)),
+          h("span", { class: "pnl-cell" }, h("span", { class: "k" }, "week"), money(a.week)),
+          h("span", { class: "pnl-cell" }, h("span", { class: "k" }, "balance"), h("span", null, fmtMoney(a.cash, 2)))));
+      }
+      if (!(p.accounts || []).length) pnlRows.append(h("div", { class: "muted" }, "No connected trade account — connect a login under Settings → Tradovate Accounts."));
+      pnlStamp.textContent = `updated ${fmtTime(p.ts)}`;
+    }
+    const pnlCard = card({ title: "Today's P&L", actions: [pnlStamp,
+      h("button", { class: "btn btn-ghost btn-sm", title: "Refresh now", onClick: async () => { try { paintPnl(await api.get("/api/pnl?refresh=1")); } catch (e) { toast(e.message, "error"); } } }, icon("refresh"))] },
+      pnlHero, pnlSub, pnlRows);
+    pnlCard.classList.add("pnl-card");
+
     root.append(
       pageHead("Overview", "Live view of your bridge: broker sessions, positions, tracked trades and the latest orders.", [
         h("button", { class: "btn", onClick: () => actions.healthCheck() }, icon("refresh"), "Check connections"),
       ]),
       rollover,
+      pnlCard,
       h("div", { class: "kpis" }, Object.values(k).filter(Boolean).map((x) => x.el)),
       card({ title: "Connection health", actions: [h("button", { class: "btn btn-ghost btn-sm", onClick: () => navigate("/settings/accounts") }, "Manage logins")] }, sessions.el),
       h("div", { class: "grid grid-2" },
@@ -112,6 +146,7 @@ export default {
 
     const refreshPositionsSoon = debounce(() => actions.refreshPositions(), 1500);
     const unsubs = [
+      store.subscribe("pnl", paintPnl, { immediate: true }),
       store.subscribe("status", (s) => {
         if (!s) return;
         const c = s.connection || {};

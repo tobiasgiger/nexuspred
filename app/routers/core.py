@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 
-from .. import alerts, config, context, db, rollover, security, signals, state, tradovate
+from .. import alerts, config, context, db, pnl, rollover, security, signals, state, tradovate
 from ..tradovate import TradovateError
 from ..web import BASE_DIR, render
 from .accounts import trade_accounts_overview
@@ -58,6 +58,7 @@ async def api_status() -> dict[str, Any]:
         "trading_enabled": config.load_settings().get("trading_enabled", False),
         "public_url": config.PUBLIC_URL,
         "rollover": state.rollover_warnings(),
+        "pnl": state.pnl(),
     }
 
 
@@ -117,6 +118,15 @@ async def api_save_settings(request: Request) -> dict[str, Any]:
     config.save_settings(updates)
     state.log_event("info", "Settings updated")
     return config.public_settings()
+
+
+@router.get("/api/pnl")
+async def api_pnl(refresh: bool = False) -> dict[str, Any]:
+    """Live account P&L (today's realised, open, week, cash) — the last poll,
+    or a fresh one with ``?refresh=1``."""
+    if refresh:
+        return await pnl.refresh_area(context.get_area())
+    return state.pnl()
 
 
 @router.post("/api/flatten-all")

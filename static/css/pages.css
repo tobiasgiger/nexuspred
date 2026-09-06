@@ -113,3 +113,12 @@
 .pnl.pos { color: var(--green); } .pnl.neg { color: var(--red); }
 .journal-note { color: var(--text-dim); font-size: 12px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .refetching { opacity: .55; transition: opacity .15s; }
+
+/* ---- live P&L card (Overview) ---- */
+.pnl-card .journal-hero { margin-top: 2px; }
+.pnl-rows { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+.pnl-row { display: grid; grid-template-columns: minmax(120px, 1.4fr) repeat(4, minmax(0, 1fr)); gap: 8px; align-items: center; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-inset); font-size: 13px; }
+.pnl-acct { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pnl-cell { display: flex; flex-direction: column; gap: 1px; font-variant-numeric: tabular-nums; }
+.pnl-cell .k { color: var(--text-dim); font-size: 10.5px; text-transform: uppercase; letter-spacing: .4px; }
+@media (max-width: 720px) { .pnl-row { grid-template-columns: 1fr 1fr; } .pnl-acct { grid-column: 1 / -1; } }

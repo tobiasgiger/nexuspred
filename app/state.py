@@ -31,7 +31,7 @@ class _Sub:
 
 
 class _AreaState:
-    __slots__ = ("signals", "orders", "events", "sessions", "subscribers", "rollover")
+    __slots__ = ("signals", "orders", "events", "sessions", "subscribers", "rollover", "pnl")
 
     def __init__(self) -> None:
         self.signals: Deque[dict[str, Any]] = deque(maxlen=_MAX)
@@ -40,6 +40,7 @@ class _AreaState:
         self.sessions: dict[str, dict[str, Any]] = {}
         self.subscribers: set[_Sub] = set()
         self.rollover: list[dict[str, Any]] = []  # contract-rollover warnings (app.rollover)
+        self.pnl: dict[str, Any] = {}  # latest live account P&L (app.pnl)
 
 
 _areas: dict[int, _AreaState] = {}
@@ -89,6 +90,33 @@ def subscribe(area_id: int | None = None) -> _Sub:
     with _lock:
         st.subscribers.add(sub)
     return sub
+
+
+def subscriber_count(area_id: int | None = None) -> int:
+    """How many live-stream connections an area has (0 = nobody is watching)."""
+    aid = area_id if area_id is not None else context.get_area()
+    with _lock:
+        st = _areas.get(aid)
+        return len(st.subscribers) if st else 0
+
+
+def set_pnl(summary: dict[str, Any], area_id: int | None = None) -> bool:
+    """Store the latest live P&L; True when the figures changed."""
+    st = _st_for(area_id) if area_id is not None else _st()
+    keys = ("realized", "open", "week", "cash", "error")
+    with _lock:
+        prev = st.pnl
+        changed = (not prev or any(prev.get(k) != summary.get(k) for k in keys)
+                   or [(a["account_id"], a["realized"], a["open"]) for a in prev.get("accounts", [])]
+                   != [(a["account_id"], a["realized"], a["open"]) for a in summary.get("accounts", [])])
+        st.pnl = dict(summary)
+    return changed
+
+
+def pnl(area_id: int | None = None) -> dict[str, Any]:
+    st = _st_for(area_id) if area_id is not None else _st()
+    with _lock:
+        return dict(st.pnl)
 
 
 def unsubscribe(sub: _Sub, area_id: int | None = None) -> None:
