@@ -597,9 +597,11 @@ async def test_ts_hunter_simulate_mode_uses_sim_client(admin):
     for p, rem in ((tp1, 3), (tp2, 2), (tp3, 1)):
         await signals.process(p, w, simulate=True)
         assert active(entry["trade_id"], simulate=True)["accounts"]["SIM"]["remaining_qty"] == rem
+    assert "1:sim:ts:TS-HUNTER-SELL-1787239680000" in signals._trade_locks
     await signals.process(full, w, simulate=True)
     assert active(simulate=True) == {}
-    assert "1:sim:ts:TS-HUNTER-SELL-1787239680000" in signals._trade_locks
+    # v5: the per-trade lock is released once the trade is closed (v4 kept it forever).
+    assert "1:sim:ts:TS-HUNTER-SELL-1787239680000" not in signals._trade_locks
 
 
 # ================================================================ simulate

@@ -4,10 +4,12 @@ webhook-token index."""
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 
 import pytest
 
-from app import config, context, db, http, main
+from app import config, context, db, http, main, signals, tradovate
+from tests.helpers import FakeExecutor
 
 
 # ------------------------------------------------------------- http pool
@@ -183,3 +185,161 @@ def test_version_is_cached_until_forced(monkeypatch):
     assert config.get_version(force=True) == "0.0.0"
     monkeypatch.undo()
     assert config.get_version(force=True) == "5.0.0-alpha.1"
+
+
+# ---------------------------------------------------------- session reload
+_TOKENS = [{"name": "L1", "environment": "demo", "enabled": True, "access_token": "t1",
+            "md_token": "m1", "qty_multiplier": 1,
+            "accounts": [{"spec": "A1", "id": 1, "enabled": True, "qty_multiplier": 1}]}]
+
+
+def test_reload_keeps_unchanged_sessions_and_adopts_credentials(admin):
+    config.save_settings({"token_accounts": _TOKENS})
+    m = tradovate.manager()
+    m.reload()
+    s1 = m.all()[0]
+    s1._contract_cache["MNQ"] = ("MNQU6", datetime.now(timezone.utc))
+    m.reload()
+    assert m.all()[0] is s1 and "MNQ" in s1._contract_cache  # unchanged → same object
+
+    # The session persisting its own renewed token must not evict itself.
+    s1._store_token({"accessToken": "renewed", "mdAccessToken": "m2"})
+    m.reload()
+    assert m.all()[0] is s1 and s1._token == "renewed" and s1._md_token == "m2"
+
+    # A token the user re-pasted in Settings is adopted in place.
+    config.update_token_account(0, access_token="pasted", md_token="m3", token_expires="")
+    m.reload()
+    assert m.all()[0] is s1 and s1._token == "pasted" and s1._md_token == "m3"
+
+    # A config change (toggle / environment / accounts) rebuilds the session.
+    config.update_token_account(0, enabled=False)
+    m.reload()
+    s2 = m.all()[0]
+    assert s2 is not s1 and s2.enabled is False and s2._token == "pasted"
+    config.update_token_account(0, accounts=[{"spec": "A1", "id": 1, "enabled": False, "qty_multiplier": 2}])
+    m.reload()
+    assert m.all()[0] is not s2
+
+    # Logins added / removed.
+    config.save_settings({"token_accounts": [*_TOKENS, {**_TOKENS[0], "name": "L2"}]})
+    m.reload()
+    assert [s.name for s in m.all()] == ["L1", "L2"]
+    config.save_settings({"token_accounts": []})
+    m.reload()
+    assert m.all() == []
+
+
+async def test_connect_persists_accounts_without_evicting_session(admin, monkeypatch):
+    config.save_settings({"token_accounts": _TOKENS})
+    m = tradovate.manager()
+    m.reload()
+    s = m.all()[0]
+
+    async def token():
+        return "t1"
+
+    async def accounts():
+        return [{"name": "A1", "id": 1}, {"name": "A2", "id": 2}]
+
+    async def request(method, path, **kw):
+        return {"name": "me"}
+
+    monkeypatch.setattr(s, "_get_token", token)
+    monkeypatch.setattr(s, "list_accounts", accounts)
+    monkeypatch.setattr(s, "_request", request)
+    await s.connect()
+    assert [a["spec"] for a in s.accounts] == ["A1", "A2"]
+    assert [a["spec"] for a in config.load_settings()["token_accounts"][0]["accounts"]] == ["A1", "A2"]
+    m.reload()
+    assert m.all()[0] is s  # its own discovery write is not mistaken for a user edit
+
+
+# -------------------------------------------------------- concurrency paths
+async def test_positions_endpoint_gathers_all_accounts(client, monkeypatch):
+    class Failing(FakeExecutor):
+        async def positions(self):
+            raise tradovate.TradovateError("down")
+
+    execs = [FakeExecutor("A", positions=[{"symbol": "MNQU6", "netPos": 1}]),
+             Failing("C"),
+             FakeExecutor("B", positions=[{"symbol": "ESU6", "netPos": -1}])]
+    monkeypatch.setattr(tradovate.SessionManager, "enabled", lambda self: execs)
+    r = await client.get("/api/positions")
+    assert [p["symbol"] for p in r.json()] == ["MNQU6", "ESU6"]  # order kept, failure skipped
+
+
+async def test_cancel_working_is_concurrent_and_collects_errors():
+    ex = FakeExecutor("A", working=[{"id": 1}, {"id": None}, {"id": 3}])
+
+    async def cancel(order_id):
+        ex.calls.append(("cancel", {"order_id": order_id}))
+        if order_id == 3:
+            raise tradovate.TradovateError("gone")
+        await asyncio.sleep(0.01)
+        return {}
+    ex.cancel_order = cancel
+    errors: list[str] = []
+    assert await signals._cancel_working(ex, "", errors) == 1
+    assert errors == ["cancel 3: gone"]
+    assert [c["order_id"] for c in ex.of("cancel")] == [1, 3]
+
+    class Broken(FakeExecutor):
+        async def working_orders(self):
+            raise tradovate.TradovateError("list failed")
+    errs: list[str] = []
+    assert await signals._cancel_working(Broken("B"), "", errs) == 0 and errs == ["list orders: list failed"]
+
+
+@pytest.fixture
+def executing(area, monkeypatch):
+    config.save_settings({"trading_enabled": True})
+    fake = FakeExecutor("A", working=[{"id": 11}])
+    monkeypatch.setattr(signals, "_webhook_executors", lambda wh: [fake])
+
+    async def no_alert(*a, **k):
+        pass
+    monkeypatch.setattr(signals.alerts, "trade_executed", no_alert)
+    return fake
+
+
+async def test_trade_locks_pruned_after_close_all(executing, webhook_factory):
+    wh = webhook_factory("K", strategy="simple")
+    await signals.process({"action": "buy", "symbol": "MNQ1!", "qty": 1}, wh)
+    key = f"1:live:{wh['id']}:MNQ"
+    assert key in signals._trade_locks
+    await signals.process({"action": "close_all", "symbol": "MNQ1!"}, wh)
+    assert key not in signals._trade_locks
+    assert executing.of("cancel") == [{"order_id": 11}] and executing.of("liquidate") == [{"symbol": "MNQU6"}]
+
+
+async def test_trade_locks_pruned_after_ts_hunter_full_close(executing, webhook_factory):
+    wh = webhook_factory("T", strategy="ts_hunter")
+    await signals.process({"event": "signal", "trade_id": "t1", "symbol": "MNQ1!", "side": "sell",
+                           "risk": {"value": 2}, "sl": {"value": 100}}, wh)
+    assert "1:live:ts:t1" in signals._trade_locks
+    await signals.process({"event": "management", "action": "partial_close_percent", "percent": 50,
+                           "trade_id": "t1", "symbol": "MNQ1!"}, wh)
+    assert "1:live:ts:t1" in signals._trade_locks  # still open
+    await signals.process({"event": "management", "action": "full_close", "trade_id": "t1",
+                           "symbol": "MNQ1!"}, wh)
+    assert "1:live:ts:t1" not in signals._trade_locks and signals.active_trades() == {}
+
+
+async def test_release_trade_lock_keeps_held_or_awaited_locks():
+    lk = signals._trade_lock("k")
+    await lk.acquire()
+    signals._release_trade_lock("k")
+    assert signals._trade_locks["k"] is lk  # held → kept
+
+    async def waiter():
+        async with lk:
+            pass
+    t = asyncio.create_task(waiter())
+    await asyncio.sleep(0)  # the waiter is now queued on the lock
+    lk.release()
+    signals._release_trade_lock("k")
+    assert signals._trade_locks["k"] is lk  # awaited → kept
+    await t
+    signals._release_trade_lock("k")
+    assert "k" not in signals._trade_locks

@@ -69,6 +69,43 @@ def _trade_lock(key: str) -> asyncio.Lock:
         return lk
 
 
+def _release_trade_lock(key: str) -> None:
+    """Drop a trade's lock once its position is closed (v4 kept every lock for
+    the life of the process — unbounded for TS-Hunter's per-trade ids). Only
+    when nobody holds or awaits it: a late signal already queued on the Lock
+    keeps using that object, so a second Lock must never appear beside it."""
+    with _trade_locks_guard:
+        lk = _trade_locks.get(key)
+        if lk is not None and not lk.locked() and not getattr(lk, "_waiters", None):
+            _trade_locks.pop(key, None)
+
+
+async def _cancel_working(ex: Any, tag: str, errors: list[str] | None = None) -> int:
+    """Cancel every working order on one account with all cancels in flight at
+    once. Returns how many were cancelled. Tradovate rejections are collected
+    (``errors``) or logged per order; anything else propagates, as in v4."""
+    try:
+        orders = await ex.working_orders()
+    except TradovateError as exc:
+        if errors is not None:
+            errors.append(f"list orders: {exc}")
+        else:
+            state.log_event("warn", f"{tag}Could not list working orders for {ex.name}: {exc}")
+        return 0
+    ids = [o.get("id") for o in orders if o.get("id") is not None]
+    results = await asyncio.gather(*(ex.cancel_order(oid) for oid in ids), return_exceptions=True)
+    cancelled = 0
+    for oid, r in zip(ids, results):
+        if isinstance(r, TradovateError):
+            if errors is not None:
+                errors.append(f"cancel {oid}: {r}")
+        elif isinstance(r, BaseException):
+            raise r
+        else:
+            cancelled += 1
+    return cancelled
+
+
 # Active-trade records are isolated per area (user workspace). Each maps
 # "<webhook_id>:<root>" -> trade record. Live and simulated tracked separately.
 _active: dict[int, dict[str, dict[str, Any]]] = {}
@@ -213,8 +250,7 @@ async def process(
 
     # Serialise all signals for this webhook+symbol so concurrent events (e.g. two
     # TP moves arriving together) don't race on the shared active-trade state.
-    lock_key = f"{context.get_area()}:{'sim' if simulate else 'live'}:{webhook['id']}:{root}"
-    async with _trade_lock(lock_key):
+    async def run() -> dict[str, Any]:
         if action in ("buy", "sell"):
             if strategy == "simple":
                 return await _handle_simple_entry(payload, action, root, target, executors, active_map, tag, webhook)
@@ -236,8 +272,14 @@ async def process(
                 state.log_event("info", f"{tag}Trailing active for {root} (no-op on 'simple' strategy)")
                 return {"status": "ok", "action": action, "note": "acknowledged", "simulated": simulate}
             return await _handle_trail_active(payload, root, executors, active_map, tag, webhook)
+        raise SignalError(f"Unknown action '{action}'")
 
-    raise SignalError(f"Unknown action '{action}'")
+    lock_key = f"{context.get_area()}:{'sim' if simulate else 'live'}:{webhook['id']}:{root}"
+    async with _trade_lock(lock_key):
+        result = await run()
+    if action == "close_all":
+        _release_trade_lock(lock_key)
+    return result
 
 
 async def _handle_simple_entry(payload, action, root, target, executors, active_map, tag, webhook):
@@ -408,17 +450,8 @@ async def _handle_entry(payload, action, root, target, executors, active_map, ta
 
 async def _handle_close_all(root, target, executors, active_map, tag, webhook):
     async def close_account(ex) -> int:
-        cancelled = 0
         contract = await ex.resolve_contract(target)
-        try:
-            for order in await ex.working_orders():
-                try:
-                    await ex.cancel_order(order["id"])
-                    cancelled += 1
-                except TradovateError:
-                    pass
-        except TradovateError as exc:
-            state.log_event("warn", f"{tag}Could not list working orders for {ex.name}: {exc}")
+        cancelled = await _cancel_working(ex, tag)
         await ex.liquidate_position(contract)
         return cancelled
 
@@ -464,35 +497,26 @@ async def flatten_all() -> dict[str, Any]:
         return {"status": "ok", "accounts": 0, "cancelled": 0, "flattened": 0, "errors": []}
 
     async def flatten(ex: AccountExecutor) -> tuple[int, int, list[str]]:
-        cancelled = 0
-        flattened = 0
         errors: list[str] = []
         # 1) Cancel every working order first (so stops/targets don't re-fill).
+        cancelled = await _cancel_working(ex, "", errors)
+        # 2) Flatten every open position (any symbol) on this account — all at once.
+        flattened = 0
         try:
-            for order in await ex.working_orders():
-                oid = order.get("id")
-                if oid is None:
-                    continue
-                try:
-                    await ex.cancel_order(oid)
-                    cancelled += 1
-                except TradovateError as exc:
-                    errors.append(f"cancel {oid}: {exc}")
-        except TradovateError as exc:
-            errors.append(f"list orders: {exc}")
-        # 2) Flatten every open position (any symbol) on this account.
-        try:
-            for pos in await ex.positions():
-                sym = pos.get("symbol")
-                if not sym:
-                    continue
-                try:
-                    await ex.liquidate_position(sym)
-                    flattened += 1
-                except TradovateError as exc:
-                    errors.append(f"flatten {sym}: {exc}")
+            positions = await ex.positions()
         except TradovateError as exc:
             errors.append(f"list positions: {exc}")
+            positions = []
+        symbols = [p.get("symbol") for p in positions if p.get("symbol")]
+        results = await asyncio.gather(*(ex.liquidate_position(s) for s in symbols),
+                                       return_exceptions=True)
+        for sym, r in zip(symbols, results):
+            if isinstance(r, TradovateError):
+                errors.append(f"flatten {sym}: {r}")
+            elif isinstance(r, BaseException):
+                raise r
+            else:
+                flattened += 1
         return cancelled, flattened, errors
 
     results = await asyncio.gather(*(flatten(ex) for ex in executors), return_exceptions=True)
@@ -784,14 +808,14 @@ async def _process_ts_hunter(payload, webhook, active_map, simulate):
 
     # Serialise all events for this trade_id so two TP/management signals arriving
     # together can't race on the trade's shared remaining-qty state.
-    lock_key = f"{context.get_area()}:{'sim' if simulate else 'live'}:ts:{trade_id}"
-    async with _trade_lock(lock_key):
+    mgmt_action = str(payload.get("action", "")).lower().strip() if event == "management" else ""
+
+    async def run() -> dict[str, Any]:
         if event == "signal":
             return await _handle_ts_hunter_entry(
                 payload, side, root, target, trade_id, executors, active_map, tag, webhook
             )
         if event == "management":
-            mgmt_action = str(payload.get("action", "")).lower().strip()
             if mgmt_action == "partial_close_percent":
                 return await _handle_ts_hunter_partial_close(
                     payload, trade_id, executors, active_map, tag
@@ -801,8 +825,14 @@ async def _process_ts_hunter(payload, webhook, active_map, simulate):
                     payload, trade_id, target, executors, active_map, tag
                 )
             raise SignalError(f"Unknown TS-Hunter management action '{mgmt_action}'")
+        raise SignalError(f"Unknown TS-Hunter event '{event}'")
 
-    raise SignalError(f"Unknown TS-Hunter event '{event}'")
+    lock_key = f"{context.get_area()}:{'sim' if simulate else 'live'}:ts:{trade_id}"
+    async with _trade_lock(lock_key):
+        result = await run()
+    if mgmt_action == "full_close":
+        _release_trade_lock(lock_key)  # the trade is over; its id never recurs
+    return result
 
 
 async def _handle_ts_hunter_entry(payload, side, root, target, trade_id, executors, active_map, tag, webhook):
@@ -982,16 +1012,7 @@ async def _handle_ts_hunter_full_close(payload, trade_id, target, executors, act
         targets = [(ex, target) for ex in executors]
 
     async def close_account(ex, contract) -> int:
-        cancelled = 0
-        try:
-            for order in await ex.working_orders():
-                try:
-                    await ex.cancel_order(order["id"])
-                    cancelled += 1
-                except TradovateError:
-                    pass
-        except TradovateError as exc:
-            state.log_event("warn", f"{tag}Could not list working orders for {ex.name}: {exc}")
+        cancelled = await _cancel_working(ex, tag)
         await ex.liquidate_position(contract)
         return cancelled
 

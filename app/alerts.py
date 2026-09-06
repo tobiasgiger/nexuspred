@@ -107,8 +107,8 @@ async def connection_lost(account: str, environment: str, error: str) -> None:
         return
     detail = f" — {error}" if error else ""
     message = f"🔴 **Connection lost** — account `{account}` ({environment}, Tradovate){detail}"
-    await _send_discord(message)
-    await _send_email(f"Fluxbridge: connection lost ({account})", message)
+    await asyncio.gather(_send_discord(message),
+                         _send_email(f"Fluxbridge: connection lost ({account})", message))
 
 
 async def connection_restored(account: str, environment: str) -> None:
@@ -116,8 +116,8 @@ async def connection_restored(account: str, environment: str) -> None:
     if not s.get("alert_on_connection_restored", True):
         return
     message = f"🟢 **Connection restored** — account `{account}` ({environment}, Tradovate)"
-    await _send_discord(message)
-    await _send_email(f"Fluxbridge: connection restored ({account})", message)
+    await asyncio.gather(_send_discord(message),
+                         _send_email(f"Fluxbridge: connection restored ({account})", message))
 
 
 async def trade_executed(
@@ -140,8 +140,8 @@ async def discord_listener_lost(error: str = "") -> None:
         return
     detail = f" — {error}" if error else ""
     message = f"🔴 **Discord listener offline** — the signal listener lost its Gateway connection{detail}"
-    await _send_discord(message)
-    await _send_email("Fluxbridge: Discord listener offline", message)
+    await asyncio.gather(_send_discord(message),
+                         _send_email("Fluxbridge: Discord listener offline", message))
 
 
 async def discord_listener_restored(user: str = "") -> None:
@@ -150,8 +150,8 @@ async def discord_listener_restored(user: str = "") -> None:
         return
     who = f" (as `{user}`)" if user else ""
     message = f"🟢 **Discord listener online** — the signal listener reconnected to the Gateway{who}"
-    await _send_discord(message)
-    await _send_email("Fluxbridge: Discord listener online", message)
+    await asyncio.gather(_send_discord(message),
+                         _send_email("Fluxbridge: Discord listener online", message))
 
 
 async def webhook_failed(webhook_name: str, reason: str) -> None:
@@ -162,8 +162,8 @@ async def webhook_failed(webhook_name: str, reason: str) -> None:
         f"⚠️ **Signal not executed** — webhook `{webhook_name}` received a signal but "
         f"execution failed: {reason}"
     )
-    await _send_discord(message)
-    await _send_email(f"Fluxbridge: signal not executed ({webhook_name})", message)
+    await asyncio.gather(_send_discord(message),
+                         _send_email(f"Fluxbridge: signal not executed ({webhook_name})", message))
 
 
 async def test_alert() -> dict[str, Any]:
@@ -173,8 +173,11 @@ async def test_alert() -> dict[str, Any]:
     channels = {"discord": bool(s.get("alert_discord_enabled") and s.get("alert_discord_webhook_url")),
                 "email": bool(s.get("alert_email_enabled") and s.get("alert_email_to")
                               and s.get("alert_smtp_username") and s.get("alert_smtp_password"))}
+    sends = []
     if channels["discord"]:
-        await _send_discord(message)
+        sends.append(_send_discord(message))
     if channels["email"]:
-        await _send_email("Fluxbridge: test alert", message)
+        sends.append(_send_email("Fluxbridge: test alert", message))
+    if sends:
+        await asyncio.gather(*sends)
     return channels

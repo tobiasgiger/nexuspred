@@ -73,6 +73,31 @@ def _parse_iso(value: str | None) -> datetime | None:
         return None
 
 
+def _fingerprint(entry: dict[str, Any]) -> str:
+    """The parts of a token_accounts entry that shape a session (everything but
+    the credentials, which are adopted in place — see ``adopt_credentials``)."""
+    return json.dumps({
+        "name": entry.get("name") or "",
+        "environment": entry.get("environment") or "demo",
+        "enabled": bool(entry.get("enabled")),
+        "qty_multiplier": entry.get("qty_multiplier", 1) or 1,
+        "account_spec": entry.get("account_spec") or "",
+        "account_id": entry.get("account_id") or 0,
+        "accounts": entry.get("accounts") or [],
+    }, sort_keys=True, default=str)
+
+
+_bg_tasks: set[asyncio.Task] = set()
+
+
+def _fire(coro: Any) -> None:
+    """Run an alert in the background (context — and so the area — is inherited).
+    A 15 s SMTP handshake must never stall a health check or a connect."""
+    task = asyncio.get_running_loop().create_task(coro)
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
+
+
 class TradovateSession:
     """One Tradovate account, authenticated by its own (renewable) access token."""
 
@@ -93,8 +118,31 @@ class TradovateSession:
         self._token_expires = _parse_iso(entry.get("token_expires")) or _decode_jwt_exp(self._token)
         self._lock = asyncio.Lock()
         self._contract_cache: dict[str, tuple[str, datetime]] = {}
+        self.fingerprint = _fingerprint(entry)
         if self._token_expires:
             state.set_session_status(self.name, token_expires=self._token_expires.isoformat())
+
+    def adopt_credentials(self, entry: dict[str, Any]) -> None:
+        """Pick up a token the user (re)pasted in Settings without rebuilding the
+        session. A token the session persisted itself (after a renewal) is
+        already current, so the in-memory expiry stays authoritative."""
+        token = entry.get("access_token") or None
+        md = entry.get("md_token") or None
+        if token == self._token:
+            self._md_token = md
+            return
+        self._token = token
+        self._md_token = md
+        self._token_expires = _parse_iso(entry.get("token_expires")) or _decode_jwt_exp(token)
+        if self._token_expires:
+            state.set_session_status(self.name, token_expires=self._token_expires.isoformat())
+
+    def _refresh_fingerprint(self) -> None:
+        """Re-sync after the session persisted its own account discovery, so the
+        next reload() doesn't mistake that write for a user edit."""
+        entries = config.load_settings(area_id=self.area_id).get("token_accounts") or []
+        if 0 <= self.idx < len(entries):
+            self.fingerprint = _fingerprint(entries[self.idx])
 
     def _normalize_accounts(self, entry: dict[str, Any]) -> list[dict[str, Any]]:
         """Build the per-login list of trade accounts with their execution toggles.
@@ -237,9 +285,9 @@ class TradovateSession:
         was_connected = state.session_status(self.name).get("connected") if had_prior else None
         state.set_session_status(self.name, connected=connected, **fields)
         if had_prior and was_connected and not connected:
-            await alerts.connection_lost(self.name, self.environment, fields.get("last_error", ""))
+            _fire(alerts.connection_lost(self.name, self.environment, fields.get("last_error", "")))
         elif had_prior and not was_connected and connected:
-            await alerts.connection_restored(self.name, self.environment)
+            _fire(alerts.connection_restored(self.name, self.environment))
 
     async def connect(self) -> dict[str, Any]:
         try:
@@ -255,6 +303,7 @@ class TradovateSession:
                 config.update_token_account(
                     self.idx, area_id=self.area_id, accounts=self.accounts,
                     account_spec=self.account_spec, account_id=self.account_id)
+                self._refresh_fingerprint()
             except OSError:
                 pass
             me = await self._request("GET", "/auth/me")
@@ -469,9 +518,21 @@ class SessionManager:
         self._sessions: list[TradovateSession] | None = None
 
     def reload(self) -> None:
+        """Sync sessions with settings — keeping every session whose login config
+        (name / environment / enabled / accounts) is unchanged, so its token
+        state, renew lock and contract cache survive. Re-pasted credentials are
+        adopted in place. (v4 rebuilt every session on each health cycle.)"""
         entries = config.load_settings(area_id=self.area_id).get("token_accounts") or []
-        self._sessions = [TradovateSession(i, e, area_id=self.area_id)
-                          for i, e in enumerate(entries)]
+        prev = self._sessions or []
+        fresh: list[TradovateSession] = []
+        for i, e in enumerate(entries):
+            old = prev[i] if i < len(prev) else None
+            if old is not None and old.fingerprint == _fingerprint(e):
+                old.adopt_credentials(e)
+                fresh.append(old)
+            else:
+                fresh.append(TradovateSession(i, e, area_id=self.area_id))
+        self._sessions = fresh
 
     def all(self) -> list[TradovateSession]:
         if self._sessions is None:

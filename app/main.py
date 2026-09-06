@@ -640,13 +640,15 @@ async def api_stream(request: Request) -> StreamingResponse:
 
 @app.get("/api/positions")
 async def api_positions() -> Any:
-    out: list[dict[str, Any]] = []
-    for sess in tradovate.manager().enabled():
+    """Open positions across every enabled account, fetched concurrently."""
+    async def one(ex) -> list[dict[str, Any]]:
         try:
-            out.extend(await sess.positions())
+            return await ex.positions()
         except TradovateError:
-            pass
-    return out
+            return []
+
+    results = await asyncio.gather(*(one(ex) for ex in tradovate.manager().enabled()))
+    return [p for chunk in results for p in chunk]
 
 
 @app.post("/api/connect")
@@ -901,52 +903,59 @@ async def _refresh_session(sess) -> float:
     return sess.seconds_until_refresh(fallback=interval) if ok else 60.0
 
 
+async def _health_area(area_id: int) -> list[float]:
+    """One health cycle for one area: keep its Discord supervisor alive and
+    refresh every session concurrently. Returns the sessions' next-check delays."""
+    with context.use_area(area_id):
+        # Make sure every area has a Discord supervisor (idempotent).
+        try:
+            discord_listener.manager_for(area_id).start()
+        except Exception:  # noqa: BLE001
+            pass
+        interval = int(config.load_settings(area_id=area_id).get("health_check_interval", 60) or 0)
+        if interval <= 0:
+            return []
+        mgr = tradovate.manager_for(area_id)
+        mgr.reload()  # diff-based: unchanged logins keep their session
+        sessions = mgr.all()
+        if not sessions:
+            return []
+        delays = await asyncio.gather(*(_refresh_session(s) for s in sessions),
+                                      return_exceptions=True)
+        return [d for d in delays if isinstance(d, (int, float))]
+
+
 async def _health_loop() -> None:
-    """Keep every area's account tokens alive proactively, in parallel per area."""
-    import asyncio
+    """Keep every area's account tokens alive proactively — all areas in parallel
+    (v4 walked them one after another, so one slow login delayed everyone)."""
     while True:
         try:
             area_ids = db.all_area_ids()
         except Exception:  # noqa: BLE001
             area_ids = []
-        next_delays: list[float] = []
-        for area_id in area_ids:
-            with context.use_area(area_id):
-                # Make sure every area has a Discord supervisor (idempotent).
-                try:
-                    discord_listener.manager_for(area_id).start()
-                except Exception:  # noqa: BLE001
-                    pass
-                interval = int(config.load_settings(area_id=area_id).get("health_check_interval", 60) or 0)
-                if interval <= 0:
-                    continue
-                mgr = tradovate.manager_for(area_id)
-                mgr.reload()
-                sessions = mgr.all()
-                if not sessions:
-                    continue
-                delays = await asyncio.gather(*(_refresh_session(s) for s in sessions),
-                                              return_exceptions=True)
-                next_delays += [d for d in delays if isinstance(d, (int, float))]
+        results = await asyncio.gather(*(_health_area(a) for a in area_ids), return_exceptions=True)
+        next_delays = [d for r in results if isinstance(r, list) for d in r]
         await asyncio.sleep(min(next_delays) if next_delays else 30.0)
+
+
+async def _discord_tick(area_id: int) -> None:
+    try:
+        with context.use_area(area_id):
+            await discord_listener.manager_for(area_id).health_tick()
+    except Exception:  # noqa: BLE001 - a health tick must never crash the loop
+        pass
 
 
 async def _discord_health_loop() -> None:
     """Evaluate every area's Discord listener health on a steady cadence and fire
     lost/restored alerts. Kept separate from the token health loop (which paces
     itself to token expiry, sometimes minutes apart) so outages surface quickly."""
-    import asyncio
     while True:
         try:
             area_ids = db.all_area_ids()
         except Exception:  # noqa: BLE001
             area_ids = []
-        for area_id in area_ids:
-            try:
-                with context.use_area(area_id):
-                    await discord_listener.manager_for(area_id).health_tick()
-            except Exception:  # noqa: BLE001 - a health tick must never crash the loop
-                pass
+        await asyncio.gather(*(_discord_tick(a) for a in area_ids))
         await asyncio.sleep(30.0)
 
 

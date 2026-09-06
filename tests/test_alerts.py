@@ -5,6 +5,7 @@ import pytest
 
 from app import alerts, config, main, state
 from app.tradovate import TradovateSession
+from tests.helpers import settle
 
 
 @pytest.fixture
@@ -25,25 +26,33 @@ def capture(monkeypatch, admin):
 
 # ------------------------------------------------------- connection transitions
 async def test_connection_alerts_fire_only_on_transitions(capture):
+    # v5 fires connection alerts as background tasks (a slow SMTP handshake must
+    # not stall the health loop), hence the settle() after each transition.
     discord, email = capture
     sess = TradovateSession(0, {"name": "L1", "environment": "demo"})
     await sess._set_connected(True, last_error="")       # first observation: silent
+    await settle()
     assert discord == [] and email == []
     assert state.has_session("L1")
     await sess._set_connected(False, last_error="boom")  # lost
+    await settle()
     assert len(discord) == 1 and "Connection lost" in discord[0] and "`L1`" in discord[0] and "boom" in discord[0]
     assert email[0][0] == "Fluxbridge: connection lost (L1)"
     await sess._set_connected(False, last_error="boom")  # still down: silent
+    await settle()
     assert len(discord) == 1
     await sess._set_connected(True, last_error="")       # restored
+    await settle()
     assert len(discord) == 2 and "Connection restored" in discord[1] and email[1][0] == "Fluxbridge: connection restored (L1)"
     await sess._set_connected(True, last_error="")       # unchanged: silent
+    await settle()
     assert len(discord) == 2
 
 
 async def test_first_observation_disconnected_is_silent(capture):
     discord, _ = capture
     await TradovateSession(0, {"name": "L2"})._set_connected(False, last_error="x")
+    await settle()
     assert discord == []
 
 
