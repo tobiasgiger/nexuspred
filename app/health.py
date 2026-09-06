@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from . import config, context, db, state, tradovate
+from . import config, context, db, rollover, state, tradovate
 from .discord_signals import listener as discord_listener
 
 
@@ -54,6 +54,12 @@ async def health_loop() -> None:
             area_ids = []
         results = await asyncio.gather(*(_health_area(a) for a in area_ids), return_exceptions=True)
         next_delays = [d for r in results if isinstance(r, list) for d in r]
+        # Once a day per area: are the mapped contracts about to roll? (Runs after
+        # the sessions were refreshed so the broker's exact expiry can be used.)
+        try:
+            await rollover.check_all()
+        except Exception:  # noqa: BLE001
+            pass
         await asyncio.sleep(min(next_delays) if next_delays else 30.0)
 
 

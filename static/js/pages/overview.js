@@ -1,5 +1,5 @@
 /* Overview: KPIs, connection health, positions, active trades, recent orders — all live. */
-import { h, tag, card, fmtTime, fmtDateTime, pageHead, debounce } from "../ui.js";
+import { h, tag, card, fmtTime, fmtDateTime, pageHead, debounce, clear } from "../ui.js";
 import { icon } from "../icons.js";
 import { store, can } from "../store.js";
 import { actions } from "../actions.js";
@@ -78,10 +78,30 @@ export default {
       ],
     });
 
+    const rollover = h("div", { class: "callout warn", hidden: true });
+    function paintRollover(list) {
+      clear(rollover);
+      const items = list || [];
+      rollover.hidden = !items.length;
+      if (!items.length) return;
+      const expired = items.some((w) => w.stage === "expired");
+      rollover.classList.toggle("danger", expired);
+      rollover.classList.toggle("warn", !expired);
+      rollover.append(
+        h("strong", null, expired ? "Contract rollover overdue — " : "Contract rollover due — "),
+        "update the symbol map: ",
+        h("ul", { style: "margin:6px 0 8px 18px" }, items.map((w) => h("li", null,
+          h("code", null, w.tv_symbol), " → ", h("code", null, w.contract), ` (${w.date_kind} ${w.date}, `,
+          w.days_left < 0 ? `${-w.days_left}d ago` : w.days_left === 0 ? "today" : `in ${w.days_left}d`,
+          w.source === "broker" ? ", broker date" : ", estimated", ") → suggested ", h("code", null, w.next)))),
+        h("button", { class: "btn btn-sm", onClick: () => navigate("/settings/symbols") }, "Open symbol map"));
+    }
+
     root.append(
       pageHead("Overview", "Live view of your bridge: broker sessions, positions, tracked trades and the latest orders.", [
         h("button", { class: "btn", onClick: () => actions.healthCheck() }, icon("refresh"), "Check connections"),
       ]),
+      rollover,
       h("div", { class: "kpis" }, Object.values(k).filter(Boolean).map((x) => x.el)),
       card({ title: "Connection health", actions: [h("button", { class: "btn btn-ghost btn-sm", onClick: () => navigate("/settings/accounts") }, "Manage logins")] }, sessions.el),
       h("div", { class: "grid grid-2" },
@@ -111,6 +131,7 @@ export default {
         k.trades.set(String(rows.length), rows.length ? "on" : "", rows.length ? "managed by the bridge" : "flat");
         active.update(rows);
         sessions.update(s.sessions || []);
+        paintRollover(s.rollover);
       }, { immediate: true }),
       store.subscribe("orders", (o) => { orders.update((o || []).slice(0, 50)); refreshPositionsSoon(); }, { immediate: true }),
       store.subscribe("positions", (p) => {

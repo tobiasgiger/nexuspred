@@ -166,6 +166,15 @@ async def webhook_failed(webhook_name: str, reason: str) -> None:
                          _send_email(f"Fluxbridge: signal not executed ({webhook_name})", message))
 
 
+async def contract_rollover(message: str) -> None:
+    """A mapped contract is near / past its roll date (Discord + email)."""
+    s = config.load_settings()
+    if not s.get("alert_on_rollover", True):
+        return
+    await asyncio.gather(_send_discord(message),
+                         _send_email("Fluxbridge: contract rollover due", message))
+
+
 async def test_alert() -> dict[str, Any]:
     """Send a test notification on every enabled channel; report what was tried."""
     s = config.load_settings()

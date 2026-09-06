@@ -9,7 +9,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 
-from .. import alerts, config, context, db, security, signals, state, tradovate
+from .. import alerts, config, context, db, rollover, security, signals, state, tradovate
 from ..tradovate import TradovateError
 from ..web import BASE_DIR, render
 from .accounts import trade_accounts_overview
@@ -56,7 +56,16 @@ async def api_status() -> dict[str, Any]:
         "active_trades": signals.active_trades(),
         "trading_enabled": config.load_settings().get("trading_enabled", False),
         "public_url": config.PUBLIC_URL,
+        "rollover": state.rollover_warnings(),
     }
+
+
+@router.post("/api/rollover/check")
+async def api_rollover_check() -> dict[str, Any]:
+    """Re-run the contract-rollover check for the caller's area right now
+    (e.g. after editing the symbol map)."""
+    warnings = await rollover.check_area(context.get_area(), force=True)
+    return {"rollover": warnings}
 
 
 @router.get("/api/settings")

@@ -31,7 +31,7 @@ class _Sub:
 
 
 class _AreaState:
-    __slots__ = ("signals", "orders", "events", "sessions", "subscribers")
+    __slots__ = ("signals", "orders", "events", "sessions", "subscribers", "rollover")
 
     def __init__(self) -> None:
         self.signals: Deque[dict[str, Any]] = deque(maxlen=_MAX)
@@ -39,6 +39,7 @@ class _AreaState:
         self.events: Deque[dict[str, Any]] = deque(maxlen=_MAX)
         self.sessions: dict[str, dict[str, Any]] = {}
         self.subscribers: set[_Sub] = set()
+        self.rollover: list[dict[str, Any]] = []  # contract-rollover warnings (app.rollover)
 
 
 _areas: dict[int, _AreaState] = {}
@@ -140,6 +141,19 @@ def aggregate_connection() -> dict[str, Any]:
     connected = sum(1 for v in vals if v.get("connected"))
     return {"connected": connected > 0, "accounts_total": total,
             "accounts_connected": connected}
+
+
+# ------------------------------------------------------- rollover warnings
+def set_rollover_warnings(warnings: list[dict[str, Any]], area_id: int | None = None) -> None:
+    st = _st_for(area_id) if area_id is not None else _st()
+    with _lock:
+        st.rollover = [dict(w) for w in warnings]
+
+
+def rollover_warnings(area_id: int | None = None) -> list[dict[str, Any]]:
+    st = _st_for(area_id) if area_id is not None else _st()
+    with _lock:
+        return [dict(w) for w in st.rollover]
 
 
 # ------------------------------------------------------------- rolling logs

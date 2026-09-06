@@ -30,6 +30,7 @@ export const actions = {
     return s;
   }),
   refreshOrders: () => quiet(async () => store.set("orders", await api.get("/api/orders"))),
+  checkRollover: () => quiet(async () => { await api.post("/api/rollover/check"); return actions.refreshStatus(); }),
   refreshLogs: () => quiet(async () => {
     const [events, signals] = await Promise.all([api.get("/api/events"), api.get("/api/signals")]);
     store.set("events", events);

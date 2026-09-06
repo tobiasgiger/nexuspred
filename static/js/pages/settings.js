@@ -136,6 +136,8 @@ export const alerts = {
           { name: "alert_on_webhook_failed", type: "switch", label: "Signal received but not executed", hint: "Webhook failure — Discord + email" },
           { name: "alert_on_discord_lost", type: "switch", label: "Discord listener went offline", hint: "Discord + email" },
           { name: "alert_on_discord_restored", type: "switch", label: "Discord listener came back online", hint: "Discord + email" },
+          { name: "alert_on_rollover", type: "switch", label: "Contract rollover due", hint: "A dated contract in the symbol map is near or past its roll date — Discord + email, once per contract" },
+          { name: "rollover_warn_days", type: "number", label: "Rollover warning lead time (days)", min: 0, max: 60, placeholder: "10", width: "200px", hint: "Warn this many days before the estimated expiry / first-notice date." },
           { name: "discord_health_grace", type: "number", label: "Discord health grace period (seconds)", min: 15, step: 5, placeholder: "90", width: "200px", hint: "How long the listener may be down before an outage alert fires (avoids alerting on transient reconnects)." },
         ], after: h("div", { class: "form-actions", style: "margin-top:12px" }, testBtn, testHint) },
       ],
@@ -172,7 +174,7 @@ export const symbols = {
       return map;
     };
     const saveBtn = h("button", { type: "button", class: "btn btn-primary", onClick: async () => {
-      try { await actions.saveSettings({ symbol_map: collect() }); toast("Symbol mapping saved", "success"); }
+      try { await actions.saveSettings({ symbol_map: collect() }); toast("Symbol mapping saved", "success"); actions.checkRollover(); }
       catch (e) { toast(e.message, "error"); }
     } }, icon("check"), "Save mapping");
     root.append(

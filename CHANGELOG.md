@@ -5,6 +5,17 @@ Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
 ## 5.0.0-alpha.5
+- **Contract-rollover warning** (`app/rollover.py`). Once a day the bridge parses every
+  dated contract in the symbol map (`MNQU6`, `ESZ26`, …), estimates its roll date per
+  product family (index: 3rd-Friday expiry; FX: 2 business days before the 3rd
+  Wednesday; crypto: last Friday; metals / grains / treasuries: first notice = last
+  business day of the previous month; energy: 3 business days before the 25th of the
+  previous month) — or takes the exact expiry from a connected Tradovate session — and
+  warns `rollover_warn_days` (default 10) ahead and again once it has passed: event log,
+  Discord + email (switch **Contract rollover due** under Alerts, one alert per contract
+  and stage), and a banner on the Overview with the suggested next contract.
+  `POST /api/rollover/check` re-runs it (the symbol-map editor calls it on save);
+  `/api/status` carries `rollover`.
 - **Secrets encrypted at rest** (`app/crypto.py`, Fernet). Tradovate access/MD tokens,
   the Discord user token, SMTP password, alert webhook URL, webhook passphrase and
   Discord-target secrets are stored as `enc:v1:…` inside `areas.settings`; every caller

@@ -117,6 +117,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "alert_on_discord_restored": True,
     # Webhook → Tradovate delivery failures (a signal arrived but execution failed).
     "alert_on_webhook_failed": True,
+    # A dated contract in symbol_map is close to (or past) its roll date.
+    "alert_on_rollover": True,
+    "rollover_warn_days": 10,          # days before the estimated roll date to warn
+    "rollover_notified": {},           # internal: contract -> stage already alerted
     # Seconds the Discord listener may be "wanted but not connected" before it
     # counts as an outage (avoids alerting on the library's transient reconnects).
     "discord_health_grace": 90,
@@ -358,6 +362,7 @@ def new_webhook(
 SETTINGS_PROTECTED_KEYS = frozenset({
     "token_accounts", "webhooks", "webhooks_migrated", "webhook_secret",
     "discord_enabled", "discord_user_token", "discord_dry_run", "discord_channels",
+    "rollover_notified",
 })
 
 # Fields that must never be returned to the browser in plain text.
