@@ -24,6 +24,7 @@ export const NAV = [
       { path: "/settings/security", label: "Security" },
       { path: "/settings/account", label: "Account" },
       { path: "/settings/users", label: "Users", gate: "admin" },
+      { path: "/settings/agents", label: "Execution Agents", gate: "admin" },
       { path: "/settings/updates", label: "Updates", gate: "admin" },
     ] },
   ] },

@@ -4,6 +4,22 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.14
+- **Execution agents — one IP per account** (`app/relay.py`, `agent/`). A small
+  stdlib-only Python helper runs on a VPS, pairs with the bridge through a **one-time
+  pairing code** (Settings → Execution Agents; 15 min, single use) and receives a token
+  that is valid for the relay endpoints only — the dashboard login never leaves the
+  bridge. Under Settings → Tradovate Accounts each login gets **Execute via**: bridge
+  (direct) or a paired agent. Everything that login does with Tradovate — orders,
+  modifications, cancels, token renewal, health checks, positions, P&L snapshots — is
+  then executed by the agent from its own IP; the agent long-polls the bridge
+  (outbound HTTPS only, no open port). If the agent is offline the login's calls fail
+  with a clear error and the usual alerts; the bridge never falls back to its own IP.
+  Agents show online/offline, last IP and version; revoking kills the token at once.
+  Download the agent from the settings page; `agent/README.md` has the VPS setup.
+  Saving token logins now also keeps the discovered trade accounts (previously they
+  were dropped until the next Connect & Verify).
+
 ## 5.0.0-alpha.13
 - **Encryption key changes no longer lose secrets.** A secret that does not decrypt with
   the current key is tried against the previous keys (`NEXUSPRED_ENCRYPTION_KEY_PREVIOUS`,

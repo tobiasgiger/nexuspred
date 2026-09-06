@@ -11,6 +11,7 @@ const ACTION_LABEL = {
   flatten_all: "Flatten all", subscribe: "Subscribed", unsubscribe: "Unsubscribed",
   webhook_share: "Marketplace publish", subscriber_remove: "Subscriber removed",
   login_ok: "Signed in", login_failed: "Failed sign-in", login_blocked: "Rate limited",
+  agent_pairing_code: "Agent pairing code", agent_paired: "Agent paired", agent_pair_failed: "Agent pairing failed", agent_revoke: "Agent revoked",
 };
 
 export default {

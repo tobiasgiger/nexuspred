@@ -26,6 +26,7 @@ def trade_accounts_overview() -> list[dict[str, Any]]:
             out.append({
                 "token_idx": idx, "token_name": tname, "environment": env,
                 "token_enabled": bool(t.get("enabled")), "connected": tconn,
+                "agent_id": int(t.get("agent_id") or 0),
                 "spec": a.get("spec") or a.get("account_spec") or "",
                 "id": a.get("id") or a.get("account_id") or 0,
                 "enabled": bool(a.get("enabled", True)),
@@ -61,6 +62,8 @@ async def api_save_token_accounts(request: Request) -> list[dict[str, Any]]:
             "account_spec": a.get("account_spec") or prev.get("account_spec", ""),
             "account_id": a.get("account_id") or prev.get("account_id", 0),
             "token_expires": prev.get("token_expires", ""),
+            "agent_id": int(a.get("agent_id") or 0),
+            "accounts": prev.get("accounts") or [],
         })
     config.save_settings({"token_accounts": cleaned})
     tradovate.manager().reload()

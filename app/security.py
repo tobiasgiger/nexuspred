@@ -30,7 +30,15 @@ MAX_BODY_BYTES = 256 * 1024  # generous for any alert / settings payload
 # Paths that legitimately carry bigger bodies (file uploads).
 BODY_LIMITS: dict[str, int] = {
     "/api/journal/import-csv": 16 * 1024 * 1024,
+    "/api/agent/jobs/": 16 * 1024 * 1024,   # relayed Tradovate answers (prefix)
 }
+
+
+def body_limit_for(path: str, default: int) -> int:
+    for prefix, limit in BODY_LIMITS.items():
+        if path == prefix or (prefix.endswith("/") and path.startswith(prefix)):
+            return limit
+    return default
 
 # --------------------------------------------------------------- client IP
 def client_ip(request: Request) -> str:
@@ -87,6 +95,7 @@ _LIMITS: dict[str, RateLimiter] = {
     "/register": RateLimiter(10, 60.0),
     "/reset": RateLimiter(10, 60.0),
     "/api/account/password": RateLimiter(5, 60.0),
+    "/api/agent/pair": RateLimiter(10, 60.0),
 }
 # Global ceiling per IP across all credential endpoints (an attacker rotating
 # between them still hits this).
@@ -215,7 +224,7 @@ class BodyLimitMiddleware:
             await self.app(scope, receive, send)
             return
         headers = dict(scope.get("headers") or [])
-        limit = BODY_LIMITS.get(scope.get("path", ""), self.max_bytes)
+        limit = body_limit_for(scope.get("path", ""), self.max_bytes)
         declared = headers.get(b"content-length")
         if declared is not None:
             try:

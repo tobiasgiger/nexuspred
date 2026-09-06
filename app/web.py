@@ -17,7 +17,7 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 # Paths reachable without a login session: the webhook (TradingView can't send
 # auth), static assets, health check, guide/favicon, and the auth pages.
 # Prefixes match whole subtrees; pages match exactly (``/loginx`` is *not* exempt).
-AUTH_EXEMPT_PREFIXES = ("/webhook/", "/static/")
+AUTH_EXEMPT_PREFIXES = ("/webhook/", "/static/", "/api/agent/")
 AUTH_EXEMPT_PATHS = frozenset({
     "/healthz", "/guide", "/favicon.ico",
     "/login", "/logout", "/register", "/setup", "/reset",

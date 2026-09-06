@@ -32,6 +32,7 @@ const PATHS = {
   link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
   inbox: '<path d="M3 13h5l2 3h4l2-3h5M5 6h14l2 7v6H3v-6z"/>',
   shield: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/>',
+  edit: '<path d="M4 20h4l10-10-4-4L4 16v4zM13 7l4 4"/>',
   download: '<path d="M12 3v12M6 11l6 6 6-6M4 21h16"/>',
   external: '<path d="M14 4h6v6M20 4l-9 9M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',

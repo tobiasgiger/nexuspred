@@ -107,7 +107,7 @@ async def test_login_logout(admin, anon_client):
 async def test_session_cookie_tamper_and_expiry(admin):
     good = auth.make_session(admin["id"])
     body, _, sig = good.partition(".")
-    assert auth.read_session(body + ".x" + sig[1:]) is None
+    assert auth.read_session(body + "." + ("y" if sig[0] == "x" else "x") + sig[1:]) is None  # flip one signature char
     assert auth.read_session(None) is None and auth.read_session("garbage") is None
     assert auth.read_session(good) == admin["id"]
 
@@ -243,7 +243,7 @@ async def test_webhook_test_endpoint_runs_pipeline(client):
 
 # ------------------------------------------------------ token/trade accounts
 async def test_token_accounts_save_preserves_masked_tokens(client):
-    body = [{"name": " L1 ", "environment": "live", "access_token": " secret1 ", "md_token": "m1",
+    body = [{"name": " L1 ", "environment": "live", "access_token": " secret1 ", "md_token": "m1", "accounts": [], "agent_id": 0,
              "enabled": True, "qty_multiplier": 2}]
     r = await client.post("/api/token-accounts", json=body)
     out = r.json()
@@ -254,7 +254,8 @@ async def test_token_accounts_save_preserves_masked_tokens(client):
     with context.use_area(1):
         t = config.load_settings()["token_accounts"][0]
     assert t == {"name": "L1x", "environment": "demo", "access_token": "secret1", "md_token": "m1",
-                 "enabled": False, "qty_multiplier": 1.0, "account_spec": "", "account_id": 0, "token_expires": ""}
+                 "enabled": False, "qty_multiplier": 1.0, "account_spec": "", "account_id": 0, "token_expires": "",
+                 "accounts": [], "agent_id": 0}
     assert (await client.get("/api/token-accounts")).json()[0]["md_token"] == "********"
 
 

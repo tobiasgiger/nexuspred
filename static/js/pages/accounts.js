@@ -10,6 +10,7 @@ export default {
   title: "Tradovate Accounts",
   render(root) {
     const tbody = h("tbody");
+    let agents = [];  // paired execution agents (admin-managed); loaded once, rows read it
     let dirty = false;
     const markDirty = () => { dirty = true; saveHint.textContent = "Unsaved changes"; saveHint.className = "save-hint"; };
 
@@ -26,6 +27,10 @@ export default {
         h("td", null, secretInput("ta-access", a.access_token, "access token")),
         h("td", null, secretInput("ta-md", a.md_token, "check token (optional)")),
         h("td", null, h("input", { type: "number", class: "ta-mult input-sm", min: 0.1, step: 0.1, value: a.qty_multiplier ?? 1, style: "width:70px" })),
+        h("td", null, h("select", { class: "ta-agent input-sm", style: "min-width:120px", title: "Execute this login's Tradovate calls through a paired agent (own IP) or directly from the bridge" },
+          h("option", { value: "0", selected: !a.agent_id }, "Bridge (direct)"),
+          agents.map((g) => h("option", { value: String(g.id), selected: Number(a.agent_id) === g.id }, `${g.name}${g.online ? "" : " (offline)"}`)),
+          a.agent_id && !agents.some((g) => g.id === Number(a.agent_id)) ? h("option", { value: String(a.agent_id), selected: true }, `Agent #${a.agent_id} (revoked)`) : null)),
         h("td", null, a.token_expires ? h("span", { class: "muted nowrap" }, new Date(a.token_expires).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })) : h("span", { class: "muted" }, "—")),
         h("td", { style: "width:44px" }, h("button", { type: "button", class: "btn btn-ghost btn-icon", title: "Remove login", onClick: async () => {
           if (a.name && !(await confirmDialog({ title: `Remove login "${a.name}"?`, body: "Its token is dropped and every webhook routed to its accounts loses that route after you save.", confirmText: "Remove", danger: true }))) return;
@@ -43,6 +48,7 @@ export default {
       access_token: tr.querySelector(".ta-access").value.trim(),
       md_token: tr.querySelector(".ta-md").value.trim(),
       qty_multiplier: Number(tr.querySelector(".ta-mult").value) || 1,
+      agent_id: Number(tr.querySelector(".ta-agent").value) || 0,
     })).filter((a) => a.name || a.access_token);
 
     const saveHint = h("span", { class: "save-hint" });
@@ -78,11 +84,12 @@ export default {
       ]),
       card({ title: "Token logins", hint: "Paste the access token (and optionally the check token) from the Tradovate web trader — see Tools for the extractor. Masked tokens keep their stored value when you save." },
         h("div", { class: "table-scroll" }, h("table", { class: "data-table" },
-          h("thead", null, h("tr", null, h("th", null, "On"), h("th", null, "Name"), h("th", null, "Env"), h("th", null, "Access token"), h("th", null, "Check token"), h("th", null, "Qty ×"), h("th", null, "Token expires"), h("th"))), tbody)),
+          h("thead", null, h("tr", null, h("th", null, "On"), h("th", null, "Name"), h("th", null, "Env"), h("th", null, "Access token"), h("th", null, "Check token"), h("th", null, "Qty ×"), h("th", null, "Execute via"), h("th", null, "Token expires"), h("th"))), tbody)),
         h("div", { class: "form-actions", style: "margin-top:12px" }, saveBtn, connectBtn, saveHint)),
       card({ title: "Discovered trade accounts", hint: "Every trade account found under your logins — one login can hold several. Which accounts a signal actually trades is chosen per webhook (Webhooks → Accounts tab)." }, discovered.el),
     );
 
+    api.get("/api/agents").then((list) => { agents = list || []; if (!dirty) paint(store.get("tokenAccounts")); }).catch(() => {});
     const unsubs = [
       store.subscribe("tokenAccounts", (list) => { if (!dirty) paint(list); }, { immediate: true }),
       store.subscribe("tradeAccounts", (list) => discovered.update(list || []), { immediate: true }),

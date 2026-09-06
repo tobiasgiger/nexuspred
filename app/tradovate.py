@@ -84,6 +84,7 @@ def _fingerprint(entry: dict[str, Any]) -> str:
         "account_spec": entry.get("account_spec") or "",
         "account_id": entry.get("account_id") or 0,
         "accounts": entry.get("accounts") or [],
+        "agent_id": int(entry.get("agent_id") or 0),
     }, sort_keys=True, default=str)
 
 
@@ -110,6 +111,7 @@ class TradovateSession:
         self.qty_multiplier = entry.get("qty_multiplier", 1) or 1
         self.account_spec = entry.get("account_spec") or ""
         self.account_id = entry.get("account_id") or 0
+        self.agent_id = int(entry.get("agent_id") or 0)  # 0 = direct; else paired execution agent
         # One token (login) can expose several Tradovate trade accounts. Each is
         # independently toggleable for execution. See _normalize_accounts.
         self.accounts = self._normalize_accounts(entry)
@@ -174,6 +176,21 @@ class TradovateSession:
             token = await self._get_token()
             headers["Authorization"] = f"Bearer {token}"
         url = f"{self._base_url()}{path}"
+        if self.agent_id:
+            # Every call of this login goes out from the paired execution agent's
+            # IP — orders, token renewal, health checks alike. Never falls back
+            # to the bridge's own address.
+            from . import relay
+            try:
+                status, text = await relay.request(
+                    int(self.agent_id), method=method, url=url, headers=headers,
+                    json_body=kwargs.get("json"), params=kwargs.get("params"),
+                    timeout=float(kwargs.get("timeout") or 20.0))
+            except relay.AgentOffline as exc:
+                raise TradovateError(f"[{self.name}] {exc}") from exc
+            if status >= 400:
+                raise TradovateError(f"{status} {path}: {text}")
+            return json.loads(text) if text else None
         # Pooled, keep-alive client: no TLS handshake per order (see app.http).
         resp = await http.client("tradovate").request(method, url, headers=headers, **kwargs)
         if resp.status_code >= 400:
@@ -283,7 +300,7 @@ class TradovateSession:
         on (there's no prior state to have transitioned from)."""
         had_prior = state.has_session(self.name)
         was_connected = state.session_status(self.name).get("connected") if had_prior else None
-        state.set_session_status(self.name, connected=connected, **fields)
+        state.set_session_status(self.name, connected=connected, agent_id=self.agent_id, **fields)
         if had_prior and was_connected and not connected:
             _fire(alerts.connection_lost(self.name, self.environment, fields.get("last_error", "")))
         elif had_prior and not was_connected and connected:

@@ -127,6 +127,18 @@ includes a `render.yaml` blueprint.
 > `/webhook/<token>` and `/healthz` paths stay open (`GET /healthz` is an unauthenticated
 > liveness probe).
 
+### Execution agents (one IP per account)
+
+Prop firms often frown on several accounts trading from one IP. An **execution agent**
+is a tiny Python helper (`agent/`, no packages) you run on a VPS: it pairs with the
+bridge using a one-time code from **Settings → Execution Agents**, gets a token that is
+only valid for the relay endpoints (`/api/agent/…`), and long-polls the bridge over
+outbound HTTPS. Assign a login to it under **Tradovate Accounts → Execute via** and
+every Tradovate call of that login — orders, token renewal, health checks, P&L — is
+executed by the agent from its IP. An offline agent makes those calls fail loudly (event
+log + alert); the bridge never silently falls back to its own address. Setup steps for
+a Windows VPS are in `agent/README.md`.
+
 ### Trading journal
 
 The **Journal** page turns your Tradovate fills into a P&L journal. Once a day after the
@@ -539,6 +551,9 @@ the dashboard **Update** button works.
 | `GET`  | `/api/status` | Connection + trading status, trade accounts, active trades |
 | `GET/POST` | `/api/settings` | Read / update settings (secrets masked; only the keys you send change) |
 | `GET`  | `/api/orders` `/api/signals` `/api/events` | Rolling logs |
+| `POST` | `/api/agent/pair` | Exchange a one-time pairing code for an agent token (unauthenticated, rate-limited) |
+| `GET`  | `/api/agent/jobs` | Agent long-poll for relay jobs (agent token) · `POST /api/agent/jobs/{id}/result` delivers the answer |
+| `GET`  | `/api/agents` | Paired agents with online state · `POST /api/agents/pairing-code`, `PUT`/`DELETE /api/agents/{id}`, `GET /api/agents/download.zip` (admin) |
 | `GET`  | `/api/pnl` | Live account P&L: today's realised, open, week, cash per account (`?refresh=1` polls Tradovate now) |
 | `GET`  | `/api/journal/overview` | Journal stats, per-period buckets, equity curve for a filter slice (`range`/`frm`/`to`, `account`, `symbol`, `side`, `period`) |
 | `GET`  | `/api/journal/calendar` | Daily net P&L for a month (`month=YYYY-MM`) |
