@@ -108,6 +108,9 @@ def _rate_limited(request: Request) -> Response | None:
     ip = client_ip(request)
     if rl.hit(ip) and _GLOBAL.hit(ip):
         return None
+    if request.url.path == "/login":
+        from . import db  # local import: security is imported by db-free modules too
+        db.log_action(None, "", "login_blocked", ip, "rate limit hit")
     if request.url.path in _FORM_PAGES:
         return RedirectResponse(f"{request.url.path}?error=rate", status_code=302,
                                 headers={"Retry-After": "60"})

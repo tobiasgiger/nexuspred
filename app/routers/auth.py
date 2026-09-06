@@ -8,7 +8,15 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from .. import auth, config, db, state
+from ..security import client_ip
 from ..web import render, set_session_cookie
+
+
+def _signed_in(request: Request, user: dict, how: str) -> None:
+    """Stamp + audit a successful sign-in (login, invite registration, reset)."""
+    ip = client_ip(request)
+    db.record_login(user["id"], ip)
+    db.log_action(user["id"], user["email"], "login_ok", ip, how)
 
 _RATE = "Too many attempts — please wait a minute and try again."
 
@@ -30,9 +38,12 @@ async def login_page(request: Request, error: str = "") -> HTMLResponse:
 @router.post("/login")
 async def login_submit(request: Request):
     form = await request.form()
-    user = await db.authenticate_async(str(form.get("email", "")), str(form.get("password", "")))
+    email = str(form.get("email", "")).strip().lower()
+    user = await db.authenticate_async(email, str(form.get("password", "")))
     if not user:
+        db.log_action(None, email[:200], "login_failed", client_ip(request), "wrong email or password")
         return RedirectResponse("/login?error=bad", status_code=302)
+    _signed_in(request, user, "password")
     resp = RedirectResponse("/", status_code=302)
     set_session_cookie(resp, request, user["id"])
     return resp
@@ -78,6 +89,7 @@ async def setup_submit(request: Request):
     config.invalidate(area)
     config.migrate_legacy_webhook(area_id=area)
     state.log_event("info", f"Admin account created: {email}")
+    _signed_in(request, user, "setup")
     resp = RedirectResponse("/", status_code=302)
     set_session_cookie(resp, request, user["id"])
     return resp
@@ -120,6 +132,7 @@ async def register_submit(request: Request):
     area = db.user_primary_area(user["id"])
     config.migrate_legacy_webhook(area_id=area)  # give the new area a Default webhook
     state.log_event("info", f"Account registered: {email}")
+    _signed_in(request, user, "invite")
     resp = RedirectResponse("/", status_code=302)
     set_session_cookie(resp, request, user["id"])
     return resp
@@ -152,6 +165,7 @@ async def reset_submit(request: Request):
     user = db.get_user(uid)
     if user:
         state.log_event("info", f"Password reset completed for {user['email']}")
+        _signed_in(request, user, "password reset")
     resp = RedirectResponse("/", status_code=302)
     if uid:
         set_session_cookie(resp, request, uid)  # log the user straight in

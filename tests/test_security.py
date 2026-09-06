@@ -276,3 +276,30 @@ async def test_pwa_manifest_and_icons(anon_client, admin):
         assert (await anon_client.get(icon["src"])).status_code == 200
     page = await anon_client.get("/login")
     assert 'rel="manifest"' in page.text and "apple-touch-icon" in page.text
+
+
+# ------------------------------------------------------------ login audit
+async def test_logins_are_audited(anon_client, admin):
+    hdr = {"x-forwarded-for": "203.0.113.7"}
+    await anon_client.post("/login", data={"email": "admin@example.com", "password": "wrong"}, headers=hdr)
+    r = await anon_client.post("/login", data={"email": "admin@example.com", "password": "password123"}, headers=hdr)
+    assert r.headers["location"] == "/"
+    rows = db.list_audit(10, logins=True)
+    assert [(x["action"], x["target"]) for x in rows] == [("login_ok", "203.0.113.7"), ("login_failed", "203.0.113.7")]
+    assert rows[1]["actor_email"] == "admin@example.com"
+    assert db.list_audit(10, logins=False) == []  # admin-actions view stays clean
+    u = db.get_user(admin["id"])
+    assert u["last_login_at"] and u["last_login_ip"] == "203.0.113.7"
+    for _ in range(10):
+        await anon_client.post("/login", data={"email": "x@y.z", "password": "x"}, headers=hdr)
+    assert db.list_audit(1, logins=True)[0]["action"] == "login_blocked"
+
+
+async def test_audit_api_kinds(client, admin):
+    db.log_action(admin["id"], admin["email"], "login_ok", "1.2.3.4")
+    db.log_action(admin["id"], admin["email"], "invite_create", "x")
+    assert [r["action"] for r in (await client.get("/api/audit")).json()] == ["invite_create"]
+    assert [r["action"] for r in (await client.get("/api/audit?kind=logins")).json()] == ["login_ok"]
+    assert len((await client.get("/api/audit?kind=all")).json()) == 2
+    users = (await client.get("/api/users")).json()["users"]
+    assert "last_login_at" in users[0]

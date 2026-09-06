@@ -103,9 +103,11 @@ async def api_delete_user(request: Request, user_id: int) -> dict[str, Any]:
 
 
 @router.get("/audit")
-async def api_audit(request: Request) -> list[dict[str, Any]]:
+async def api_audit(request: Request, kind: str = "actions") -> list[dict[str, Any]]:
+    """``kind=actions`` (default) → admin actions, ``logins`` → sign-in events, ``all``."""
     require_admin(request)
-    return db.list_audit(100)
+    logins = {"actions": False, "logins": True}.get(kind)
+    return db.list_audit(100, logins=logins)
 
 
 @router.post("/account/password")

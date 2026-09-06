@@ -5,6 +5,11 @@ Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
 ## 5.0.0-alpha.5
+- **Sign-ins in the audit log.** Every successful, failed and rate-limited sign-in is
+  recorded with the client IP (`login_ok` / `login_failed` / `login_blocked`), including
+  the auto sign-in after invite registration and password reset. Users → new
+  **Sign-ins** card (last 100), a **Last sign-in** column per user (IP on hover), and the
+  Admin activity view stays free of them (`GET /api/audit?kind=actions|logins|all`).
 - **Installable as an app (PWA).** Web-app manifest with icons (192/512, maskable,
   Apple touch icon), theme colour per light/dark scheme and standalone display, so the
   dashboard installs on phones and desktops from the browser menu ("Add to Home Screen"

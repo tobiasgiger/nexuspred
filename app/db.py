@@ -190,6 +190,10 @@ def init() -> None:
                 """
             )
             # --- migrations for databases created before a column existed ---
+            user_cols = {r["name"] for r in c.execute("PRAGMA table_info(users)").fetchall()}
+            if "last_login_at" not in user_cols:
+                c.execute("ALTER TABLE users ADD COLUMN last_login_at TEXT")
+                c.execute("ALTER TABLE users ADD COLUMN last_login_ip TEXT")
             area_cols = {r["name"] for r in c.execute("PRAGMA table_info(areas)").fetchall()}
             if "features" not in area_cols:
                 c.execute("ALTER TABLE areas ADD COLUMN features TEXT NOT NULL DEFAULT '{}'")
@@ -246,8 +250,20 @@ def user_count() -> int:
 
 
 def _row_to_user(row: sqlite3.Row) -> dict[str, Any]:
+    keys = row.keys()
     return {"id": row["id"], "email": row["email"], "is_admin": bool(row["is_admin"]),
-            "created_at": row["created_at"]}
+            "created_at": row["created_at"],
+            "last_login_at": row["last_login_at"] if "last_login_at" in keys else None,
+            "last_login_ip": row["last_login_ip"] if "last_login_ip" in keys else None}
+
+
+def record_login(user_id: int, ip: str = "") -> None:
+    """Stamp a successful sign-in on the user (shown on the Users page)."""
+    init()
+    with _connect() as c:
+        c.execute("UPDATE users SET last_login_at=?, last_login_ip=? WHERE id=?",
+                  (_now(), (ip or "")[:64], user_id))
+    _users.pop(user_id, None)
 
 
 def get_user(user_id: int) -> Optional[dict[str, Any]]:
@@ -745,11 +761,23 @@ def log_action(actor_user_id: Optional[int], actor_email: str, action: str,
         pass
 
 
-def list_audit(limit: int = 100) -> list[dict[str, Any]]:
+LOGIN_ACTIONS = ("login_ok", "login_failed", "login_blocked")
+
+
+def list_audit(limit: int = 100, *, logins: Optional[bool] = None) -> list[dict[str, Any]]:
+    """Newest audit rows. ``logins=True`` → only sign-in events, ``False`` →
+    everything but sign-ins (the admin-actions view), ``None`` → all."""
     init()
+    marks = ",".join("?" * len(LOGIN_ACTIONS))
+    where = ""
+    params: list[Any] = []
+    if logins is True:
+        where, params = f"WHERE action IN ({marks})", list(LOGIN_ACTIONS)
+    elif logins is False:
+        where, params = f"WHERE action NOT IN ({marks})", list(LOGIN_ACTIONS)
     with _connect() as c:
         rows = c.execute(
-            "SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (int(limit),)).fetchall()
+            f"SELECT * FROM audit_log {where} ORDER BY id DESC LIMIT ?", (*params, int(limit))).fetchall()
         return [{"id": r["id"], "created_at": r["created_at"], "actor_email": r["actor_email"],
                  "action": r["action"], "target": r["target"], "detail": r["detail"]}
                 for r in rows]

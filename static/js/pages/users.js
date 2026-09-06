@@ -10,6 +10,7 @@ const ACTION_LABEL = {
   feature_set: "Feature changed", password_reset: "Password reset", password_change: "Password changed",
   flatten_all: "Flatten all", subscribe: "Subscribed", unsubscribe: "Unsubscribed",
   webhook_share: "Marketplace publish", subscriber_remove: "Subscriber removed",
+  login_ok: "Signed in", login_failed: "Failed sign-in", login_blocked: "Rate limited",
 };
 
 export default {
@@ -63,6 +64,7 @@ export default {
         catch (err) { e.target.checked = !e.target.checked; toast(err.message, "error"); }
       } }) },
       { label: "Created", render: (u) => fmtDateTime(u.created_at) },
+      { label: "Last sign-in", render: (u) => u.last_login_at ? h("span", { title: u.last_login_ip ? `from ${u.last_login_ip}` : "" }, fmtDateTime(u.last_login_at)) : "never" },
       { label: "", render: (u) => h("div", { class: "users-actions" },
         h("button", { type: "button", class: "btn btn-ghost btn-sm", onClick: async () => {
           try {
@@ -89,7 +91,17 @@ export default {
 
     async function loadUsers() { try { const r = await api.get("/api/users"); users.update(r.users || r); } catch (e) { /* ignore */ } }
     async function loadInvites() { try { const list = await api.get("/api/invites"); invites.update(list.filter((i) => !i.used_by)); } catch (e) { /* ignore */ } }
-    async function loadAudit() { try { audit.update(await api.get("/api/audit")); } catch (e) { /* ignore */ } }
+    const logins = dataTable({ empty: "No sign-ins recorded yet", compact: true, columns: [
+      { label: "When", render: (r) => fmtDateTime(r.created_at) },
+      { label: "Email", render: (r) => r.actor_email || "—" },
+      { label: "Result", render: (r) => r.action === "login_ok" ? tag("ok", "ok") : r.action === "login_blocked" ? tag("rate limited", "warn") : tag("failed", "error") },
+      { label: "IP", render: (r) => h("code", null, r.target || "—") },
+      { label: "Detail", render: (r) => r.detail || "" },
+    ] });
+    async function loadAudit() {
+      try { audit.update(await api.get("/api/audit")); } catch (e) { /* ignore */ }
+      try { logins.update(await api.get("/api/audit?kind=logins")); } catch (e) { /* ignore */ }
+    }
 
     root.append(
       pageHead("Users", "Registration is invite-only. Every user gets their own isolated area; admins can invite, grant features and reset passwords."),
@@ -103,6 +115,7 @@ export default {
       card({ title: "Accounts", hint: "Toggle Discord Signals to grant a user the Discord listener module — its navigation, settings and live connection appear only for users you enable it for." }, users.el, resetLink.el),
       card({ title: "Open invites" }, invites.el),
       card({ title: "Admin activity", hint: "Recent admin actions: invites, removals, feature grants, password resets, emergency flattens." }, audit.el),
+      card({ title: "Sign-ins", hint: "Every successful, failed and rate-limited sign-in with the client IP (last 100)." }, logins.el),
     );
     loadUsers(); loadInvites(); loadAudit();
     return () => {};
