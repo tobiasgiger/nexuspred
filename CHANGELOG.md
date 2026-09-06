@@ -16,6 +16,9 @@ shows the **Update** button when a newer version is available.
   URL/token/accounts exposed in either direction. Test signals forward only on
   request. Unpublishing pauses, deleting removes subscriptions; all of it lands in the
   admin audit log. New table `subscriptions`; settings schema unchanged.
+- **Docs:** production runs on the custom domain `https://bridge.hurenzone.ch`
+  (README, setup guide, `render.yaml`). Webhook and invite URLs are derived from the
+  request host, so no code or settings change was needed.
 
 ## 5.0.0-alpha.2
 _On `main` since 2026-09-06 (fast-forwarded from branch `v5`). The previous line, 4.11.0,

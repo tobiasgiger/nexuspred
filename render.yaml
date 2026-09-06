@@ -2,6 +2,9 @@
 # Deploy: Render Dashboard → New → Blueprint → pick this repo.
 # Render injects $PORT (run.py binds 0.0.0.0:$PORT) and serves it over HTTPS:443,
 # which is what TradingView webhooks require.
+# Production is reachable on the custom domain https://bridge.hurenzone.ch
+# (Render → service → Settings → Custom Domains + a CNAME at the DNS provider);
+# the default https://nexuspred.onrender.com keeps working alongside it.
 #
 # Upgrading an existing v4 service: keep the service and its disk, just point its
 # Branch at `main` — the database and settings are fully compatible. The v4.11

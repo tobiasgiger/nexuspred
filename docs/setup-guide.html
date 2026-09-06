@@ -161,7 +161,7 @@
     <div class="card">
       <div class="card-head"><h2>A5 · Deploy &amp; first login</h2></div>
       <ol class="steps">
-        <li><span class="step-num">1</span><div>Wait for the deploy to finish (Logs show <em>Uvicorn running</em>). You get a URL like <code>https://nexuspred.onrender.com</code>.</div></li>
+        <li><span class="step-num">1</span><div>Wait for the deploy to finish (Logs show <em>Uvicorn running</em>). You get a URL like <code>https://nexuspred.onrender.com</code>. To use your own domain: Render → service → <strong>Settings → Custom Domains → Add</strong>, create the CNAME it shows at your DNS provider and wait for the certificate (the production bridge is <code>https://bridge.hurenzone.ch</code>). The dashboard always shows webhook/invite links for the host you opened it on, so open it via the custom domain from then on.</div></li>
         <li><span class="step-num">2</span><div>Open it. On first run you land on <strong>/setup</strong> — create the first <strong>admin account</strong> (email + password). Access is invite-only from then on: invite further users under <strong>Settings → Users</strong>.</div></li>
         <li><span class="step-num">3</span><div>Continue with <strong>Part C</strong> below to configure Tradovate. ✅</div></li>
       </ol>
@@ -346,8 +346,9 @@ $ ngrok http 9000</pre>
       <ol class="steps">
         <li><span class="step-num">1</span><div>Each webhook created on the <strong>Webhooks</strong> page has its own secret URL, shown in its drawer (Alert template tab) and on the <strong>Tools</strong> page.</div></li>
         <li><span class="step-num">2</span><div>It looks like:
-          <pre class="code">https://YOUR-SERVICE.onrender.com/webhook/YOUR_TOKEN
-# self-host:  http://YOUR_HOST:9000/webhook/YOUR_TOKEN (front with HTTPS — see B7)</pre></div></li>
+          <pre class="code">https://bridge.hurenzone.ch/webhook/YOUR_TOKEN
+# Render default URL: https://YOUR-SERVICE.onrender.com/webhook/YOUR_TOKEN
+# self-host:          http://YOUR_HOST:9000/webhook/YOUR_TOKEN (front with HTTPS — see B7)</pre></div></li>
       </ol>
     </div>
 

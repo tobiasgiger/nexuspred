@@ -105,9 +105,12 @@ includes a `render.yaml` blueprint.
    injects `PORT` automatically. There's no auth env var — on first load you'll create
    the admin account at `/setup`.
 3. Use the **Starter** plan (always-on); the free plan sleeps after ~15 min idle.
-4. Deploy → you get `https://YOUR-SERVICE.onrender.com`. Each strategy's TradingView
-   webhook is `https://YOUR-SERVICE.onrender.com/webhook/YOUR_TOKEN` (from its card in
-   the **Webhooks** tab).
+4. Deploy → you get `https://YOUR-SERVICE.onrender.com`. The production bridge runs on
+   the custom domain **`https://bridge.hurenzone.ch`** (Render → service → *Settings →
+   Custom Domains*, plus a CNAME at the DNS provider; Render issues the TLS certificate).
+   Each strategy's TradingView webhook is
+   `https://bridge.hurenzone.ch/webhook/YOUR_TOKEN` (copy it from its card in the
+   **Webhooks** tab — the dashboard always shows the URL for the host you opened it on).
 5. Updates deploy automatically on `git push` (the in-app Update button is disabled on
    managed hosts).
 
