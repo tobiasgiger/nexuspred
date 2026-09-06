@@ -1,0 +1,33 @@
+name: Agent EXE
+
+on:
+  push:
+    branches: [main]
+    paths: ["agent/**", ".github/workflows/agent-exe.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build fluxbridge-agent.exe
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build
+        run: |
+          python -m pip install -q pyinstaller
+          pyinstaller --onefile --console --name fluxbridge-agent --distpath dist agent/fluxbridge_agent.py
+          dist\fluxbridge-agent.exe --help
+      - name: Publish to the rolling "agent-latest" release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: agent-latest
+          name: Fluxbridge execution agent (latest build)
+          body: "Windows build of agent/fluxbridge_agent.py. The bridge bundles this file into the preconfigured download under Settings → Execution Agents."
+          prerelease: true
+          files: dist/fluxbridge-agent.exe

@@ -9,17 +9,24 @@ itself keeps running wherever it runs.
 - Never sees your dashboard login. You pair it once with a short code; it receives a
   token that only works for the relay endpoints (`/api/agent/…`).
 
-## Install (Windows VPS)
+## Install (Windows VPS) — preconfigured, nothing to type
 
-1. Install Python 3 from python.org and tick **Add python.exe to PATH**.
-2. In the bridge open **Settings → Execution Agents → Download agent** and unzip the
-   folder anywhere (e.g. `C:\fluxbridge-agent`).
-3. Still in the bridge, press **New pairing code** and give the agent a name. The code
-   is valid for 15 minutes and works once.
-4. Double-click `start-agent.bat`, enter the bridge URL (`https://bridge.hurenzone.ch`)
-   and the pairing code. The agent saves `agent.json` and starts polling.
-5. Back in the bridge, under **Settings → Tradovate Accounts**, set **Execute via** to
-   the new agent for the logins that should use this VPS, then **Save logins**.
+1. In the bridge open **Settings → Execution Agents**, enter a name and press
+   **Download preconfigured agent**. The zip already contains `agent.json` (bridge URL +
+   this agent's token) and `fluxbridge-agent.exe`.
+2. Unzip anywhere on the VPS (e.g. `C:\fluxbridge-agent`) and double-click
+   `start-agent.bat` (or `fluxbridge-agent.exe`). It starts polling immediately and shows
+   up as *online* in the bridge within seconds.
+3. Under **Settings → Tradovate Accounts**, set **Execute via** to the new agent for the
+   logins that should use this VPS, then **Save logins**.
+
+Keep the zip private — it contains the agent's token (revoke it in the bridge if it leaks).
+
+## Alternative: plain agent + pairing code
+
+Download *Plain agent (no token)*, install Python 3 (tick **Add python.exe to PATH**),
+create a **pairing code** in the bridge (valid 15 minutes, single use), start
+`start-agent.bat` and enter the bridge URL and the code.
 
 To keep it running after you log out of the VPS, register `start-agent.bat` as a
 scheduled task ("At startup", run whether user is logged on or not) or wrap it with

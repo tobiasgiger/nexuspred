@@ -130,10 +130,11 @@ includes a `render.yaml` blueprint.
 ### Execution agents (one IP per account)
 
 Prop firms often frown on several accounts trading from one IP. An **execution agent**
-is a tiny Python helper (`agent/`, no packages) you run on a VPS: it pairs with the
-bridge using a one-time code from **Settings → Execution Agents**, gets a token that is
-only valid for the relay endpoints (`/api/agent/…`), and long-polls the bridge over
-outbound HTTPS. Assign a login to it under **Tradovate Accounts → Execute via** and
+is a tiny helper you run on a VPS (a Windows .exe built by CI, or the plain Python
+script): **Settings → Execution Agents → Download preconfigured agent** gives you a zip
+with the token already inside — unzip, start, done — or pair the plain agent with a
+one-time code. Its token is only valid for the relay endpoints (`/api/agent/…`), and it
+long-polls the bridge over outbound HTTPS. Assign a login to it under **Tradovate Accounts → Execute via** and
 every Tradovate call of that login — orders, token renewal, health checks, P&L — is
 executed by the agent from its IP. An offline agent makes those calls fail loudly (event
 log + alert); the bridge never silently falls back to its own address. Setup steps for

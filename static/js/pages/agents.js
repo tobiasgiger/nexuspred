@@ -27,6 +27,29 @@ export default {
       } catch (e) { toast(e.message, "error"); }
     }
 
+    async function downloadPreconfigured() {
+      const name = nameInput.value.trim() || "agent";
+      dlBtn.disabled = true; dlBtn.textContent = "Preparing…";
+      try {
+        const res = await fetch("/api/agents/bundle", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+        if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || res.statusText); }
+        const blob = await res.blob();
+        const a = h("a", { href: URL.createObjectURL(blob), download: (res.headers.get("Content-Disposition") || "").match(/filename="([^"]+)"/)?.[1] || "fluxbridge-agent.zip" });
+        document.body.append(a); a.click(); a.remove();
+        const exe = res.headers.get("X-Agent-Exe") === "1";
+        clear(codeBox);
+        codeBox.append(
+          h("div", null, "Agent ", h("strong", null, name), " is registered and its token is inside the zip. "),
+          h("div", { class: "muted", style: "margin-top:6px;font-size:12.5px" },
+            "Unzip on the VPS and start ", h("code", null, exe ? "fluxbridge-agent.exe" : "start-agent.bat"), exe ? " — no Python needed." : " (Python 3 required; the .exe build was not reachable right now).",
+            " It appears below as online within seconds. Keep the zip private: it contains the agent's token."));
+        codeBox.classList.remove("hidden");
+        load();
+      } catch (e) { toast(e.message, "error"); }
+      finally { dlBtn.disabled = false; clear(dlBtn); dlBtn.append(icon("download"), "Download preconfigured agent"); }
+    }
+    const dlBtn = h("button", { type: "button", class: "btn btn-primary", onClick: downloadPreconfigured }, icon("download"), "Download preconfigured agent");
+
     const table = dataTable({ empty: "No agents paired yet. Create a pairing code, then start the agent on your VPS.", compact: true, columns: [
       { label: "Agent", render: (a) => [h("strong", null, a.name), " ", h("span", { class: "muted" }, `#${a.id}`)] },
       { label: "Status", render: (a) => a.online ? tag("online", "ok") : tag("offline", "error") },
@@ -53,10 +76,10 @@ export default {
 
     root.append(
       pageHead("Execution Agents", "Run a small helper on a VPS and route a login's Tradovate calls through it, so each account trades from its own IP. The agent pairs with a one-time code and never sees your dashboard login.", [
-        h("a", { class: "btn", href: "/api/agents/download.zip" }, icon("download"), "Download agent"),
+        h("a", { class: "btn btn-ghost", href: "/api/agents/download.zip", title: "Plain agent files without token (pair with a code)" }, icon("download"), "Plain agent (no token)"),
       ]),
-      card({ title: "Pair a new agent", hint: "1. Download and unzip the agent on the VPS (Python 3 required). 2. Create a pairing code here. 3. Start the agent and enter the bridge URL + code. 4. Assign logins to it under Tradovate Accounts → Execute via." },
-        h("div", { class: "form-actions" }, nameInput, h("button", { type: "button", class: "btn btn-primary", onClick: newCode }, icon("key"), "New pairing code")),
+      card({ title: "Add an agent", hint: "Easiest: name it and download the preconfigured agent — the zip already contains the bridge URL, this agent's token and the Windows .exe. Unzip on the VPS, start it, then assign logins under Tradovate Accounts → Execute via. Alternative: a pairing code, typed into the plain agent on first start." },
+        h("div", { class: "form-actions" }, nameInput, dlBtn, h("button", { type: "button", class: "btn", onClick: newCode }, icon("key"), "New pairing code")),
         codeBox),
       card({ title: "Paired agents", hint: "Online = polled the bridge within the last 45 seconds. Everything an assigned login does with Tradovate (orders, token renewal, health checks, P&L) goes through its agent; if the agent is offline those calls fail loudly instead of using the bridge's IP.", actions: [
         h("button", { type: "button", class: "btn btn-ghost btn-sm", onClick: load }, icon("refresh"), "Refresh"),

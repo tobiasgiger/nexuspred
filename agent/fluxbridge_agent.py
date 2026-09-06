@@ -17,8 +17,12 @@ First run (interactive):
 Or non-interactive:
     python fluxbridge_agent.py --bridge https://bridge.example.com --code ABCD-2345 --name "VPS 1"
 
+Preconfigured (Settings → Execution Agents → "Download preconfigured agent"):
+    the zip already contains agent.json with the bridge URL and this agent's
+    token — just start it, nothing to type.
+
 Afterwards just:
-    python fluxbridge_agent.py
+    python fluxbridge_agent.py      (or double-click fluxbridge-agent.exe)
 """
 from __future__ import annotations
 
@@ -32,9 +36,12 @@ import urllib.parse
 import urllib.request
 from datetime import datetime
 
-VERSION = "1.0.0"
-CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agent.json")
-LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agent.log")
+VERSION = "1.1.0"
+# Next to the script — or next to the .exe when packaged with PyInstaller
+# (there __file__ points into a temporary extraction folder).
+BASE_DIR = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, "frozen", False) else __file__))
+CONFIG_FILE = os.path.join(BASE_DIR, "agent.json")
+LOG_FILE = os.path.join(BASE_DIR, "agent.log")
 POLL_WAIT_S = 25
 
 

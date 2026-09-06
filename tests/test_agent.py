@@ -197,3 +197,34 @@ def test_agent_script_runs_jobs():
         assert r["status_code"] == 0 and "error" in r
     finally:
         srv.shutdown()
+
+
+async def test_preconfigured_bundle(client, monkeypatch):
+    """The zip carries agent.json (bridge URL + fresh token) and the exe when the release is reachable."""
+    from app.routers import agent as agent_router
+    import io, zipfile
+
+    async def fake_exe():
+        return b"MZ fake exe"
+    monkeypatch.setattr(agent_router, "fetch_agent_exe", fake_exe)
+    monkeypatch.setattr(config, "PUBLIC_URL", "https://bridge.example.com")
+    r = await client.post("/api/agents/bundle", json={"name": "VPS Frankfurt"})
+    assert r.status_code == 200 and r.headers["content-type"] == "application/zip"
+    assert r.headers["X-Agent-Exe"] == "1" and 'filename="fluxbridge-agent-VPS-Frankfurt.zip"' in r.headers["content-disposition"]
+    z = zipfile.ZipFile(io.BytesIO(r.content))
+    names = z.namelist()
+    assert "fluxbridge-agent-VPS-Frankfurt/agent.json" in names and "fluxbridge-agent-VPS-Frankfurt/fluxbridge-agent.exe" in names
+    cfg = json.loads(z.read("fluxbridge-agent-VPS-Frankfurt/agent.json"))
+    assert cfg["bridge"] == "https://bridge.example.com" and cfg["token"].startswith("fba_") and cfg["name"] == "VPS Frankfurt"
+    agents = (await client.get("/api/agents")).json()
+    assert [a["name"] for a in agents] == ["VPS Frankfurt"] and cfg["agent_id"] == agents[0]["id"]
+    # the embedded token works for the relay endpoints straight away
+    async with _agent_client(cfg["token"]) as ac:
+        assert (await ac.get("/api/agent/jobs?wait=0")).status_code == 200
+    # without the exe the Python files still ship
+    async def no_exe():
+        return None
+    monkeypatch.setattr(agent_router, "fetch_agent_exe", no_exe)
+    r = await client.post("/api/agents/bundle", json={"name": "plain"})
+    assert r.headers["X-Agent-Exe"] == "0" and "fluxbridge-agent-plain/fluxbridge_agent.py" in zipfile.ZipFile(io.BytesIO(r.content)).namelist()
+    assert any(a["action"] == "agent_bundle" for a in db.list_audit(10))

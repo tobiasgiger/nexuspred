@@ -4,6 +4,17 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.15
+- **Preconfigured agent download.** Settings → Execution Agents → *Download
+  preconfigured agent* registers the agent and hands you a zip that already contains
+  `agent.json` (bridge URL + the agent's token) and, when the release build is
+  reachable, **`fluxbridge-agent.exe`** — unzip on the VPS, start it, nothing to type,
+  no Python needed. A new workflow (`agent-exe.yml`) builds the .exe with PyInstaller on
+  every change under `agent/` and publishes it to the rolling GitHub release
+  `agent-latest`, which the bridge bundles (cached for an hour). The plain agent and the
+  pairing-code flow remain available. `start-agent.bat` prefers the .exe when present;
+  the agent reads `agent.json` next to the executable when frozen.
+
 ## 5.0.0-alpha.14
 - **Execution agents — one IP per account** (`app/relay.py`, `agent/`). A small
   stdlib-only Python helper runs on a VPS, pairs with the bridge through a **one-time

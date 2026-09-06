@@ -3,15 +3,40 @@ admin endpoints the dashboard uses (list / pairing codes / revoke / download).""
 from __future__ import annotations
 
 import io
+import json
+import re
+import time
 import zipfile
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
-from .. import context, db, relay
+from .. import config, context, db, http, relay
 from ..security import client_ip
-from ..web import BASE_DIR, require_admin
+from ..web import BASE_DIR, base_url, require_admin
+
+# Windows build of the agent, produced by .github/workflows/agent-exe.yml and
+# published to a rolling GitHub release; bundled into the preconfigured download.
+AGENT_EXE_URL = (f"https://github.com/{config.GITHUB_OWNER}/{config.GITHUB_REPO}"
+                 "/releases/download/agent-latest/fluxbridge-agent.exe")
+_exe_cache: tuple[float, bytes] | None = None
+EXE_CACHE_S = 3600.0
+
+
+async def fetch_agent_exe() -> bytes | None:
+    """The latest agent .exe (cached for an hour); None when unavailable."""
+    global _exe_cache
+    if _exe_cache and time.monotonic() - _exe_cache[0] < EXE_CACHE_S:
+        return _exe_cache[1]
+    try:
+        resp = await http.client("outbound").get(AGENT_EXE_URL, follow_redirects=True, timeout=60.0)
+        if resp.status_code == 200 and resp.content[:2] == b"MZ":
+            _exe_cache = (time.monotonic(), resp.content)
+            return resp.content
+    except Exception:  # noqa: BLE001 - the Python files still work without the exe
+        pass
+    return None
 
 router = APIRouter(tags=["agents"])
 
@@ -117,6 +142,48 @@ async def api_agent_rename(agent_id: int, request: Request) -> dict[str, Any]:
     return db.get_agent(context.get_area(), agent_id) or {}
 
 
+def _agent_files() -> list[tuple[str, bytes]]:
+    if not AGENT_DIR.is_dir():
+        raise HTTPException(status_code=404, detail="Agent files not found")
+    out = []
+    for path in sorted(AGENT_DIR.rglob("*")):
+        if path.is_file() and path.suffix in (".py", ".bat", ".sh", ".md", ".txt"):
+            out.append((str(path.relative_to(AGENT_DIR)), path.read_bytes()))
+    return out
+
+
+def _zip(files: list[tuple[str, bytes]], folder: str) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, data in files:
+            info = zipfile.ZipInfo(f"{folder}/{name}")
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = (0o755 if name.endswith((".sh", ".exe")) else 0o644) << 16
+            z.writestr(info, data)
+    return buf.getvalue()
+
+
+@router.post("/api/agents/bundle")
+async def api_agent_bundle(request: Request) -> Response:
+    """Admin: a **preconfigured** agent — the zip already holds ``agent.json``
+    with this bridge's URL and a freshly issued token, plus the Windows .exe
+    when the release build is reachable. Unzip, start, done — nothing to type."""
+    user = require_admin(request)
+    body = await request.json()
+    name = str((body or {}).get("name") or "").strip()[:60] or "agent"
+    token, agent = db.create_agent(context.get_area(), name, version="", ip="")
+    db.log_action(user["id"], user["email"], "agent_bundle", name, "preconfigured download")
+    cfg = {"bridge": base_url(request), "token": token, "name": agent["name"], "agent_id": agent["id"]}
+    files = _agent_files() + [("agent.json", json.dumps(cfg, indent=2).encode("utf-8"))]
+    exe = await fetch_agent_exe()
+    if exe:
+        files.append(("fluxbridge-agent.exe", exe))
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "-", name).strip("-") or "agent"
+    return Response(content=_zip(files, f"fluxbridge-agent-{safe}"), media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="fluxbridge-agent-{safe}.zip"',
+                             "X-Agent-Id": str(agent["id"]), "X-Agent-Exe": "1" if exe else "0"})
+
+
 _ZIP: Optional[bytes] = None
 
 
@@ -126,13 +193,6 @@ async def api_agent_download(request: Request) -> Response:
     require_admin(request)
     global _ZIP
     if _ZIP is None:
-        if not AGENT_DIR.is_dir():
-            raise HTTPException(status_code=404, detail="Agent files not found")
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-            for path in sorted(AGENT_DIR.rglob("*")):
-                if path.is_file() and path.suffix in (".py", ".bat", ".sh", ".md", ".txt"):
-                    z.write(path, f"fluxbridge-agent/{path.relative_to(AGENT_DIR)}")
-        _ZIP = buf.getvalue()
+        _ZIP = _zip(_agent_files(), "fluxbridge-agent")
     return Response(content=_ZIP, media_type="application/zip",
                     headers={"Content-Disposition": 'attachment; filename="fluxbridge-agent.zip"'})
