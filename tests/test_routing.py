@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from app import config, context, db, main, signals, state, tradovate
+from app import config, context, db, signals, state, tradovate
+from app.routers import accounts as accounts_router
 from tests.helpers import FakeExecutor
 
 TOKEN_ACCOUNTS = [
@@ -126,10 +127,10 @@ def test_resolve_webhook_across_areas(admin):
     wh2 = config.new_webhook("two")
     config.save_settings({"webhooks": [wh2]}, area_id=a2)
 
-    assert main._resolve_webhook(wh1["token"])[0] == 1
-    aid, wh = main._resolve_webhook(wh2["token"])
+    assert config.find_webhook(wh1["token"])[0] == 1
+    aid, wh = config.find_webhook(wh2["token"])
     assert aid == 2 and wh["id"] == wh2["id"]
-    assert main._resolve_webhook("nope") == (None, None)
+    assert config.find_webhook("nope") == (None, None)
 
 
 # -------------------------------------------------------------- flatten_all
@@ -174,7 +175,7 @@ async def test_flatten_all_collects_errors(accounts, monkeypatch):
 
 # --------------------------------------------------------- trade accounts
 def test_trade_accounts_overview_flattens_logins(accounts):
-    rows = main._trade_accounts_overview()
+    rows = accounts_router.trade_accounts_overview()
     assert [(r["token_idx"], r["token_name"], r["spec"], r["enabled"], r["token_enabled"]) for r in rows] == [
         (0, "L1", "A1", True, True), (0, "L1", "A2", False, True), (1, "L2", "B1", True, False)]
     assert rows[0]["environment"] == "demo" and rows[2]["environment"] == "live"
@@ -183,5 +184,5 @@ def test_trade_accounts_overview_flattens_logins(accounts):
 
 def test_trade_accounts_overview_legacy_single_account(admin):
     config.save_settings({"token_accounts": [{"name": "L", "enabled": True, "account_spec": "S", "account_id": 5}]})
-    (row,) = main._trade_accounts_overview()
+    (row,) = accounts_router.trade_accounts_overview()
     assert row["spec"] == "S" and row["id"] == 5 and row["enabled"] is True

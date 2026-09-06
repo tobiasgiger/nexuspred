@@ -110,7 +110,7 @@ def test_find_webhook_sees_new_areas_and_prefers_lowest_area(admin):
     config.save_settings({"webhooks": [wh2, dup]}, area_id=a2)
     assert config.find_webhook(wh2["token"]) == (a2, wh2)
     assert config.find_webhook(wh1["token"])[0] == 1  # first area wins, as in v4
-    assert main._resolve_webhook(wh2["token"])[0] == a2
+    assert config.find_webhook(wh2["token"])[0] == a2
     db.delete_user(u2["id"])
     assert config.find_webhook(wh2["token"]) == (None, None)
 

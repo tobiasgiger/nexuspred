@@ -1,0 +1,85 @@
+"""Primitives shared by every strategy handler."""
+from __future__ import annotations
+
+import asyncio
+import re
+import threading
+from typing import Any
+
+from .. import state
+from ..tradovate import TradovateError
+
+
+class SignalError(Exception):
+    """Raised for malformed or rejected signals."""
+
+
+# Guards the active-trade maps (see app.signals) while a handler reads/writes
+# a trade record.
+_lock = threading.Lock()
+
+_CONTRACT_RE = re.compile(r"^([A-Z]{1,4})([FGHJKMNQUVXZ])(\d{1,2})$")
+_TP_RE = re.compile(r"tp(\d)", re.IGNORECASE)
+
+
+def _tp_index_from_event(payload: dict[str, Any]) -> int | None:
+    """How many take-profits have filled, parsed from the event (e.g. ``tp2_hit`` → 2)."""
+    m = _TP_RE.search(str(payload.get("event", "")))
+    return int(m.group(1)) if m else None
+
+
+def _base_root(name: str) -> str:
+    """Reduce a contract/symbol to its root: ``MNQU6`` → ``MNQ``, ``MNQ1!`` → ``MNQ``."""
+    m = _CONTRACT_RE.match(name)
+    if m:
+        return m.group(1)
+    return name.replace("1!", "").strip()
+
+
+def _resolve_symbol(s: dict[str, Any], tv_symbol: str) -> tuple[str, str, bool]:
+    """Return (target_contract, base_root, allowed) for a TradingView symbol.
+
+    The configured mapping (``symbol_map``) is the source of truth: if the symbol
+    is mapped, that exact contract (e.g. ``MNQU6``) is traded and the signal is
+    allowed. Unmapped symbols fall back to the stripped root and are gated by
+    ``allowed_symbols``.
+    """
+    mapped = s.get("symbol_map", {}).get(tv_symbol)
+    if mapped:
+        return mapped, _base_root(mapped), True
+    root = _base_root(tv_symbol)
+    return root, root, root in s.get("allowed_symbols", [])
+
+
+def _opposite(action: str) -> str:
+    return "Sell" if action.lower() == "buy" else "Buy"
+
+
+def _trade_key(webhook_id: str, root: str) -> str:
+    return f"{webhook_id}:{root}"
+
+
+async def _cancel_working(ex: Any, tag: str, errors: list[str] | None = None) -> int:
+    """Cancel every working order on one account with all cancels in flight at
+    once. Returns how many were cancelled. Tradovate rejections are collected
+    (``errors``) or logged per order; anything else propagates, as in v4."""
+    try:
+        orders = await ex.working_orders()
+    except TradovateError as exc:
+        if errors is not None:
+            errors.append(f"list orders: {exc}")
+        else:
+            state.log_event("warn", f"{tag}Could not list working orders for {ex.name}: {exc}")
+        return 0
+    ids = [o.get("id") for o in orders if o.get("id") is not None]
+    results = await asyncio.gather(*(ex.cancel_order(oid) for oid in ids), return_exceptions=True)
+    cancelled = 0
+    for oid, r in zip(ids, results):
+        if isinstance(r, TradovateError):
+            if errors is not None:
+                errors.append(f"cancel {oid}: {r}")
+        elif isinstance(r, BaseException):
+            raise r
+        else:
+            cancelled += 1
+    return cancelled

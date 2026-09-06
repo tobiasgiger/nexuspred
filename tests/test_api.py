@@ -310,7 +310,7 @@ async def test_webhook_failure_logs_error_and_alerts(admin, anon_client, monkeyp
     async def fake_failed(name, reason):
         called.append((name, reason))
 
-    monkeypatch.setattr("app.main.alerts.webhook_failed", fake_failed)
+    monkeypatch.setattr("app.alerts.webhook_failed", fake_failed)
     config.save_settings({"trading_enabled": True})
     wh = config.new_webhook("F")
     config.save_settings({"webhooks": [wh]})
@@ -331,7 +331,7 @@ async def test_streams_require_auth(admin):
 
 
 async def test_event_stream_handshake(admin):
-    from app import main as app_main
+    from app.routers import core as app_main
     with context.use_area(1):
         resp = await app_main.api_stream(_StreamRequest(polls=0))
     assert resp.media_type == "text/event-stream"
@@ -352,7 +352,7 @@ async def test_discord_stream_handshake(admin):
 
 
 async def test_event_stream_delivers_events(admin):
-    from app import main as app_main
+    from app.routers import core as app_main
     with context.use_area(1):
         resp = await app_main.api_stream(_StreamRequest(polls=2))
         state.log_event("info", "hello-stream")   # queued before the generator polls

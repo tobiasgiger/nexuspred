@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from app import alerts, config, main, state
+from app import alerts, config, signals, state
 from app.tradovate import TradovateSession
 from tests.helpers import settle
 
@@ -159,6 +159,6 @@ async def test_background_signal_failure_alerts(admin, monkeypatch):
         failed.append((name, reason))
 
     monkeypatch.setattr(alerts, "webhook_failed", fake_failed)
-    await main._process_signal_bg({"action": "buy"}, {"id": "w", "name": "W", "strategy": "simple"})
+    await signals.process_background({"action": "buy"}, {"id": "w", "name": "W", "strategy": "simple"})
     assert failed == [("W", "Payload missing 'action' or 'symbol'")]
     assert state.recent_signals()[0]["result"].startswith("error:")
