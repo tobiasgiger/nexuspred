@@ -4,22 +4,22 @@
 Runs on a VPS and executes Tradovate HTTP requests on behalf of the bridge, so
 the logins assigned to this agent trade from *this* machine's IP address.
 
-* Needs only Python 3.8+ — no packages to install.
+* Needs only Python 3.8+ - no packages to install.
 * Talks to the bridge with outbound HTTPS only (no open port here).
 * Never sees your dashboard login: you pair it once with a code created under
-  Settings → Execution Agents; the bridge hands it a token that is valid for
+  Settings -> Execution Agents; the bridge hands it a token that is valid for
   the relay endpoints only.
 
 First run (interactive):
     python fluxbridge_agent.py
-        → asks for the bridge URL and the pairing code, saves agent.json
+        -> asks for the bridge URL and the pairing code, saves agent.json
 
 Or non-interactive:
     python fluxbridge_agent.py --bridge https://bridge.example.com --code ABCD-2345 --name "VPS 1"
 
-Preconfigured (Settings → Execution Agents → "Download preconfigured agent"):
+Preconfigured (Settings -> Execution Agents -> "Download preconfigured agent"):
     the zip already contains agent.json with the bridge URL and this agent's
-    token — just start it, nothing to type.
+    token - just start it, nothing to type.
 
 Afterwards just:
     python fluxbridge_agent.py      (or double-click fluxbridge-agent.exe)
@@ -36,8 +36,15 @@ import urllib.parse
 import urllib.request
 from datetime import datetime
 
-VERSION = "1.1.0"
-# Next to the script — or next to the .exe when packaged with PyInstaller
+VERSION = "1.1.1"
+
+# Windows consoles often run cp1252; never let a non-ASCII character crash the agent.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(errors="replace")
+    except (AttributeError, ValueError):
+        pass
+# Next to the script - or next to the .exe when packaged with PyInstaller
 # (there __file__ points into a temporary extraction folder).
 BASE_DIR = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, "frozen", False) else __file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "agent.json")
@@ -140,7 +147,7 @@ def prompt(text: str, default: str = "") -> str:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Fluxbridge execution agent")
     ap.add_argument("--bridge", help="bridge URL, e.g. https://bridge.example.com")
-    ap.add_argument("--code", help="pairing code from Settings → Execution Agents")
+    ap.add_argument("--code", help="pairing code from Settings -> Execution Agents")
     ap.add_argument("--name", help="a name for this agent (e.g. the VPS name)")
     ap.add_argument("--once", action="store_true", help="poll once and exit (for tests)")
     args = ap.parse_args()
@@ -166,7 +173,7 @@ def main() -> int:
             log(f"Pairing failed: {exc}")
             return 1
 
-    log(f"Agent '{cfg.get('name')}' v{VERSION} polling {cfg['bridge']} …")
+    log(f"Agent '{cfg.get('name')}' v{VERSION} polling {cfg['bridge']} ...")
     backoff = 2.0
     while True:
         try:
@@ -181,7 +188,7 @@ def main() -> int:
                 except Exception as exc:  # noqa: BLE001
                     log(f"could not deliver result for job {job['id']}: {exc}")
                 what = urllib.parse.urlsplit(job.get("url", "")).path
-                log(f"{job.get('method', 'GET')} {what} → {result.get('status_code')} {result.get('error', '')} ({ms} ms)")
+                log(f"{job.get('method', 'GET')} {what} -> {result.get('status_code')} {result.get('error', '')} ({ms} ms)")
             if args.once:
                 return 0
         except urllib.error.HTTPError as exc:
