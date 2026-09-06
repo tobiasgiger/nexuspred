@@ -3,6 +3,9 @@ data/settings.json
 data/*.log
 data/*.db
 
+# Local backups (e.g. backup/nexuspred-v4.11.0)
+backup/
+
 # Python
 __pycache__/
 *.py[cod]

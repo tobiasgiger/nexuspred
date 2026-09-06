@@ -7,10 +7,11 @@ to **Tradovate** as live/demo orders. Ships with a modern dashboard (dark & ligh
 configuration and monitoring, an optional Discord signal listener, **multi-user accounts (invite-only)**
 access control, and a built-in GitHub auto-updater.
 
-> **This is the `v5` branch** — a refactored, faster platform that runs *in parallel* to
-> the stable `main` line. Same trading logic, same API, same settings and database schema;
-> restructured code, pooled connections, more concurrency and a new build-free UI. See
-> [Architecture (v5)](#architecture-v5) and [Running v5 next to v4](#running-v5-next-to-v4).
+> **v5** — the refactored, faster platform: same trading logic, same API, same settings
+> and database schema as v4.11; restructured code, pooled connections, more concurrency
+> and a new build-free UI. `main` carries v5; the previous line is preserved on branch
+> **`backup/v4.11.0`** (data is compatible both ways). See
+> [Architecture (v5)](#architecture-v5) and [Upgrading from v4 / rollback](#upgrading-from-v4--rollback).
 
 ![dashboard](docs/dashboard.png)
 
@@ -424,12 +425,11 @@ and are gated by the **Allowed symbols** list.
 - Clicking it runs `git fetch` + `git reset --hard origin/<branch>`, refreshes
   dependencies, and **re-execs** the process so it boots on the new code.
 - Requires the app to be running from a `git` checkout. Override the tracked branch with
-  the `NEXUSPRED_BRANCH` environment variable (default `main`). **On a v5 install set
-  `NEXUSPRED_BRANCH=v5`**, otherwise the updater would reset the checkout to `main`.
+  the `NEXUSPRED_BRANCH` environment variable (default `main`).
 
-To cut a new release on `main`, bump `VERSION` and tag it (`vX.Y.Z`). The `v5` branch
-uses pre-release versions (`5.0.0-alpha.N`) and is deliberately **never tagged**, so
-`main` installations don't see it as an available update.
+To cut a new release, bump `VERSION` (and optionally tag it `vX.Y.Z`). While there are
+no GitHub releases, the updater compares against the `VERSION` file on the tracked
+branch, so every push to `main` that bumps `VERSION` shows up as an update.
 
 ### "Not a git checkout" — connecting a ZIP download
 
@@ -515,19 +515,22 @@ Everything is I/O-bound and runs on one asyncio loop: blocking work (PBKDF2, SMT
 SQLite) is kept off the loop, and independent broker calls are issued concurrently. Run a
 **single uvicorn worker** — sessions, active trades and live subscribers are in-process.
 
-## Running v5 next to v4
+## Upgrading from v4 / rollback
 
-`main` (v4) and `v5` are separate branches with **identical database schema and settings
-keys**, so a v4 data directory starts unchanged under v5 and stays readable by v4.
+v4.11 (branch `backup/v4.11.0`) and v5 (`main`) have **identical database schema and
+settings keys**: a v4 data directory starts unchanged under v5 and stays readable by v4,
+logins stay valid, webhook URLs and Tradovate tokens carry over — nothing to re-enter.
 
-- **Never run both against the same `NEXUSPRED_DATA_DIR` at the same time.** Both would
-  renew the same Tradovate tokens and execute the same webhooks twice. For a side-by-side
-  comparison, **copy** the data directory and enable **Trading** in only one instance.
-- Each instance needs its own port (`PORT`) and, on Render, its own service + disk
-  (`render.yaml` on this branch defines `nexuspred-v5` with `branch: v5`).
-- Set `NEXUSPRED_BRANCH=v5` on v5 installs so the self-updater follows this branch.
-- Point TradingView at whichever instance should trade; webhook tokens are the same in a
-  copied data directory, so only one instance may have trading enabled.
+- **Render**: keep the service and its disk; set the service's **Branch** to `main` and
+  deploy. No `/setup`, no migration. Rollback = set the branch to `backup/v4.11.0`.
+- **Self-hosted**: `git fetch && git checkout main && pip install -r requirements.txt`,
+  restart. Rollback = `git checkout backup/v4.11.0`.
+- Deploy while **flat**: a restart (any version) drops the in-memory trade tracking, so
+  stop/partial-close signals for trades opened *before* the restart are skipped.
+- **Never run two instances against the same `NEXUSPRED_DATA_DIR` at the same time.**
+  Both would renew the same Tradovate tokens and execute the same webhooks twice. For a
+  side-by-side comparison, **copy** the data directory and enable **Trading** in only one
+  instance.
 
 ## Disclaimer
 

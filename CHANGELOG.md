@@ -4,7 +4,10 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
-## 5.0.0-alpha.2 (branch `v5`)
+## 5.0.0-alpha.2
+_On `main` since 2026-09-06 (fast-forwarded from branch `v5`). The previous line, 4.11.0,
+is preserved on branch `backup/v4.11.0`; database and settings are compatible both ways._
+
 - **New dashboard, build-free.** The single 1,100-line template + `app.js` is replaced
   by ES modules served straight from `/static` (no bundler, no CDN): a design-token
   based shell with **dark and light themes** (follows the OS, toggle persisted), a
@@ -21,7 +24,7 @@ shows the **Update** button when a newer version is available.
   page posts only its own keys. Auth pages share one base template and stylesheet.
 - Same API payloads and all settings keys as v4 — a v4 `fluxbridge.db` works unchanged.
 
-## 5.0.0-alpha.1 (branch `v5`)
+## 5.0.0-alpha.1
 Behaviour-preserving backend refactor of 4.11.0, verified by a characterisation test
 suite (`pytest`, 150+ tests) written against the unchanged 4.11 code first.
 - **Speed / concurrency**
