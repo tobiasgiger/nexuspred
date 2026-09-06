@@ -126,7 +126,8 @@ def _fees_dict(fill_ids: list[Any], per_side: float, qty: int) -> dict[Any, dict
     return {fid: {"commission": round(per_side * qty, 4)} for fid in fill_ids} if per_side else {}
 
 
-def parse(text: str, *, zone: ZoneInfo, account: dict[str, Any], fee_per_side: float = 0.0) -> dict[str, Any]:
+def parse(text: str, *, zone: ZoneInfo, account: dict[str, Any], fee_per_side: float = 0.0,
+          source: str = "csv") -> dict[str, Any]:
     """Turn a CSV export into journal trades (not yet stored)."""
     header, rows = _rows(text)
     if not header:
@@ -156,7 +157,7 @@ def parse(text: str, *, zone: ZoneInfo, account: dict[str, Any], fee_per_side: f
             sell = {"id": sid, "timestamp": sts, "qty": qty, "contractId": 0}
             t = journal.build_trade(pair_id=f"pair:{bid}:{sid}", buy=buy, sell=sell, qty=qty, buy_price=buy_price,
                                     sell_price=sell_price, account=account, symbol=symbol, value_per_point=vpp,
-                                    fees=_fees_dict([bid, sid], fee_per_side, qty), source="csv")
+                                    fees=_fees_dict([bid, sid], fee_per_side, qty), source=source)
             if pnl is not None:
                 t["gross_pnl"] = round(pnl, 2)
                 t["net_pnl"] = round(pnl - t["fees"], 2)
@@ -179,7 +180,8 @@ def parse(text: str, *, zone: ZoneInfo, account: dict[str, Any], fee_per_side: f
                 fid = _pick(r, "fillId", "Fill ID", "id") or f"row{i}"
             symbol = _pick(r, "contract", "symbol", "product").upper()
             side = _pick(r, "B/S", "bs", "side", "action").lower()
-            side = "buy" if side.startswith("b") else "sell" if side.startswith("s") else ""
+            # "0"/"1" = the platform's OrderAction codes (Buy/Sell) in raw reports
+            side = "buy" if side.startswith("b") or side == "0" else "sell" if side.startswith("s") or side == "1" else ""
             if not (symbol and qty > 0 and price is not None and ts and side):
                 skipped.append(f"row {i}: missing contract/side/qty/price/time")
                 continue
@@ -191,7 +193,7 @@ def parse(text: str, *, zone: ZoneInfo, account: dict[str, Any], fee_per_side: f
                     pair_id=f"{'ord' if fmt == 'orders' else 'fill'}:{m['buy']['id']}:{m['sell']['id']}:{m['qty']}",
                     buy=m["buy"], sell=m["sell"], qty=m["qty"], buy_price=m["buy_price"], sell_price=m["sell_price"],
                     account=account, symbol=symbol, value_per_point=vpp,
-                    fees=_fees_dict([m["buy"]["id"], m["sell"]["id"]], fee_per_side, m["qty"]), source="csv"))
+                    fees=_fees_dict([m["buy"]["id"], m["sell"]["id"]], fee_per_side, m["qty"]), source=source))
     return {"format": fmt, "rows": len(rows), "trades": trades, "skipped": skipped}
 
 

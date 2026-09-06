@@ -143,6 +143,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "journal_import_time": "23:30",     # local time (journal_timezone) — after the CME close
     "journal_timezone": "Europe/Zurich",  # for the daily schedule and day/week/month buckets
     "journal_last_import": "",          # internal: ISO timestamp of the last import run
+    "journal_history_days": 365,        # how far back the first history import reaches
+    "journal_fee_per_side": 0.0,        # $ per contract per side for report/CSV trades (exports carry no fees)
+    "journal_report_cursor": {},        # internal: per account, last day covered by the Performance report
 
     # --- Auto-updater ---------------------------------------------------------
     "auto_check_updates": True,
@@ -368,7 +371,7 @@ def new_webhook(
 SETTINGS_PROTECTED_KEYS = frozenset({
     "token_accounts", "webhooks", "webhooks_migrated", "webhook_secret",
     "discord_enabled", "discord_user_token", "discord_dry_run", "discord_channels",
-    "rollover_notified", "journal_last_import",
+    "rollover_notified", "journal_last_import", "journal_report_cursor",
 })
 
 # Fields that must never be returned to the browser in plain text.

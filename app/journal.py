@@ -43,7 +43,7 @@ from datetime import date, datetime, time as dtime, timedelta, timezone
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
-from . import config, context, db, state
+from . import config, context, db, http, state
 
 FEE_KEYS = ("commission", "clearingFee", "exchangeFee", "nfaFee", "brokerageFee",
             "ipFee", "orderRoutingFee")
@@ -356,9 +356,23 @@ async def import_session(area_id: int, session: Any, *, today: Optional[date] = 
     # Past sessions from the cash-balance log (incremental; see module docstring).
     hist = {"history_pairs": 0, "history_new": 0, "history_snapshots": 0, "history_error": ""}
     try:
-        hist = await _history_from_cash_log(area_id, r, accounts_by_id, fees, info)
+        rep = await _history_from_reports(area_id, session, accounts_by_id, r.diag, today=today if isinstance(today, date) else None)
+        hist["history_new"] += rep["report_new"]
+        hist["report_windows"] = rep["report_windows"]
+        hist["report_rows"] = rep["report_rows"]
+        if rep["report_error"]:
+            hist["history_error"] = rep["report_error"]
     except Exception as exc:  # noqa: BLE001 - history must never break the session import
-        hist["history_error"] = str(exc)
+        hist["history_error"] = f"reports: {exc}"
+    try:
+        book = await _history_from_cash_log(area_id, r, accounts_by_id, fees, info)
+        hist["history_pairs"] = book["history_pairs"]
+        hist["history_new"] += book["history_new"]
+        hist["history_snapshots"] = book["history_snapshots"]
+        if book["history_error"]:
+            hist["history_error"] = (hist["history_error"] + "; " + book["history_error"]).strip("; ")
+    except Exception as exc:  # noqa: BLE001 - history must never break the session import
+        hist["history_error"] = (hist["history_error"] + f"; cash log: {exc}").strip("; ")
 
     day = (today or datetime.now(tz())).isoformat() if isinstance(today, date) else datetime.now(tz()).date().isoformat()
     snapshots = 0
@@ -372,6 +386,139 @@ async def import_session(area_id: int, session: Any, *, today: Optional[date] = 
     return {"login": session.name, "accounts": len(accounts_by_id), "fills": len(fills),
             "fills_new": fills_new, "trades": len(trades), "trades_new": trades_new, "snapshots": snapshots,
             **hist, "diag": r.diag}
+
+
+# --------------------------------------------------- reporting service
+# The Tradovate web platform builds its Reports tab (Performance, Fills, …)
+# through a separate reporting service — hosts ``rpt-live`` / ``rpt-demo`` on
+# the API domain, ``GET /v1/reports/requestreportdefinitions`` and
+# ``POST /v1/reports/requestreport`` — authenticated with the same access
+# token. Unlike the entity lists it covers any date range, which is what makes
+# the journal's history import possible without a manual export.
+REPORT_HOSTS = {"live": "https://rpt-live.tradovateapi.com", "demo": "https://rpt-demo.tradovateapi.com"}
+REPORT_WINDOW_DAYS = 90       # one request per account and 90-day window
+REPORT_OVERLAP_DAYS = 3       # re-read the last days so late bookings are not missed
+REPORT_MAX_WINDOWS_PER_RUN = 12  # ≈ 3 years per account per run; the rest follows next run
+
+
+async def _request_report(session: Any, name: str, params: list[tuple[str, str]],
+                          timezone_minutes: int = 0) -> dict[str, Any]:
+    """``POST reports/requestreport`` on the reporting host of the session's
+    environment. Returns the JSON body (``data`` = CSV text on success,
+    ``errorText`` on failure). Honours Tradovate's time-penalty answer once."""
+    token = await session._get_token()
+    host = REPORT_HOSTS["live" if session.environment == "live" else "demo"]
+    body = {"name": name, "params": [{"name": k, "value": v} for k, v in params],
+            "representationType": "csv", "timezone": timezone_minutes}
+    for attempt in (1, 2):
+        resp = await http.client("tradovate").post(
+            f"{host}/v1/reports/requestreport", json=body,
+            headers={"Authorization": f"Bearer {token}"}, timeout=90.0)
+        if resp.status_code >= 400:
+            raise ImportProblem(f"reports/requestreport {name}: {resp.status_code} {resp.text[:200]}")
+        data = resp.json() if resp.text else {}
+        if isinstance(data, dict) and data.get("p-ticket") and attempt == 1:
+            await asyncio.sleep(min(30.0, float(data.get("p-time") or 1)))
+            body["p-ticket"] = data["p-ticket"]
+            continue
+        return data if isinstance(data, dict) else {"data": data}
+    return {}
+
+
+async def _report_definitions(session: Any) -> list[dict[str, Any]]:
+    token = await session._get_token()
+    host = REPORT_HOSTS["live" if session.environment == "live" else "demo"]
+    resp = await http.client("tradovate").get(f"{host}/v1/reports/requestreportdefinitions",
+                                              headers={"Authorization": f"Bearer {token}"}, timeout=30.0)
+    if resp.status_code >= 400:
+        raise ImportProblem(f"reports/requestreportdefinitions: {resp.status_code} {resp.text[:200]}")
+    data = resp.json() if resp.text else []
+    return list(data) if isinstance(data, list) else []
+
+
+def _mmdd(d: date) -> str:
+    return d.strftime("%m/%d/%Y")
+
+
+async def _history_from_reports(area_id: int, session: Any, accounts_by_id: dict[int, dict[str, Any]],
+                                diag: dict[str, Any], *, today: Optional[date] = None) -> dict[str, Any]:
+    """Pull the **Performance** report (one row per round trip, with the
+    broker's P&L) per account for every day not yet covered, parse it like a
+    CSV export and store the trades. A per-account cursor in the area settings
+    makes later runs incremental. Returns counters."""
+    from . import journal_csv
+    from zoneinfo import ZoneInfo as _Z
+    s = config.load_settings(area_id=area_id)
+    today = today or datetime.now(tz()).date()
+    history_days = max(1, int(s.get("journal_history_days", 365) or 365))
+    fee_per_side = float(s.get("journal_fee_per_side", 0) or 0)
+    cursors: dict[str, str] = dict(s.get("journal_report_cursor") or {})
+    out = {"report_windows": 0, "report_rows": 0, "report_new": 0, "report_error": ""}
+    rdiag: dict[str, Any] = {}
+    diag["reports"] = rdiag
+    try:
+        defs = await _report_definitions(session)
+        rdiag["definitions"] = [{"name": d.get("name"), "params": [p.get("name") for p in (d.get("params") or [])]}
+                                for d in defs if isinstance(d, dict)][:30]
+    except Exception as exc:  # noqa: BLE001 - definitions are informational only
+        rdiag["definitions_error"] = str(exc)[:300]
+    errors: list[str] = []
+    windows_done = 0
+    for aid, acct in accounts_by_id.items():
+        spec = acct.get("spec") or ""
+        if not spec:
+            continue
+        cursor = cursors.get(spec)
+        try:
+            start = date.fromisoformat(cursor) - timedelta(days=REPORT_OVERLAP_DAYS) if cursor else today - timedelta(days=history_days)
+        except ValueError:
+            start = today - timedelta(days=history_days)
+        adiag = rdiag.setdefault(spec, {"windows": 0, "rows": 0, "new": 0})
+        reached: Optional[date] = None
+        while start <= today and windows_done < REPORT_MAX_WINDOWS_PER_RUN:
+            end = min(start + timedelta(days=REPORT_WINDOW_DAYS - 1), today)
+            windows_done += 1
+            adiag["windows"] += 1
+            try:
+                body = await _request_report(session, "Performance", [
+                    ("startDate", _mmdd(start)), ("endDate", _mmdd(end)), ("account", spec)])
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{spec} {start}..{end}: {exc}")
+                adiag["error"] = str(exc)[:300]
+                break
+            text = body.get("data") if isinstance(body, dict) else None
+            if not isinstance(text, str):
+                err = (body or {}).get("errorText") or f"unexpected answer keys {sorted((body or {}).keys())[:8]}"
+                errors.append(f"{spec} {start}..{end}: {err}")
+                adiag["error"] = str(err)[:300]
+                break
+            if text.strip():
+                try:
+                    parsed = journal_csv.parse(text, zone=_Z("UTC"), account=acct, fee_per_side=fee_per_side, source="report")
+                except journal_csv.CsvError as exc:
+                    errors.append(f"{spec} {start}..{end}: {exc}")
+                    adiag["error"] = str(exc)[:300]
+                    adiag["columns"] = text.split("\n", 1)[0][:300]
+                    break
+                adiag["rows"] += parsed["rows"]
+                adiag.setdefault("columns", text.split("\n", 1)[0].strip()[:300])
+                new = 0
+                for t in parsed["trades"]:
+                    if db.find_similar_journal_trade(area_id, t):
+                        continue
+                    new += db.upsert_journal_trade(area_id, t)
+                adiag["new"] += new
+                out["report_rows"] += parsed["rows"]
+                out["report_new"] += new
+            out["report_windows"] += 1
+            reached = end
+            start = end + timedelta(days=1)
+        if reached is not None and (not cursor or reached >= date.fromisoformat(cursor)):
+            cursors[spec] = reached.isoformat()  # only what was actually covered
+    if cursors != (s.get("journal_report_cursor") or {}):
+        config.save_settings({"journal_report_cursor": cursors}, area_id=area_id)
+    out["report_error"] = "; ".join(errors)[:800]
+    return out
 
 
 FEE_CHANGE_TYPES = {"commission", "clearingfee", "exchangefee", "nfafee", "brokeragefee", "ipfee",

@@ -98,9 +98,20 @@ class FakeSession:
         return self.data.get(path, [])
 
 
+async def _no_report(session, name, params, timezone_minutes=0):
+    return {"data": ""}
+
+
 def _install(monkeypatch, *sessions):
     mgr = tradovate.manager_for(1)
     monkeypatch.setattr(mgr, "all", lambda: list(sessions))
+    if journal._request_report.__module__ == journal.__name__:  # not stubbed by the test itself
+        monkeypatch.setattr(journal, "_request_report", _no_report)
+    monkeypatch.setattr(journal, "_report_definitions", _no_defs)
+
+
+async def _no_defs(session):
+    return [{"name": "Performance", "params": [{"name": "startDate"}, {"name": "endDate"}, {"name": "account"}]}]
 
 
 # ------------------------------------------------------------ unit pieces
@@ -342,3 +353,96 @@ async def test_cash_log_with_tradeId_instead_of_fillPairId(admin, monkeypatch):
     _install(monkeypatch, sess)
     rec = await journal.import_area(1)
     assert rec["history_new"] == 2
+
+
+# ------------------------------------------------- reporting-service history
+PERF_CSV = ("symbol,_priceFormat,_priceFormatType,_tickSize,buyFillId,sellFillId,qty,buyPrice,sellPrice,pnl,boughtTimestamp,soldTimestamp,duration\r\n"
+            "MNQU6,-2,0,0.25,7001,7002,1,20000.00,20010.00,$20.00,{d1} 15:30:00,{d1} 15:45:00,15min\r\n"
+            "MESU6,-2,0,0.25,7004,7003,2,5610.00,5600.00,$(100.00),{d2} 16:20:00,{d2} 16:00:00,20min\r\n")
+
+
+class ReportStub:
+    """Stands in for journal._request_report: serves a Performance CSV whose
+    rows fall inside the requested window, and records every request."""
+
+    def __init__(self, rows_at=("2026-07-10", "2026-08-15"), fail=None):
+        self.rows_at = rows_at
+        self.fail = fail
+        self.requests = []
+
+    async def __call__(self, session, name, params, timezone_minutes=0):
+        p = dict(params)
+        self.requests.append((name, p["account"], p["startDate"], p["endDate"]))
+        if self.fail:
+            return {"errorText": self.fail}
+        from datetime import datetime as _dt
+        start = _dt.strptime(p["startDate"], "%m/%d/%Y").date()
+        end = _dt.strptime(p["endDate"], "%m/%d/%Y").date()
+        d1, d2 = self.rows_at
+        inside = [d for d in (d1, d2) if start <= date.fromisoformat(d) <= end]
+        if not inside:
+            return {"data": PERF_CSV.split("\r\n")[0] + "\r\n"}  # header only
+        text = PERF_CSV.split("\r\n")[0] + "\r\n"
+        lines = PERF_CSV.split("\r\n")[1:3]
+        for d, line in zip((d1, d2), lines):
+            if d in inside:
+                text += line.replace("{d1}", d.replace("-", "/")[5:] + "/" + d[:4]).replace("{d2}", d.replace("-", "/")[5:] + "/" + d[:4]) + "\r\n"
+        return {"data": text}
+
+
+async def test_history_from_performance_report(admin, monkeypatch):
+    stub = ReportStub()
+    monkeypatch.setattr(journal, "_request_report", stub)
+    sess = FakeSession()
+    _install(monkeypatch, sess)
+    with context.use_area(1):
+        config.save_settings({"journal_history_days": 200, "journal_fee_per_side": 1.0})
+    rec = await journal.import_area(1)
+    assert rec["status"] == "ok", rec
+    # 200 days back from today (2026-09-06) → 3 windows of 90 days for the one account
+    assert [r[1] for r in stub.requests] == ["DEMO11"] * 3 and stub.requests[0][0] == "Performance"
+    assert stub.requests[0][2] == "02/18/2026" and stub.requests[-1][3] == "09/06/2026"
+    assert rec["history_new"] == 2 and rec["trades_new"] == 2
+    hist = [t for t in db.list_journal_trades(1) if t["source"] == "report"]
+    assert [(t["exit_ts"][:10], t["symbol"], t["side"], t["gross_pnl"], t["fees"], t["net_pnl"]) for t in hist] == [
+        ("2026-07-10", "MNQU6", "long", 20.0, 2.0, 18.0), ("2026-08-15", "MESU6", "short", -100.0, 4.0, -104.0)]
+    assert hist[0]["pair_id"] == "pair:7001:7002" and hist[0]["value_per_point"] == 2.0
+    with context.use_area(1):
+        assert config.load_settings()["journal_report_cursor"] == {"DEMO11": "2026-09-06"}
+    import json as _json
+    diag = _json.loads(rec["detail"])["Login A"]["reports"]["DEMO11"]
+    assert diag["windows"] == 3 and diag["rows"] == 2 and diag["new"] == 2 and diag["columns"].startswith("symbol,")
+    # incremental: one window from the cursor minus the overlap, nothing new
+    stub.requests.clear()
+    rec2 = await journal.import_area(1)
+    assert len(stub.requests) == 1 and stub.requests[0][2] == "09/03/2026" and rec2["history_new"] == 0
+    assert len([t for t in db.list_journal_trades(1) if t["source"] == "report"]) == 2
+
+
+async def test_report_error_is_reported_not_fatal(admin, monkeypatch):
+    stub = ReportStub(fail="Report 'Performance' is not available")
+    monkeypatch.setattr(journal, "_request_report", stub)
+    _install(monkeypatch, FakeSession())
+    rec = await journal.import_area(1)
+    assert rec["trades_new"] == 2 and rec["history_new"] == 0 and rec["status"] == "partial"
+    assert "not available" in rec["error"] and len(stub.requests) == 1  # stops after the first failing window
+    with context.use_area(1):
+        assert config.load_settings()["journal_report_cursor"] == {}  # nothing covered → cursor untouched
+
+
+async def test_report_trades_dedup_against_api_pairs(admin, monkeypatch):
+    """The same round trip arriving from the entity list (today) and the report is stored once."""
+    stub = ReportStub(rows_at=("2026-09-01", "2026-09-02"))
+    monkeypatch.setattr(journal, "_request_report", stub)
+    sess = FakeSession()
+    # make the report's first row the same fills as today's pair 501 (fill ids 1/2)
+    global PERF_CSV
+    orig = PERF_CSV
+    PERF_CSV = PERF_CSV.replace("7001,7002,1,20000.00,20010.00,$20.00", "1,2,2,20000.00,20010.00,$40.00")
+    try:
+        _install(monkeypatch, sess)
+        rec = await journal.import_area(1)
+    finally:
+        PERF_CSV = orig
+    assert rec["trades_new"] == 2 and rec["history_new"] == 1  # only the MES row is new
+    assert len(db.list_journal_trades(1)) == 3

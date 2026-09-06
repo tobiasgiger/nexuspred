@@ -4,6 +4,18 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.10
+- **History via Tradovate's reporting service.** The first real import showed that the
+  entity lists *and* the cash-balance log only cover the current session. The web
+  platform's Reports tab uses a separate reporting service (`rpt-live` / `rpt-demo`
+  hosts, `POST /v1/reports/requestreport`) that accepts any date range; the journal now
+  requests the **Performance** report (one row per round trip with the broker's P&L)
+  per account in 90-day windows — first run as far back as *History to import (days)*
+  (default 365), later runs only from the last covered day minus 3 days — parses it like
+  a CSV export and stores the trades keyed by fill ids. New settings: history depth and
+  a flat *fee per contract per side* for report/CSV trades. Diagnostics list the report
+  definitions the account offers and, per account, windows / rows / columns / errors.
+
 ## 5.0.0-alpha.9
 - **Import diagnostics.** Every journal import now records what each Tradovate endpoint
   returned (row counts, column names, cash-log change types, date span — never prices,

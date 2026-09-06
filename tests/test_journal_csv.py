@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app import db, journal, journal_csv
-from tests.test_journal import FakeSession, _install
+from tests.test_journal import FakeSession, _install  # noqa: F401 - _install stubs the network
 
 ZH = ZoneInfo("Europe/Zurich")
 ACC = {"id": 11, "spec": "DEMO11", "name": "DEMO11", "environment": "demo"}

@@ -142,14 +142,15 @@ monthly P&L, equity curve, month calendar, breakdowns by symbol, account, weekda
 hour, plus win rate, profit factor, expectancy and max drawdown. Every chart has a table
 view; every trade takes a note and tags; the filtered set exports as CSV.
 
-**Past days.** Tradovate's entity lists cover the current session, but the account's
-cash-balance log is the broker's complete book. Every import walks it and fetches each
-realised fill pair it has not journaled yet by id — with the broker's own realised P&L,
-the fees booked per fill, and one balance snapshot per trading day — so the first import
-brings the whole account history in and later ones stay incremental. Should you ever
-need it, a Tradovate CSV export (**Reports → Performance**, or Orders) can still be
-loaded with **Import CSV**; rows are keyed by their fill ids, so nothing is duplicated.
-Trades placed through the simulator are not journaled (they never reach Tradovate).
+**Past days.** Tradovate's entity lists cover the current session only, but the
+platform's Reports tab is served by a separate reporting service that accepts any date
+range. Every import requests the **Performance** report (one row per round trip, with
+the broker's own realised P&L) per account: the first run reaches back *History to
+import (days)* (Settings → General → Trading journal, default 365), later runs fetch
+only what is new. Rows are keyed by their fill ids, so a trade that also arrived through
+the session import is never duplicated. Reports carry no fees; set *Fee per contract per
+side* to have them applied. A CSV export can still be loaded with **Import CSV**. Trades
+placed through the simulator are not journaled (they never reach Tradovate).
 
 ### Security hardening (built in)
 

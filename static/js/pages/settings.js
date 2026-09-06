@@ -35,6 +35,8 @@ export const general = {
           { name: "journal_auto_import", type: "switch", label: "Automatic daily import" },
           { name: "journal_import_time", type: "text", label: "Import time (local)", placeholder: "23:30", width: "140px", hint: "HH:MM in the journal timezone. Tradovate's lists cover the current session, so run it after the daily close (23:00 CET)." },
           { name: "journal_timezone", type: "text", label: "Journal timezone", placeholder: "Europe/Zurich", hint: "IANA name; used for the schedule and for day / week / month buckets." },
+          { name: "journal_history_days", type: "number", label: "History to import (days)", min: 1, max: 3650, placeholder: "365", width: "160px", hint: "How far back the first import reads Tradovate's Performance report; later runs only fetch what is new." },
+          { name: "journal_fee_per_side", type: "number", label: "Fee per contract per side ($)", min: 0, step: 0.01, placeholder: "0", width: "160px", hint: "Applied to trades from reports and CSV exports, which carry no fees (e.g. 1.84 for MNQ at Tradovate)." },
         ] },
       ],
     });
