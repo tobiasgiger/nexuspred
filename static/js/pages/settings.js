@@ -31,6 +31,11 @@ export const general = {
         { title: "Connection", hint: "Fluxbridge connects to Tradovate with one access token per login (no username/password). Add logins under Tradovate Accounts, then Connect & Verify.", fields: [
           { name: "health_check_interval", type: "number", label: "Health check / token refresh interval (seconds)", min: 0, placeholder: "60 (0 = off)", hint: "How often sessions are verified and tokens renewed ahead of expiry." },
         ], after: h("div", { class: "form-actions" }, connectBtn) },
+        { title: "Trading journal", hint: "Executed trades are imported from every enabled Tradovate login once a day (after the CME close) into the Journal page.", fields: [
+          { name: "journal_auto_import", type: "switch", label: "Automatic daily import" },
+          { name: "journal_import_time", type: "text", label: "Import time (local)", placeholder: "23:30", width: "140px", hint: "HH:MM in the journal timezone. Tradovate's lists cover the current session, so run it after the daily close (23:00 CET)." },
+          { name: "journal_timezone", type: "text", label: "Journal timezone", placeholder: "Europe/Zurich", hint: "IANA name; used for the schedule and for day / week / month buckets." },
+        ] },
       ],
     });
     root.append(pageHead("General & Trading", lead), form.el);

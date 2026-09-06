@@ -199,6 +199,83 @@ def init() -> None:
                 );
                 CREATE INDEX IF NOT EXISTS ix_order_log_area ON order_log(area_id, id);
                 CREATE INDEX IF NOT EXISTS ix_order_log_ts ON order_log(ts);
+                CREATE TABLE IF NOT EXISTS journal_fills (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    area_id INTEGER NOT NULL,
+                    fill_id INTEGER NOT NULL,
+                    order_id INTEGER NOT NULL DEFAULT 0,
+                    account_id INTEGER NOT NULL DEFAULT 0,
+                    contract_id INTEGER NOT NULL DEFAULT 0,
+                    symbol TEXT NOT NULL DEFAULT '',
+                    ts TEXT NOT NULL,
+                    action TEXT NOT NULL DEFAULT '',
+                    qty INTEGER NOT NULL DEFAULT 0,
+                    price REAL NOT NULL DEFAULT 0,
+                    fees REAL NOT NULL DEFAULT 0,
+                    UNIQUE(area_id, fill_id)
+                );
+                CREATE TABLE IF NOT EXISTS journal_trades (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    area_id INTEGER NOT NULL,
+                    pair_id TEXT NOT NULL,
+                    source TEXT NOT NULL DEFAULT '',
+                    account_id INTEGER NOT NULL DEFAULT 0,
+                    account_spec TEXT NOT NULL DEFAULT '',
+                    account_name TEXT NOT NULL DEFAULT '',
+                    environment TEXT NOT NULL DEFAULT '',
+                    contract_id INTEGER NOT NULL DEFAULT 0,
+                    symbol TEXT NOT NULL DEFAULT '',
+                    root TEXT NOT NULL DEFAULT '',
+                    side TEXT NOT NULL DEFAULT '',
+                    qty INTEGER NOT NULL DEFAULT 0,
+                    entry_price REAL NOT NULL DEFAULT 0,
+                    exit_price REAL NOT NULL DEFAULT 0,
+                    entry_ts TEXT NOT NULL DEFAULT '',
+                    exit_ts TEXT NOT NULL DEFAULT '',
+                    entry_fill_id INTEGER NOT NULL DEFAULT 0,
+                    exit_fill_id INTEGER NOT NULL DEFAULT 0,
+                    points REAL NOT NULL DEFAULT 0,
+                    value_per_point REAL NOT NULL DEFAULT 1,
+                    gross_pnl REAL NOT NULL DEFAULT 0,
+                    fees REAL NOT NULL DEFAULT 0,
+                    net_pnl REAL NOT NULL DEFAULT 0,
+                    note TEXT NOT NULL DEFAULT '',
+                    tags TEXT NOT NULL DEFAULT '',
+                    imported_at TEXT NOT NULL,
+                    UNIQUE(area_id, pair_id)
+                );
+                CREATE INDEX IF NOT EXISTS ix_journal_trades_exit ON journal_trades(area_id, exit_ts);
+                CREATE TABLE IF NOT EXISTS journal_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    area_id INTEGER NOT NULL,
+                    account_id INTEGER NOT NULL,
+                    account_spec TEXT NOT NULL DEFAULT '',
+                    day TEXT NOT NULL,
+                    total_cash REAL NOT NULL DEFAULT 0,
+                    realized_pnl REAL NOT NULL DEFAULT 0,
+                    open_pnl REAL NOT NULL DEFAULT 0,
+                    week_realized_pnl REAL NOT NULL DEFAULT 0,
+                    total_pnl REAL NOT NULL DEFAULT 0,
+                    taken_at TEXT NOT NULL,
+                    UNIQUE(area_id, account_id, day)
+                );
+                CREATE TABLE IF NOT EXISTS journal_imports (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    area_id INTEGER NOT NULL,
+                    ts TEXT NOT NULL,
+                    trigger TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT '',
+                    by TEXT NOT NULL DEFAULT '',
+                    logins INTEGER NOT NULL DEFAULT 0,
+                    accounts INTEGER NOT NULL DEFAULT 0,
+                    fills INTEGER NOT NULL DEFAULT 0,
+                    fills_new INTEGER NOT NULL DEFAULT 0,
+                    trades INTEGER NOT NULL DEFAULT 0,
+                    trades_new INTEGER NOT NULL DEFAULT 0,
+                    snapshots INTEGER NOT NULL DEFAULT 0,
+                    duration_ms INTEGER NOT NULL DEFAULT 0,
+                    error TEXT NOT NULL DEFAULT ''
+                );
                 CREATE TABLE IF NOT EXISTS subscriptions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     area_id INTEGER NOT NULL,
@@ -915,6 +992,145 @@ def prune_history(cutoff_ts: str) -> int:
         a = c.execute("DELETE FROM signal_log WHERE ts<?", (cutoff_ts,)).rowcount
         b = c.execute("DELETE FROM order_log WHERE ts<?", (cutoff_ts,)).rowcount
     return int(a or 0) + int(b or 0)
+
+
+# ---------------------------------------------------------------- journal
+_TRADE_COLS = ("pair_id", "source", "account_id", "account_spec", "account_name", "environment",
+               "contract_id", "symbol", "root", "side", "qty", "entry_price", "exit_price", "entry_ts",
+               "exit_ts", "entry_fill_id", "exit_fill_id", "points", "value_per_point", "gross_pnl",
+               "fees", "net_pnl")
+
+
+def upsert_journal_fill(area_id: int, f: dict[str, Any]) -> int:
+    """Insert a fill (idempotent by Tradovate fill id). Returns 1 when new."""
+    init()
+    with _connect() as c:
+        cur = c.execute(
+            "INSERT OR IGNORE INTO journal_fills(area_id,fill_id,order_id,account_id,contract_id,symbol,ts,action,qty,price,fees) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (area_id, f["fill_id"], f.get("order_id", 0), f.get("account_id", 0), f.get("contract_id", 0),
+             f.get("symbol", ""), f.get("ts", ""), f.get("action", ""), f.get("qty", 0), f.get("price", 0), f.get("fees", 0)))
+        return int(cur.rowcount or 0)
+
+
+def upsert_journal_trade(area_id: int, t: dict[str, Any]) -> int:
+    """Insert a round-trip trade (idempotent by pair id). Returns 1 when new."""
+    init()
+    cols = ",".join(_TRADE_COLS)
+    marks = ",".join("?" * len(_TRADE_COLS))
+    with _connect() as c:
+        cur = c.execute(
+            f"INSERT OR IGNORE INTO journal_trades(area_id,{cols},imported_at) VALUES(?,{marks},?)",
+            (area_id, *[t.get(k) for k in _TRADE_COLS], _now()))
+        return int(cur.rowcount or 0)
+
+
+def _trade_row(r: sqlite3.Row) -> dict[str, Any]:
+    d = dict(r)
+    d["tags"] = [x for x in (d.get("tags") or "").split(",") if x]
+    return d
+
+
+def list_journal_trades(area_id: int, *, frm: str = "", to: str = "", account: str = "",
+                        symbol: str = "", side: str = "", limit: int = 0,
+                        before: Optional[int] = None) -> list[dict[str, Any]]:
+    """Trades closed in [frm, to) (ISO-UTC; empty = open-ended), newest first
+    when ``limit`` is set, else chronological (for aggregation)."""
+    init()
+    where = ["area_id=?"]
+    params: list[Any] = [area_id]
+    if frm:
+        where.append("exit_ts>=?"); params.append(frm)
+    if to:
+        where.append("exit_ts<?"); params.append(to)
+    if account:
+        where.append("(account_spec=? OR account_name=? OR CAST(account_id AS TEXT)=?)"); params += [account, account, account]
+    if symbol:
+        where.append("(root=? OR symbol=?)"); params += [symbol, symbol]
+    if side:
+        where.append("side=?"); params.append(side)
+    if before:
+        where.append("id<?"); params.append(int(before))
+    order = "ORDER BY exit_ts DESC, id DESC" if limit else "ORDER BY exit_ts ASC, id ASC"
+    lim = f" LIMIT {int(limit)}" if limit else ""
+    with _connect() as c:
+        rows = c.execute(f"SELECT * FROM journal_trades WHERE {' AND '.join(where)} {order}{lim}", params).fetchall()
+    return [_trade_row(r) for r in rows]
+
+
+def get_journal_trade(area_id: int, trade_id: int) -> Optional[dict[str, Any]]:
+    init()
+    with _connect() as c:
+        r = c.execute("SELECT * FROM journal_trades WHERE area_id=? AND id=?", (area_id, trade_id)).fetchone()
+    return _trade_row(r) if r else None
+
+
+def update_journal_trade_note(area_id: int, trade_id: int, note: str, tags: list[str]) -> bool:
+    init()
+    clean = ",".join(sorted({t.strip().lower()[:30] for t in tags if t and t.strip()}))
+    with _connect() as c:
+        cur = c.execute("UPDATE journal_trades SET note=?, tags=? WHERE area_id=? AND id=?",
+                        (note[:2000], clean, area_id, trade_id))
+    return bool(cur.rowcount)
+
+
+def journal_accounts(area_id: int) -> list[dict[str, Any]]:
+    init()
+    with _connect() as c:
+        rows = c.execute(
+            "SELECT account_id, account_spec, account_name, environment, COUNT(*) n, MIN(exit_ts) first_ts, MAX(exit_ts) last_ts "
+            "FROM journal_trades WHERE area_id=? GROUP BY account_id ORDER BY account_name", (area_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def journal_symbols(area_id: int) -> list[str]:
+    init()
+    with _connect() as c:
+        return [r["root"] for r in c.execute(
+            "SELECT DISTINCT root FROM journal_trades WHERE area_id=? ORDER BY root", (area_id,)).fetchall()]
+
+
+def upsert_journal_snapshot(area_id: int, s: dict[str, Any]) -> None:
+    init()
+    with _connect() as c:
+        c.execute(
+            "INSERT INTO journal_snapshots(area_id,account_id,account_spec,day,total_cash,realized_pnl,open_pnl,week_realized_pnl,total_pnl,taken_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(area_id,account_id,day) DO UPDATE SET "
+            "total_cash=excluded.total_cash, realized_pnl=excluded.realized_pnl, open_pnl=excluded.open_pnl, "
+            "week_realized_pnl=excluded.week_realized_pnl, total_pnl=excluded.total_pnl, taken_at=excluded.taken_at",
+            (area_id, s["account_id"], s.get("account_spec", ""), s["day"], s.get("total_cash", 0), s.get("realized_pnl", 0),
+             s.get("open_pnl", 0), s.get("week_realized_pnl", 0), s.get("total_pnl", 0), _now()))
+
+
+def list_journal_snapshots(area_id: int, *, days: int = 90, account: str = "") -> list[dict[str, Any]]:
+    init()
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
+    where, params = "area_id=? AND day>=?", [area_id, since]
+    if account:
+        where += " AND (account_spec=? OR CAST(account_id AS TEXT)=?)"; params += [account, account]
+    with _connect() as c:
+        return [dict(r) for r in c.execute(
+            f"SELECT * FROM journal_snapshots WHERE {where} ORDER BY day, account_id", params).fetchall()]
+
+
+def insert_journal_import(area_id: int, rec: dict[str, Any]) -> int:
+    init()
+    with _connect() as c:
+        cur = c.execute(
+            "INSERT INTO journal_imports(area_id,ts,trigger,status,by,logins,accounts,fills,fills_new,trades,trades_new,snapshots,duration_ms,error) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (area_id, rec.get("ts") or _now(), rec.get("trigger", ""), rec.get("status", ""), rec.get("by", ""),
+             rec.get("logins", 0), rec.get("accounts", 0), rec.get("fills", 0), rec.get("fills_new", 0),
+             rec.get("trades", 0), rec.get("trades_new", 0), rec.get("snapshots", 0), rec.get("duration_ms", 0),
+             rec.get("error", "")))
+        return int(cur.lastrowid or 0)
+
+
+def list_journal_imports(area_id: int, limit: int = 30) -> list[dict[str, Any]]:
+    init()
+    with _connect() as c:
+        return [dict(r) for r in c.execute(
+            "SELECT * FROM journal_imports WHERE area_id=? ORDER BY id DESC LIMIT ?", (area_id, int(limit))).fetchall()]
 
 
 # --------------------------------------------------------------- audit log

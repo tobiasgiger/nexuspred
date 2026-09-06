@@ -4,6 +4,23 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.6
+- **Trading journal** (new **Journal** page, `app/journal.py`). Executed trades are
+  imported from every enabled Tradovate login — fills, Tradovate's own fill pairs (FIFO
+  pairing as fallback), fees per fill, contract → product value-per-point, and a daily
+  cash-balance snapshot per account — into `journal_trades` / `journal_fills` /
+  `journal_snapshots`, keyed by Tradovate ids so re-imports never duplicate. Import runs
+  **automatically once a day after the CME close** (default 23:30 Europe/Zurich; time,
+  timezone and on/off under Settings → General → *Trading journal*) and on demand with
+  **Import now**. Reporting per **day / week / month** in the journal timezone: net
+  result hero, win rate, profit factor, average win/loss, expectancy, max drawdown,
+  fees, trading days; P&L-per-period columns, equity curve, month calendar heat-map,
+  breakdowns by symbol, account, weekday and hour; every chart has a table twin and a
+  tooltip. Trades table with **notes and tags** per trade, cursor pagination, CSV
+  export, import history. API under `/api/journal/*` (`overview`, `summary`,
+  `calendar`, `trades`, `import`, `imports`, `snapshots`, `export.csv`).
+  Dependency-free SVG chart kit (`static/js/charts.js`). New dependency: `tzdata`.
+
 ## 5.0.0-alpha.5
 - **Signals and orders are persisted** (`signal_log` / `order_log` in SQLite,
   `app/history.py`). A deploy or restart no longer wipes the record: the live 200-entry

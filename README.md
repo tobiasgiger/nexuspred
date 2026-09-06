@@ -127,6 +127,26 @@ includes a `render.yaml` blueprint.
 > `/webhook/<token>` and `/healthz` paths stay open (`GET /healthz` is an unauthenticated
 > liveness probe).
 
+### Trading journal
+
+The **Journal** page turns your Tradovate fills into a P&L journal. Once a day after the
+CME close (default **23:30 Europe/Zurich**, configurable under Settings → General →
+*Trading journal*) — and whenever you press **Import now** — the bridge reads, per
+enabled login, the session's fills, Tradovate's fill pairs (entry ↔ exit), fees, the
+contract's value per point and a cash-balance snapshot per account, and stores each
+round trip with side, quantity, entry/exit, points, gross P&L, fees and net P&L. Imports
+are keyed by Tradovate ids, so running them again never duplicates a trade.
+
+Reporting is bucketed by the trade's exit time in the journal timezone: daily / weekly /
+monthly P&L, equity curve, month calendar, breakdowns by symbol, account, weekday and
+hour, plus win rate, profit factor, expectancy and max drawdown. Every chart has a table
+view; every trade takes a note and tags; the filtered set exports as CSV.
+
+> Tradovate's REST lists cover the current trading session, so a day whose import did
+> not run (bridge offline at import time) cannot be fetched later — the scheduled
+> import is the source of continuity. Trades placed through the simulator are not
+> journaled (they never reach Tradovate).
+
 ### Security hardening (built in)
 
 - **Sessions**: HMAC-signed, `HttpOnly`, `Secure` (behind HTTPS), `SameSite=Lax` cookie
@@ -514,6 +534,14 @@ the dashboard **Update** button works.
 | `GET`  | `/api/status` | Connection + trading status, trade accounts, active trades |
 | `GET/POST` | `/api/settings` | Read / update settings (secrets masked; only the keys you send change) |
 | `GET`  | `/api/orders` `/api/signals` `/api/events` | Rolling logs |
+| `GET`  | `/api/journal/overview` | Journal stats, per-period buckets, equity curve for a filter slice (`range`/`frm`/`to`, `account`, `symbol`, `side`, `period`) |
+| `GET`  | `/api/journal/calendar` | Daily net P&L for a month (`month=YYYY-MM`) |
+| `GET`  | `/api/journal/trades` | Imported round-trip trades (filters as above, `limit`, `before`) |
+| `PUT`  | `/api/journal/trades/{id}` | Set a trade's `note` / `tags` |
+| `POST` | `/api/journal/import` | Import fills / trades / snapshots from Tradovate now |
+| `GET`  | `/api/journal/imports` | Import history |
+| `GET`  | `/api/journal/snapshots` | Daily account cash / P&L snapshots |
+| `GET`  | `/api/journal/export.csv` | CSV export of the filtered trades |
 | `GET`  | `/api/history/signals` | Persisted signals, newest first; `limit`, `before` (cursor), `result`, `q` |
 | `GET`  | `/api/history/orders` | Persisted orders; `limit`, `before`, `symbol`, `account` |
 | `GET`  | `/api/history/stats` | Per-day signal outcomes + order counts for the last `days` (default 7) |

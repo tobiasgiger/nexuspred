@@ -2,6 +2,7 @@
 import overview from "./overview.js";
 import discord from "./discord.js";
 import logs from "./logs.js";
+import journal from "./journal.js";
 import webhooks from "./webhooks.js";
 import marketplace from "./marketplace.js";
 import tools from "./tools.js";
@@ -16,6 +17,7 @@ export const ROUTES = [
   { path: "/", page: overview },
   { path: "/discord", page: discord },
   { path: "/logs", page: logs },
+  { path: "/journal", page: journal },
   { path: "/webhooks", page: webhooks },
   { path: "/webhooks/:id", page: webhooks },
   { path: "/marketplace", page: marketplace },

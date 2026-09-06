@@ -138,6 +138,12 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # carry a secret sent as the X-Webhook-Secret header.
     "discord_channels": [],
 
+    # --- Trading journal ------------------------------------------------------
+    "journal_auto_import": True,        # import fills/trades from Tradovate once a day
+    "journal_import_time": "23:30",     # local time (journal_timezone) — after the CME close
+    "journal_timezone": "Europe/Zurich",  # for the daily schedule and day/week/month buckets
+    "journal_last_import": "",          # internal: ISO timestamp of the last import run
+
     # --- Auto-updater ---------------------------------------------------------
     "auto_check_updates": True,
 
@@ -362,7 +368,7 @@ def new_webhook(
 SETTINGS_PROTECTED_KEYS = frozenset({
     "token_accounts", "webhooks", "webhooks_migrated", "webhook_secret",
     "discord_enabled", "discord_user_token", "discord_dry_run", "discord_channels",
-    "rollover_notified",
+    "rollover_notified", "journal_last_import",
 })
 
 # Fields that must never be returned to the browser in plain text.

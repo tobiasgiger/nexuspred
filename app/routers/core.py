@@ -94,6 +94,20 @@ async def api_save_settings(request: Request) -> dict[str, Any]:
     # endpoints; the generic form must not be able to write them.
     for field in config.SETTINGS_PROTECTED_KEYS:
         updates.pop(field, None)
+    if "journal_import_time" in updates:
+        raw = str(updates.get("journal_import_time") or "23:30").strip()
+        parts = raw.split(":")
+        if len(parts) != 2 or not all(x.isdigit() for x in parts) or not (0 <= int(parts[0]) < 24 and 0 <= int(parts[1]) < 60):
+            raise HTTPException(status_code=400, detail="Journal import time must be HH:MM")
+        updates["journal_import_time"] = f"{int(parts[0]):02d}:{int(parts[1]):02d}"
+    if "journal_timezone" in updates:
+        from zoneinfo import ZoneInfo
+        name = str(updates.get("journal_timezone") or "Europe/Zurich").strip()
+        try:
+            ZoneInfo(name)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail=f"Unknown timezone '{name}' (use an IANA name like Europe/Zurich)") from exc
+        updates["journal_timezone"] = name
     url = str(updates.get("alert_discord_webhook_url") or "").strip()
     if url:
         problem = await asyncio.to_thread(security.check_outbound_url, url)
