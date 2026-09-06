@@ -360,6 +360,7 @@ async def import_session(area_id: int, session: Any, *, today: Optional[date] = 
         hist["history_new"] += rep["report_new"]
         hist["report_windows"] = rep["report_windows"]
         hist["report_rows"] = rep["report_rows"]
+        hist["report_pending_days"] = rep.get("report_pending_days", 0)
         if rep["report_error"]:
             hist["history_error"] = rep["report_error"]
     except Exception as exc:  # noqa: BLE001 - history must never break the session import
@@ -396,9 +397,11 @@ async def import_session(area_id: int, session: Any, *, today: Optional[date] = 
 # token. Unlike the entity lists it covers any date range, which is what makes
 # the journal's history import possible without a manual export.
 REPORT_HOSTS = {"live": "https://rpt-live.tradovateapi.com", "demo": "https://rpt-demo.tradovateapi.com"}
-REPORT_WINDOW_DAYS = 90       # one request per account and 90-day window
+REPORT_WINDOW_DAYS = 30       # first try; halved on "Too long range" until the service accepts it
+REPORT_MIN_WINDOW_DAYS = 1
 REPORT_OVERLAP_DAYS = 3       # re-read the last days so late bookings are not missed
-REPORT_MAX_WINDOWS_PER_RUN = 12  # ≈ 3 years per account per run; the rest follows next run
+REPORT_MAX_WINDOWS_PER_RUN = 150  # requests per login per run; the rest follows next run
+REPORT_PAUSE_S = 0.25         # be gentle with the reporting service
 
 
 async def _request_report(session: Any, name: str, params: list[tuple[str, str]],
@@ -453,7 +456,9 @@ async def _history_from_reports(area_id: int, session: Any, accounts_by_id: dict
     history_days = max(1, int(s.get("journal_history_days", 365) or 365))
     fee_per_side = float(s.get("journal_fee_per_side", 0) or 0)
     cursors: dict[str, str] = dict(s.get("journal_report_cursor") or {})
-    out = {"report_windows": 0, "report_rows": 0, "report_new": 0, "report_error": ""}
+    window = int(s.get("journal_report_window") or REPORT_WINDOW_DAYS)
+    window = max(REPORT_MIN_WINDOW_DAYS, min(window, REPORT_WINDOW_DAYS))
+    out = {"report_windows": 0, "report_rows": 0, "report_new": 0, "report_error": "", "report_pending_days": 0}
     rdiag: dict[str, Any] = {}
     diag["reports"] = rdiag
     try:
@@ -476,9 +481,11 @@ async def _history_from_reports(area_id: int, session: Any, accounts_by_id: dict
         adiag = rdiag.setdefault(spec, {"windows": 0, "rows": 0, "new": 0})
         reached: Optional[date] = None
         while start <= today and windows_done < REPORT_MAX_WINDOWS_PER_RUN:
-            end = min(start + timedelta(days=REPORT_WINDOW_DAYS - 1), today)
+            end = min(start + timedelta(days=window - 1), today)
             windows_done += 1
             adiag["windows"] += 1
+            if windows_done > 1:
+                await asyncio.sleep(REPORT_PAUSE_S)
             try:
                 body = await _request_report(session, "Performance", [
                     ("startDate", _mmdd(start)), ("endDate", _mmdd(end)), ("account", spec)])
@@ -488,9 +495,14 @@ async def _history_from_reports(area_id: int, session: Any, accounts_by_id: dict
                 break
             text = body.get("data") if isinstance(body, dict) else None
             if not isinstance(text, str):
-                err = (body or {}).get("errorText") or f"unexpected answer keys {sorted((body or {}).keys())[:8]}"
+                err = str((body or {}).get("errorText") or f"unexpected answer keys {sorted((body or {}).keys())[:8]}")
+                if "long range" in err.lower() and window > REPORT_MIN_WINDOW_DAYS:
+                    # The service caps the span per request: shrink and retry the same start.
+                    window = max(REPORT_MIN_WINDOW_DAYS, window // 2)
+                    adiag["window_days"] = window
+                    continue
                 errors.append(f"{spec} {start}..{end}: {err}")
-                adiag["error"] = str(err)[:300]
+                adiag["error"] = err[:300]
                 break
             if text.strip():
                 try:
@@ -515,8 +527,16 @@ async def _history_from_reports(area_id: int, session: Any, accounts_by_id: dict
             start = end + timedelta(days=1)
         if reached is not None and (not cursor or reached >= date.fromisoformat(cursor)):
             cursors[spec] = reached.isoformat()  # only what was actually covered
+        if reached is not None and reached < today:
+            out["report_pending_days"] += (today - reached).days
+            adiag["pending_days"] = (today - reached).days
+    updates: dict[str, Any] = {}
     if cursors != (s.get("journal_report_cursor") or {}):
-        config.save_settings({"journal_report_cursor": cursors}, area_id=area_id)
+        updates["journal_report_cursor"] = cursors
+    if window != int(s.get("journal_report_window") or REPORT_WINDOW_DAYS):
+        updates["journal_report_window"] = window  # remember the span the service accepts
+    if updates:
+        config.save_settings(updates, area_id=area_id)
     out["report_error"] = "; ".join(errors)[:800]
     return out
 

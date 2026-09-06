@@ -399,9 +399,9 @@ async def test_history_from_performance_report(admin, monkeypatch):
         config.save_settings({"journal_history_days": 200, "journal_fee_per_side": 1.0})
     rec = await journal.import_area(1)
     assert rec["status"] == "ok", rec
-    # 200 days back from today (2026-09-06) → 3 windows of 90 days for the one account
-    assert [r[1] for r in stub.requests] == ["DEMO11"] * 3 and stub.requests[0][0] == "Performance"
-    assert stub.requests[0][2] == "02/18/2026" and stub.requests[-1][3] == "09/06/2026"
+    # 200 days back from today (2026-09-06) → 7 windows of 30 days for the one account
+    assert [r[1] for r in stub.requests] == ["DEMO11"] * 7 and stub.requests[0][0] == "Performance"
+    assert stub.requests[0][2] == "02/18/2026" and stub.requests[0][3] == "03/19/2026" and stub.requests[-1][3] == "09/06/2026"
     assert rec["history_new"] == 2 and rec["trades_new"] == 2
     hist = [t for t in db.list_journal_trades(1) if t["source"] == "report"]
     assert [(t["exit_ts"][:10], t["symbol"], t["side"], t["gross_pnl"], t["fees"], t["net_pnl"]) for t in hist] == [
@@ -411,7 +411,7 @@ async def test_history_from_performance_report(admin, monkeypatch):
         assert config.load_settings()["journal_report_cursor"] == {"DEMO11": "2026-09-06"}
     import json as _json
     diag = _json.loads(rec["detail"])["Login A"]["reports"]["DEMO11"]
-    assert diag["windows"] == 3 and diag["rows"] == 2 and diag["new"] == 2 and diag["columns"].startswith("symbol,")
+    assert diag["windows"] == 7 and diag["rows"] == 2 and diag["new"] == 2 and diag["columns"].startswith("symbol,")
     # incremental: one window from the cursor minus the overlap, nothing new
     stub.requests.clear()
     rec2 = await journal.import_area(1)
@@ -446,3 +446,33 @@ async def test_report_trades_dedup_against_api_pairs(admin, monkeypatch):
         PERF_CSV = orig
     assert rec["trades_new"] == 2 and rec["history_new"] == 1  # only the MES row is new
     assert len(db.list_journal_trades(1)) == 3
+
+
+async def test_report_window_shrinks_on_too_long_range(admin, monkeypatch):
+    """The service caps the span per request: halve until accepted, remember the size."""
+    inner = ReportStub(rows_at=("2026-08-30", "2026-09-01"))
+    seen = []
+
+    async def picky(session, name, params, timezone_minutes=0):
+        p = dict(params)
+        from datetime import datetime as _dt
+        span = (_dt.strptime(p["endDate"], "%m/%d/%Y") - _dt.strptime(p["startDate"], "%m/%d/%Y")).days + 1
+        seen.append(span)
+        if span > 7:
+            return {"errorText": "Too long range"}
+        return await inner(session, name, params)
+    monkeypatch.setattr(journal, "_request_report", picky)
+    _install(monkeypatch, FakeSession())
+    with context.use_area(1):
+        config.save_settings({"journal_history_days": 20})
+    rec = await journal.import_area(1)
+    assert rec["status"] == "ok", rec["error"]
+    assert seen[:3] == [21, 15, 7] and max(seen[3:]) <= 7          # 30-day span clipped to the 21-day range → 15 → 7 accepted
+    assert rec["history_new"] == 2
+    with context.use_area(1):
+        s = config.load_settings()
+    assert s["journal_report_window"] == 7 and s["journal_report_cursor"] == {"DEMO11": "2026-09-06"}
+    # next run starts with the remembered span, no probing
+    seen.clear()
+    await journal.import_area(1)
+    assert seen and max(seen) <= 7

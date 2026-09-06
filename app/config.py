@@ -146,6 +146,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "journal_history_days": 365,        # how far back the first history import reaches
     "journal_fee_per_side": 0.0,        # $ per contract per side for report/CSV trades (exports carry no fees)
     "journal_report_cursor": {},        # internal: per account, last day covered by the Performance report
+    "journal_report_window": 30,        # internal: days per report request the service accepts (auto-tuned)
 
     # --- Auto-updater ---------------------------------------------------------
     "auto_check_updates": True,
@@ -371,7 +372,7 @@ def new_webhook(
 SETTINGS_PROTECTED_KEYS = frozenset({
     "token_accounts", "webhooks", "webhooks_migrated", "webhook_secret",
     "discord_enabled", "discord_user_token", "discord_dry_run", "discord_channels",
-    "rollover_notified", "journal_last_import", "journal_report_cursor",
+    "rollover_notified", "journal_last_import", "journal_report_cursor", "journal_report_window",
 })
 
 # Fields that must never be returned to the browser in plain text.

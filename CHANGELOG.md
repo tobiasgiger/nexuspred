@@ -4,6 +4,13 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.11
+- **Report windows adapt to the service.** Tradovate's reporting service answers
+  "Too long range" above a certain span; the history import now starts with 30-day
+  windows, halves on that answer until accepted, remembers the accepted size
+  (`journal_report_window`) and paces requests. Up to 150 windows per login and run;
+  remaining days are reported (`pending_days` in the diagnostics) and fetched next run.
+
 ## 5.0.0-alpha.10
 - **History via Tradovate's reporting service.** The first real import showed that the
   entity lists *and* the cash-balance log only cover the current session. The web
