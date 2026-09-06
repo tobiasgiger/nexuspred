@@ -5,13 +5,14 @@ editable from the dashboard. Sensitive credentials never leave the local machine
 """
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
 import secrets
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 # Repository root (one level up from the ``app`` package).
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -142,6 +143,10 @@ LEGACY_SETTINGS_FILE = DATA_DIR / "settings.json"
 # Per-area settings cache. Reentrant lock: save_settings() calls load_settings().
 _lock = threading.RLock()
 _cache: dict[int, dict[str, Any]] = {}
+# Bumped on every write / invalidation; derived caches (the webhook-token index)
+# compare against it instead of re-reading the DB.
+_generation = 0
+_webhook_index: tuple[tuple[int, int], dict[str, tuple[int, dict[str, Any]]]] | None = None
 
 
 def get_version() -> str:
@@ -169,44 +174,100 @@ def _resolve_area(area_id: int | None) -> int:
 
 def load_settings(area_id: int | None = None, force: bool = False) -> dict[str, Any]:
     """Return an area's settings, merged over defaults (defaults to the current
-    context area). Cached per area."""
+    context area). Cached per area.
+
+    Callers always get a private **deep** copy: v4 handed out shallow copies, so
+    a router appending to a fresh area's ``webhooks`` list silently mutated
+    ``DEFAULT_SETTINGS`` for every other area. Mutate freely, then persist via
+    :func:`save_settings` / :func:`update`."""
     from . import db
 
     aid = _resolve_area(area_id)
     with _lock:
         if not force and aid in _cache:
-            return dict(_cache[aid])
-        merged = dict(DEFAULT_SETTINGS)
+            return copy.deepcopy(_cache[aid])
+        merged = copy.deepcopy(DEFAULT_SETTINGS)
         try:
             merged.update(db.get_area_settings(aid) or {})
         except Exception:  # noqa: BLE001 - a DB hiccup shouldn't crash a read
             pass
         _cache[aid] = merged
-        return dict(merged)
+        return copy.deepcopy(merged)
+
+
+def _persist(aid: int, current: dict[str, Any]) -> None:
+    """Write an area's full settings dict and refresh the cache. Lock held by caller."""
+    global _generation
+    from . import db
+
+    db.save_area_settings(aid, current)
+    _cache[aid] = current
+    _generation += 1
 
 
 def save_settings(updates: dict[str, Any], area_id: int | None = None) -> dict[str, Any]:
-    """Merge ``updates`` into an area's settings and persist them (to SQLite)."""
-    from . import db
-
+    """Merge ``updates`` into an area's settings and persist them (to SQLite).
+    Unknown keys are dropped (the settings schema is ``DEFAULT_SETTINGS``)."""
     aid = _resolve_area(area_id)
     with _lock:
         current = load_settings(area_id=aid, force=True)
         for key, value in updates.items():
             if key in DEFAULT_SETTINGS:  # ignore unknown keys
                 current[key] = value
-        db.save_area_settings(aid, current)
-        _cache[aid] = current
-        return dict(current)
+        _persist(aid, current)
+        return copy.deepcopy(current)
+
+
+def update(mutator: Callable[[dict[str, Any]], Any], area_id: int | None = None) -> dict[str, Any]:
+    """Atomic read-modify-write: ``mutator`` receives the area's settings (a
+    private copy), edits them in place, and the result is persisted under the
+    settings lock — so two concurrent edits can never clobber each other."""
+    aid = _resolve_area(area_id)
+    with _lock:
+        current = load_settings(area_id=aid, force=True)
+        mutator(current)
+        current = {k: v for k, v in current.items() if k in DEFAULT_SETTINGS}
+        _persist(aid, current)
+        return copy.deepcopy(current)
 
 
 def invalidate(area_id: int | None = None) -> None:
     """Drop an area's cached settings (or all) so the next read re-loads from DB."""
+    global _generation
     with _lock:
         if area_id is None:
             _cache.clear()
         else:
             _cache.pop(area_id, None)
+        _generation += 1
+
+
+def find_webhook(token: str) -> tuple[int | None, dict[str, Any] | None]:
+    """Which area owns a webhook token → ``(area_id, webhook)`` or ``(None, None)``.
+
+    v4 scanned every area's settings in SQLite on each TradingView POST. v5 keeps
+    an in-memory ``token → (area, webhook)`` index that is rebuilt only when a
+    settings write or an area create/delete has happened since (generation
+    counters), so the hot path is a dict lookup. First matching area wins, in
+    area-id order — same as the v4 scan."""
+    global _webhook_index
+    from . import db
+
+    if not token:
+        return None, None
+    with _lock:
+        key = (_generation, db.areas_generation())
+        idx = _webhook_index
+        if idx is None or idx[0] != key:
+            table: dict[str, tuple[int, dict[str, Any]]] = {}
+            for aid in db.all_area_ids():
+                for wh in load_settings(area_id=aid).get("webhooks") or []:
+                    t = wh.get("token")
+                    if t and t not in table:
+                        table[t] = (aid, wh)
+            _webhook_index = idx = (key, table)
+        hit = idx[1].get(token)
+    return (hit[0], copy.deepcopy(hit[1])) if hit else (None, None)
 
 
 def migrate_legacy_webhook(area_id: int | None = None) -> None:
@@ -318,8 +379,6 @@ def public_settings(area_id: int | None = None) -> dict[str, Any]:
 def update_token_account(idx: int, area_id: int | None = None, **fields: Any) -> None:
     """Persist fields (e.g. a renewed token) into token_accounts[idx] of an area.
     Best-effort, thread-safe read-modify-write so concurrent renewals don't clobber."""
-    from . import db
-
     aid = _resolve_area(area_id)
     with _lock:
         current = load_settings(area_id=aid, force=True)
@@ -327,6 +386,5 @@ def update_token_account(idx: int, area_id: int | None = None, **fields: Any) ->
         if 0 <= idx < len(accounts):
             accounts[idx] = {**accounts[idx], **fields}
             current["token_accounts"] = accounts
-            db.save_area_settings(aid, current)
-            _cache[aid] = current
+            _persist(aid, current)
 

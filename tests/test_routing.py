@@ -106,9 +106,9 @@ def test_public_settings_masks_secrets(admin):
     assert p["webhook_secret"] == "change-me"  # legacy field is not masked
 
 
-@pytest.mark.xfail(strict=True, reason="v4 aliasing bug: load_settings() shallow-copies, so the "
-                   "webhook router appends into DEFAULT_SETTINGS['webhooks'] itself — fixed in v5 Phase 1")
 async def test_webhook_create_does_not_leak_into_other_areas(client):
+    """v4 bug (fixed in v5): load_settings() shallow-copied, so the webhook
+    router appended into DEFAULT_SETTINGS['webhooks'] itself."""
     r = await client.post("/api/webhooks", json={"name": "Leaky", "strategy": "simple"})
     assert r.status_code == 200
     with context.use_area(2):

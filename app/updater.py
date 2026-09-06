@@ -20,7 +20,7 @@ from typing import Any
 import httpx
 from packaging.version import InvalidVersion, Version
 
-from . import config, state
+from . import config, http, state
 
 API = "https://api.github.com"
 RAW = "https://raw.githubusercontent.com"
@@ -33,8 +33,8 @@ def _norm(v: str) -> str:
 async def _latest_release_tag() -> str | None:
     url = f"{API}/repos/{config.GITHUB_OWNER}/{config.GITHUB_REPO}/releases/latest"
     try:
-        async with httpx.AsyncClient(timeout=15.0) as c:
-            resp = await c.get(url, headers={"Accept": "application/vnd.github+json"})
+        resp = await http.client("outbound").get(
+            url, headers={"Accept": "application/vnd.github+json"}, timeout=15.0)
         if resp.status_code == 200:
             return resp.json().get("tag_name")
     except httpx.HTTPError:
@@ -48,8 +48,7 @@ async def _version_file_on_branch() -> str | None:
         f"{config.GITHUB_BRANCH}/VERSION"
     )
     try:
-        async with httpx.AsyncClient(timeout=15.0) as c:
-            resp = await c.get(url)
+        resp = await http.client("outbound").get(url, timeout=15.0)
         if resp.status_code == 200:
             return resp.text.strip()
     except httpx.HTTPError:

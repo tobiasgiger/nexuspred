@@ -37,6 +37,13 @@ DB_FILE = DATA_DIR / "fluxbridge.db"
 
 _init_lock = threading.Lock()
 _initialized = False
+# Bumped whenever an area is created or deleted, so in-memory indexes keyed by
+# area (see config.find_webhook) know when to rescan without querying.
+_areas_generation = 0
+
+
+def areas_generation() -> int:
+    return _areas_generation
 
 # Per-area feature entitlements. Admins turn these on/off per user (area); the
 # feature stays off by default for a freshly created area, so an admin decides
@@ -223,6 +230,7 @@ def list_users() -> list[dict[str, Any]]:
 def create_user(email: str, password: str, is_admin: bool = False,
                 initial_settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     """Create a user + their own area + an owner membership. Returns the user."""
+    global _areas_generation
     init()
     email = email.strip().lower()
     # Default the alert "Notify email" to the owner's own address (unless the
@@ -258,6 +266,7 @@ def create_user(email: str, password: str, is_admin: bool = False,
             "INSERT INTO memberships(user_id,area_id,role,created_at) VALUES(?,?,?,?)",
             (uid, area_id, "owner", _now()),
         )
+    _areas_generation += 1
     return get_user(uid)  # type: ignore[return-value]
 
 
@@ -269,6 +278,7 @@ def set_password(user_id: int, new_password: str) -> None:
 
 
 def delete_user(user_id: int) -> None:
+    global _areas_generation
     init()
     with _connect() as c:
         area_ids = [r["id"] for r in c.execute("SELECT id FROM areas WHERE owner_user_id=?", (user_id,)).fetchall()]
@@ -277,6 +287,7 @@ def delete_user(user_id: int) -> None:
             c.execute("DELETE FROM memberships WHERE area_id=?", (aid,))
             c.execute("DELETE FROM areas WHERE id=?", (aid,))
         c.execute("DELETE FROM users WHERE id=?", (user_id,))
+    _areas_generation += 1
 
 
 # --------------------------------------------------------------- areas

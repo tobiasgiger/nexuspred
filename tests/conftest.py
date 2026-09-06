@@ -24,7 +24,7 @@ os.environ.setdefault("PORT", "9000")
 import httpx  # noqa: E402
 import pytest  # noqa: E402
 
-from app import auth, config, context, db, signals, state, tradovate  # noqa: E402
+from app import auth, config, context, db, http, signals, state, tradovate  # noqa: E402
 from app.discord_signals import hub, listener  # noqa: E402
 from app.main import app  # noqa: E402
 
@@ -47,6 +47,8 @@ def _reset_runtime() -> None:
     config.DEFAULT_SETTINGS.clear()
     config.DEFAULT_SETTINGS.update(copy.deepcopy(_PRISTINE_DEFAULTS))
     config._cache.clear()
+    config._webhook_index = None
+    http.reset()
     state._areas.clear()
     signals._active.clear()
     signals._sim_active.clear()

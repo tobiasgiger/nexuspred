@@ -18,9 +18,7 @@ import smtplib
 from email.mime.text import MIMEText
 from typing import Any
 
-import httpx
-
-from . import config, state
+from . import config, http, state
 
 
 async def _send_discord(message: str) -> None:
@@ -29,8 +27,8 @@ async def _send_discord(message: str) -> None:
         return
     content = f"@everyone {message}" if s.get("alert_discord_mention_everyone") else message
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(s["alert_discord_webhook_url"], json={"content": content})
+        resp = await http.client("outbound").post(
+            s["alert_discord_webhook_url"], json={"content": content}, timeout=10.0)
         if resp.status_code >= 400:
             state.log_event("warn", f"Discord alert failed: {resp.status_code} {resp.text}")
     except Exception as exc:  # noqa: BLE001 - never let a notification failure escalate

@@ -423,12 +423,8 @@ async def dashboard(request: Request) -> HTMLResponse:
 # ===================================================================== Webhook
 def _resolve_webhook(token: str) -> tuple[int | None, dict[str, Any] | None]:
     """Find which area owns a webhook token (webhooks are per area). Returns
-    (area_id, webhook) or (None, None)."""
-    for area_id in db.all_area_ids():
-        for wh in config.load_settings(area_id=area_id).get("webhooks", []):
-            if wh.get("token") == token:
-                return area_id, wh
-    return None, None
+    (area_id, webhook) or (None, None). Served from config's in-memory index."""
+    return config.find_webhook(token)
 
 
 async def _process_signal_bg(payload: dict[str, Any], webhook: dict[str, Any]) -> None:
@@ -749,9 +745,7 @@ async def api_create_webhook(request: Request) -> dict[str, Any]:
         default_qty=body.get("default_qty", 1),
         tp_qty=body.get("tp_qty", 1),
     )
-    webhooks = config.load_settings().get("webhooks", [])
-    webhooks.append(wh)
-    config.save_settings({"webhooks": webhooks})
+    config.update(lambda s: s.__setitem__("webhooks", [*(s.get("webhooks") or []), wh]))
     state.log_event("info", f"Webhook '{wh['name']}' created ({wh['strategy']})")
     return wh
 

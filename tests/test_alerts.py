@@ -75,18 +75,10 @@ async def test_channel_routing_per_trigger(capture):
 
 # ------------------------------------------------------------- channel sends
 class _FakeClient:
+    """Stands in for the pooled ``app.http`` client (v5 posts via ``http.client()``)."""
     calls: list = []
 
-    def __init__(self, *a, **kw):
-        pass
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *exc):
-        return False
-
-    async def post(self, url, json=None):
+    async def post(self, url, json=None, **kw):
         _FakeClient.calls.append((url, json))
         if url.endswith("/boom"):
             raise RuntimeError("network down")
@@ -99,7 +91,7 @@ class _FakeClient:
 
 async def test_discord_send_respects_toggle_url_and_mention(admin, monkeypatch):
     _FakeClient.calls.clear()
-    monkeypatch.setattr(alerts.httpx, "AsyncClient", _FakeClient)
+    monkeypatch.setattr(alerts.http, "client", lambda *a, **k: _FakeClient())
     await alerts._send_discord("m")  # disabled by default
     config.save_settings({"alert_discord_enabled": True})
     await alerts._send_discord("m")  # no url
@@ -113,7 +105,7 @@ async def test_discord_send_respects_toggle_url_and_mention(admin, monkeypatch):
 
 
 async def test_discord_send_swallows_errors(admin, monkeypatch):
-    monkeypatch.setattr(alerts.httpx, "AsyncClient", _FakeClient)
+    monkeypatch.setattr(alerts.http, "client", lambda *a, **k: _FakeClient())
     config.save_settings({"alert_discord_enabled": True, "alert_discord_webhook_url": "https://discord/boom"})
     await alerts._send_discord("m")  # must not raise
     assert any("Discord alert failed" in e["message"] for e in state.recent_events())

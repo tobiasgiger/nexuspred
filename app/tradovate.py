@@ -14,9 +14,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-import httpx
-
-from . import alerts, config, state
+from . import alerts, config, http, state
 
 LIVE_BASE = "https://live.tradovateapi.com/v1"
 DEMO_BASE = "https://demo.tradovateapi.com/v1"
@@ -128,8 +126,8 @@ class TradovateSession:
             token = await self._get_token()
             headers["Authorization"] = f"Bearer {token}"
         url = f"{self._base_url()}{path}"
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            resp = await client.request(method, url, headers=headers, **kwargs)
+        # Pooled, keep-alive client: no TLS handshake per order (see app.http).
+        resp = await http.client("tradovate").request(method, url, headers=headers, **kwargs)
         if resp.status_code >= 400:
             raise TradovateError(f"{resp.status_code} {path}: {resp.text}")
         return resp.json() if resp.text else None
