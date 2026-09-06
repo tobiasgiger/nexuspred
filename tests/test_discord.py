@@ -2,7 +2,6 @@
 target resolution, pipeline (dry-run / dispatch), de-duplication and routes."""
 from __future__ import annotations
 
-import os
 from types import SimpleNamespace
 
 import pytest
@@ -76,7 +75,8 @@ def test_resolve_target(admin):
     wh = config.new_webhook("W")
     config.save_settings({"webhooks": [wh]})
     r = pipeline.resolve_target({"webhook_id": wh["id"], "label": ""})
-    assert r == {"label": "W", "url": f"http://127.0.0.1:{os.environ['PORT']}/webhook/{wh['token']}", "secret": ""}
+    # v5: bridge webhooks are dispatched in-process (v4 looped back over HTTP).
+    assert r == {"label": "W", "webhook_id": wh["id"], "url": "", "secret": ""}
     assert pipeline.resolve_target({"webhook_id": "gone"}) is None
     assert pipeline.resolve_target({"url": " https://x ", "secret": "s"}) == {"label": "https://x", "url": "https://x", "secret": "s"}
     assert pipeline.resolve_target({}) is None
@@ -135,7 +135,7 @@ async def test_process_embed_dispatches_translated_payload(channel, monkeypatch)
     assert p["action"] == "sell" and p["symbol"] == "MNQ" and p["qty"] == 3 and p["entry"] == 100
     labels = [t["label"] for t in seen["targets"]]
     assert labels == ["Routed", "ext"]  # disabled target excluded
-    assert seen["targets"][0]["url"].endswith(f"/webhook/{channel['token']}") and seen["targets"][0]["secret"] == ""
+    assert seen["targets"][0]["webhook_id"] == channel["id"] and seen["targets"][0]["secret"] == ""
     assert seen["targets"][1]["secret"] == "s3"
     assert ev["targets"][0]["ok"] is True and ev["kind"] == "signal" and ev["source"] == "message"
     assert state.recent_events()[0]["message"].endswith("2/2 webhook targets ok")

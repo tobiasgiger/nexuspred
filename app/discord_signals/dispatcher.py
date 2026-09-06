@@ -1,58 +1,50 @@
 """Fan a parsed signal out to a channel's configured webhook targets.
 
-Design points (from the spec):
-
-* **Own HTTP client.** The dispatcher owns a module-level ``httpx.AsyncClient``
-  whose lifecycle is independent of the Discord client. If the Discord gateway
-  reconnects or drops, the dispatcher can still POST (e.g. events replayed from
-  cache), and vice-versa.
-* **Parallel.** All enabled targets for a channel are POSTed concurrently with
-  ``asyncio.gather`` — one slow or dead target never delays the others.
-* **Per-target isolation.** Each target has its own timeout and its own
-  try/except; a failure is recorded against that target only.
-* **Secret header.** A target's secret, if set, is sent as ``X-Webhook-Secret``.
-* **Dry-run.** When dry-run is active the caller skips dispatch entirely; the
-  event is still recorded/displayed. This module never sends in that case.
+* **Bridge webhooks run in-process.** A target that references one of the
+  bridge's own webhooks (``webhook_id``) is handed straight to the signal
+  engine, with the same acceptance semantics as a TradingView POST — 403 when
+  the webhook is missing or disabled, otherwise the signal is logged as
+  "received" and executed in the background (reported as 202) — but without
+  v4's loopback HTTP round-trip through ``127.0.0.1:$PORT``.
+* **Custom URLs are POSTed** through the shared keep-alive client
+  (:mod:`app.http`). All targets go out concurrently; each has its own
+  timeout and try/except, so one slow or dead target never delays the others.
+  A target's secret, if set, is sent as ``X-Webhook-Secret``.
+* **Dry-run.** When dry-run is active the pipeline skips dispatch entirely;
+  this module never sends in that case.
 """
 from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Optional
+from typing import Any
 
-import httpx
-
-from .. import state
+from .. import config, http, signals, state
 
 _TIMEOUT_SECONDS = 5.0
 
-_client: Optional[httpx.AsyncClient] = None
-_client_lock = asyncio.Lock()
+
+def _ms(started: float) -> float:
+    return round((time.monotonic() - started) * 1000, 1)
 
 
-async def _get_client() -> httpx.AsyncClient:
-    """Lazily create the shared client. Independent of the Discord client."""
-    global _client
-    if _client is None or _client.is_closed:
-        async with _client_lock:
-            if _client is None or _client.is_closed:
-                _client = httpx.AsyncClient(timeout=_TIMEOUT_SECONDS)
-    return _client
-
-
-async def aclose() -> None:
-    """Close the shared client (called on app shutdown)."""
-    global _client
-    if _client is not None and not _client.is_closed:
-        try:
-            await _client.aclose()
-        except Exception:  # noqa: BLE001
-            pass
-    _client = None
+def _dispatch_local(target: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    """Accept the payload on one of this area's own webhooks (no HTTP)."""
+    label = target.get("label") or "webhook"
+    started = time.monotonic()
+    wid = target.get("webhook_id")
+    wh = next((w for w in (config.load_settings().get("webhooks") or []) if w.get("id") == wid), None)
+    if not wh or not wh.get("enabled"):
+        return {"label": label, "url": "", "ok": False, "status": 403, "error": "HTTP 403", "ms": _ms(started)}
+    signals.accept(dict(payload), wh)
+    return {"label": label, "url": "", "ok": True, "status": 202, "ms": _ms(started)}
 
 
 async def _post_one(target: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
-    """POST the payload to a single target; return a per-target result record."""
+    """Deliver the payload to a single target; return a per-target result record."""
+    if target.get("webhook_id"):
+        return _dispatch_local(target, payload)
+
     label = target.get("label") or target.get("url") or "target"
     url = target.get("url") or ""
     started = time.monotonic()
@@ -65,29 +57,24 @@ async def _post_one(target: dict[str, Any], payload: dict[str, Any]) -> dict[str
         headers["X-Webhook-Secret"] = secret
 
     try:
-        client = await _get_client()
-        resp = await client.post(url, json=payload, headers=headers, timeout=_TIMEOUT_SECONDS)
-        ms = round((time.monotonic() - started) * 1000, 1)
+        resp = await http.client("outbound").post(
+            url, json=payload, headers=headers, timeout=_TIMEOUT_SECONDS)
         ok = resp.status_code < 400
-        result = {
-            "label": label, "url": url, "ok": ok,
-            "status": resp.status_code, "ms": ms,
-        }
+        result = {"label": label, "url": url, "ok": ok, "status": resp.status_code, "ms": _ms(started)}
         if not ok:
             result["error"] = f"HTTP {resp.status_code}"
         return result
     except Exception as exc:  # noqa: BLE001 - one target failing must not affect others
-        ms = round((time.monotonic() - started) * 1000, 1)
-        return {"label": label, "url": url, "ok": False, "error": str(exc), "ms": ms}
+        return {"label": label, "url": url, "ok": False, "error": str(exc), "ms": _ms(started)}
 
 
 async def dispatch(targets: list[dict[str, Any]], payload: dict[str, Any]) -> list[dict[str, Any]]:
-    """POST ``payload`` to every ENABLED target concurrently.
+    """Deliver ``payload`` to every ENABLED target concurrently.
 
     Disabled targets are skipped entirely (they get no request). Returns a list
     of per-target result records (label, ok, status/error, latency ms).
     """
-    active = [t for t in targets if t.get("enabled") and t.get("url")]
+    active = [t for t in targets if t.get("enabled") and (t.get("url") or t.get("webhook_id"))]
     if not active:
         return []
     results = await asyncio.gather(

@@ -193,6 +193,36 @@ def _webhook_executors(webhook: dict[str, Any]) -> list[Any]:
     return out
 
 
+_bg_tasks: set[asyncio.Task] = set()
+
+
+def accept(payload: dict[str, Any], webhook: dict[str, Any]) -> None:
+    """Acknowledge a signal for an enabled webhook and execute it in the
+    background (the caller's area context is inherited by the task). Shared by
+    the TradingView ingress and the in-process Discord dispatch."""
+    state.log_signal(payload, result="received")
+    task = asyncio.get_running_loop().create_task(process_background(payload, webhook))
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
+
+
+async def process_background(payload: dict[str, Any], webhook: dict[str, Any]) -> None:
+    """Run the pipeline for an already-accepted signal: log the outcome, alert on
+    failure, never raise (a background task must not die silently)."""
+    name = webhook.get("name", "?")
+    try:
+        result = await process(payload, webhook)
+        state.log_signal(payload, result=result.get("status", "ok"))
+    except (SignalError, TradovateError) as exc:
+        state.log_event("error", f"Signal error: {exc}", payload=payload)
+        state.log_signal(payload, result=f"error: {exc}")
+        await alerts.webhook_failed(name, str(exc))
+    except Exception as exc:  # noqa: BLE001
+        state.log_event("error", f"Signal failed: {exc}", payload=payload)
+        state.log_signal(payload, result=f"error: {exc}")
+        await alerts.webhook_failed(name, str(exc))
+
+
 async def process(
     payload: dict[str, Any], webhook: dict[str, Any] | None = None, *, simulate: bool = False
 ) -> dict[str, Any]:

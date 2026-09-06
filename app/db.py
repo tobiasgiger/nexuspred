@@ -103,11 +103,13 @@ def _connect() -> sqlite3.Connection:
 _user_count: Optional[int] = None
 _users: dict[int, dict[str, Any]] = {}
 _primary_area: dict[int, Optional[int]] = {}
+_area_ids: Optional[tuple[int, list[int]]] = None  # (areas_generation, ids)
 
 
 def reset_caches() -> None:
-    global _user_count
+    global _user_count, _area_ids
     _user_count = None
+    _area_ids = None
     _users.clear()
     _primary_area.clear()
 
@@ -382,9 +384,16 @@ def user_area_ids(user_id: int) -> list[int]:
 
 
 def all_area_ids() -> list[int]:
+    """Every area id, ascending. Cached until an area is created or deleted
+    (the health loops ask every cycle)."""
+    global _area_ids
+    if _area_ids is not None and _area_ids[0] == _areas_generation:
+        return list(_area_ids[1])
     init()
     with _connect() as c:
-        return [r["id"] for r in c.execute("SELECT id FROM areas ORDER BY id").fetchall()]
+        ids = [r["id"] for r in c.execute("SELECT id FROM areas ORDER BY id").fetchall()]
+    _area_ids = (_areas_generation, ids)
+    return list(ids)
 
 
 def get_area(area_id: int) -> Optional[dict[str, Any]]:

@@ -10,7 +10,6 @@ the dashboard take effect without restarting the process.
 """
 from __future__ import annotations
 
-import os
 import time
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -32,23 +31,21 @@ def _find_webhook(webhook_id: str) -> Optional[dict[str, Any]]:
 
 
 def resolve_target(t: dict[str, Any]) -> Optional[dict[str, Any]]:
-    """Resolve a channel target to an effective {label, url, secret} for dispatch.
+    """Resolve a channel target to an effective dispatch target.
 
     A target is either a reference to one of the bridge's own webhooks
-    (``webhook_id`` → posted to that webhook's local URL; the path token is the
-    auth, so no secret is needed) or a custom external ``url`` (+ optional
-    secret). Returns ``None`` if it can't be resolved (e.g. the referenced
-    webhook was deleted).
+    (``webhook_id`` → handed to the signal engine in-process by the
+    dispatcher; v4 looped back over HTTP to ``127.0.0.1:$PORT``) or a custom
+    external ``url`` (+ optional secret). Returns ``None`` if it can't be
+    resolved (e.g. the referenced webhook was deleted).
     """
     label = (t.get("label") or "").strip()
     wid = t.get("webhook_id")
     if wid:
         wh = _find_webhook(wid)
-        if not wh or not wh.get("token"):
+        if not wh:
             return None
-        port = os.environ.get("PORT", "9000")
-        url = f"http://127.0.0.1:{port}/webhook/{wh.get('token')}"
-        return {"label": label or wh.get("name") or "webhook", "url": url, "secret": ""}
+        return {"label": label or wh.get("name") or "webhook", "webhook_id": wid, "url": "", "secret": ""}
     url = (t.get("url") or "").strip()
     if url:
         return {"label": label or url, "url": url, "secret": t.get("secret") or ""}

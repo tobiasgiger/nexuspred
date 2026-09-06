@@ -8,8 +8,9 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app import config, context, db, http, main, signals, tradovate
-from tests.helpers import FakeExecutor
+from app import config, context, db, http, main, signals, state, tradovate
+from app.discord_signals import dispatcher, hub, pipeline
+from tests.helpers import FakeExecutor, settle
 
 
 # ------------------------------------------------------------- http pool
@@ -343,3 +344,107 @@ async def test_release_trade_lock_keeps_held_or_awaited_locks():
     await t
     signals._release_trade_lock("k")
     assert "k" not in signals._trade_locks
+
+
+# ------------------------------------------------- in-process Discord dispatch
+async def test_dispatch_to_bridge_webhook_runs_in_process(area, monkeypatch):
+    wh = config.new_webhook("Routed")
+    off = {**config.new_webhook("Off"), "enabled": False}
+    config.save_settings({"webhooks": [wh, off]})
+
+    def boom(*a, **k):
+        raise AssertionError("bridge webhooks must not go over HTTP")
+    monkeypatch.setattr(dispatcher.http, "client", boom)
+
+    payload = {"action": "buy", "symbol": "MNQ1!", "qty": 1}
+    results = await dispatcher.dispatch([
+        {"label": "Routed", "webhook_id": wh["id"], "url": "", "enabled": True},
+        {"label": "Off", "webhook_id": off["id"], "url": "", "enabled": True},
+        {"label": "Gone", "webhook_id": "wh_missing", "url": "", "enabled": True},
+        {"label": "Disabled", "webhook_id": wh["id"], "url": "", "enabled": False},
+    ], payload)
+    assert [(r["label"], r["ok"], r["status"]) for r in results] == [
+        ("Routed", True, 202), ("Off", False, 403), ("Gone", False, 403)]
+    assert results[1]["error"] == "HTTP 403" and all("ms" in r for r in results)
+    # Same acceptance semantics as the TradingView ingress: logged as received,
+    # then executed in the background (trading is off → skipped). Newest first.
+    await settle()
+    assert [e["result"] for e in state.recent_signals()[:2]] == ["skipped", "received"]
+    assert state.recent_signals()[0]["payload"] == payload
+
+
+async def test_dispatch_custom_url_uses_pooled_client(area, monkeypatch):
+    calls = []
+
+    class _Client:
+        async def post(self, url, json=None, headers=None, timeout=None):
+            calls.append((url, json, headers, timeout))
+
+            class R:
+                status_code = 500 if url.endswith("/bad") else 200
+            return R()
+    monkeypatch.setattr(dispatcher.http, "client", lambda *a, **k: _Client())
+    results = await dispatcher.dispatch([
+        {"label": "ext", "url": "https://ext/hook", "secret": "s3", "enabled": True},
+        {"label": "bad", "url": "https://ext/bad", "enabled": True},
+    ], {"x": 1})
+    assert calls[0][0] == "https://ext/hook" and calls[0][2]["X-Webhook-Secret"] == "s3" and calls[0][3] == 5.0
+    assert "X-Webhook-Secret" not in calls[1][2]
+    assert [(r["ok"], r["status"]) for r in results] == [(True, 200), (False, 500)]
+    assert results[1]["error"] == "HTTP 500"
+
+
+async def test_process_embed_end_to_end_in_process(area, monkeypatch):
+    wh = config.new_webhook("Routed")
+    config.save_settings({"webhooks": [wh], "discord_channels": [{
+        "id": "123", "label": "sig", "enabled": True,
+        "targets": [{"label": "", "webhook_id": wh["id"], "enabled": True}]}]})
+    from app.discord_signals.parser import EmbedField, EmbedLike
+    ev = await pipeline.process_embed(
+        EmbedLike(title="SELL MNQ", fields=[EmbedField("Contracts", "2")]), "123")
+    assert ev["targets"] == [{"label": "Routed", "url": "", "ok": True, "status": 202, "ms": ev["targets"][0]["ms"]}]
+    assert state.recent_signals()[0]["payload"]["action"] == "sell"
+    assert state.recent_events()[0]["message"].endswith("1/1 webhook targets ok")
+
+
+# ---------------------------------------------------------- unified stream
+async def test_stream_carries_order_session_and_discord_kinds(area):
+    sub = state.subscribe(1)
+    try:
+        state.log_order({"action": "Buy", "symbol": "MNQU6", "account": "A", "qty": 1,
+                         "order_type": "Market", "status": "submitted"})
+        state.set_session_status("L1", connected=True)
+        hub.record({"kind": "signal", "channel_label": "x"})
+        await settle()
+        kinds = []
+        while not sub.queue.empty():
+            kinds.append(sub.queue.get_nowait())
+        assert [k["kind"] for k in kinds] == ["order", "session", "discord"]
+        assert kinds[0]["data"]["symbol"] == "MNQU6" and "ts" in kinds[0]["data"]
+        assert kinds[1]["data"] == {"name": "L1", "connected": True}
+        assert kinds[2]["data"]["channel_label"] == "x"
+    finally:
+        state.unsubscribe(sub, 1)
+
+
+# ---------------------------------------------------------------- lifespan
+async def test_lifespan_starts_and_stops_background_loops(admin):
+    async with main._lifespan(main.app):
+        assert [t.get_name() for t in main._loop_tasks] == ["health-loop", "discord-health-loop"]
+        await settle()
+        assert all(not t.done() for t in main._loop_tasks)
+        with context.use_area(1):
+            assert any("Bridge started" in e["message"] for e in state.recent_events())
+        http.client("outbound")
+    assert main._loop_tasks == [] and http._clients == {}
+
+
+# ------------------------------------------------------- input hardening
+async def test_webhook_crud_rejects_bad_input_with_400(client):
+    assert (await client.post("/api/webhooks", json={"name": "X", "default_qty": "abc"})).status_code == 400
+    wh = (await client.post("/api/webhooks", json={"name": "X"})).json()
+    r = await client.put(f"/api/webhooks/{wh['id']}", json={"tp_qty": "abc"})
+    assert r.status_code == 400 and "Invalid webhook payload" in r.json()["detail"]
+    r = await client.put(f"/api/webhooks/{wh['id']}", json={"accounts": [{"spec": "A", "token_idx": "x"}]})
+    assert r.status_code == 400
+    assert (await client.put(f"/api/webhooks/{wh['id']}", json={"tp_qty": 2})).json()["tp_qty"] == 2

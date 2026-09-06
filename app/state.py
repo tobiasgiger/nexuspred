@@ -72,6 +72,13 @@ def _broadcast(st: _AreaState, message: dict[str, Any]) -> None:
             pass
 
 
+def publish(kind: str, data: dict[str, Any], area_id: int | None = None) -> None:
+    """Push a ``{"kind", "data"}`` message onto an area's live stream. Kinds on
+    ``/api/stream``: ``event`` | ``signal`` | ``order`` | ``session`` | ``discord``."""
+    st = _st_for(area_id) if area_id is not None else _st()
+    _broadcast(st, {"kind": kind, "data": data})
+
+
 # --------------------------------------------------------------- live stream
 def subscribe(area_id: int | None = None) -> _Sub:
     """Register a live subscriber for an area. Call from within a running loop."""
@@ -101,6 +108,8 @@ def set_session_status(name: str, **fields: Any) -> None:
         s = st.sessions.setdefault(name, {"name": name, "connected": False})
         s.update(fields)
         s["name"] = name
+        snapshot = dict(s)
+    _broadcast(st, {"kind": "session", "data": snapshot})
 
 
 def has_session(name: str) -> bool:
@@ -148,6 +157,7 @@ def log_order(order: dict[str, Any]) -> None:
     st = _st()
     with _lock:
         st.orders.appendleft(entry)
+    _broadcast(st, {"kind": "order", "data": entry})
 
 
 def log_event(level: str, message: str, **extra: Any) -> None:

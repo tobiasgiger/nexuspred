@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import os
 import secrets
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -20,8 +22,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import alerts, auth, config, context, db, signals, state, tradovate, updater
-from .discord_signals import dispatcher as discord_dispatcher
+from . import alerts, auth, config, context, db, http, signals, state, tradovate, updater
 from .discord_signals import listener as discord_listener
 from .discord_signals.routes import router as discord_router
 from .simulator import SCENARIOS, sim_client
@@ -30,7 +31,17 @@ from .tradovate import TradovateError
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
-app = FastAPI(title="Fluxbridge", version=config.get_version())
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    await _startup()
+    try:
+        yield
+    finally:
+        await _shutdown()
+
+
+app = FastAPI(title="Fluxbridge", version=config.get_version(), lifespan=_lifespan)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 app.include_router(discord_router)  # Discord signal module (same server + auth)
 
@@ -445,20 +456,7 @@ def _resolve_webhook(token: str) -> tuple[int | None, dict[str, Any] | None]:
     return config.find_webhook(token)
 
 
-async def _process_signal_bg(payload: dict[str, Any], webhook: dict[str, Any]) -> None:
-    """Run the signal pipeline in the background so the webhook returns instantly."""
-    name = webhook.get("name", "?")
-    try:
-        result = await signals.process(payload, webhook)
-        state.log_signal(payload, result=result.get("status", "ok"))
-    except (signals.SignalError, TradovateError) as exc:
-        state.log_event("error", f"Signal error: {exc}", payload=payload)
-        state.log_signal(payload, result=f"error: {exc}")
-        await alerts.webhook_failed(name, str(exc))
-    except Exception as exc:  # noqa: BLE001 - never let a background task die silently
-        state.log_event("error", f"Signal failed: {exc}", payload=payload)
-        state.log_signal(payload, result=f"error: {exc}")
-        await alerts.webhook_failed(name, str(exc))
+_process_signal_bg = signals.process_background  # (kept name: used by tests/tools)
 
 
 @app.post("/webhook/{token}")
@@ -471,8 +469,6 @@ async def webhook(token: str, request: Request) -> JSONResponse:
     processed in the background, so bursts of alerts can't make TradingView time
     out ("request took too long").
     """
-    import asyncio
-
     area_id, wh = _resolve_webhook(token)
     if not wh or not wh.get("enabled") or area_id is None:
         raise HTTPException(status_code=403, detail="Invalid webhook token")
@@ -481,8 +477,7 @@ async def webhook(token: str, request: Request) -> JSONResponse:
     tok = context.set_area(area_id)
     try:
         payload = await _parse_payload(request)
-        state.log_signal(payload, result="received")
-        asyncio.create_task(_process_signal_bg(payload, wh))
+        signals.accept(payload, wh)
     finally:
         context.reset_area(tok)
     return JSONResponse({"status": "accepted"}, status_code=202)
@@ -759,12 +754,15 @@ async def api_list_webhooks() -> list[dict[str, Any]]:
 @app.post("/api/webhooks")
 async def api_create_webhook(request: Request) -> dict[str, Any]:
     body = await request.json()
-    wh = config.new_webhook(
-        name=body.get("name") or "New Webhook",
-        strategy=body.get("strategy", "simple"),
-        default_qty=body.get("default_qty", 1),
-        tp_qty=body.get("tp_qty", 1),
-    )
+    try:
+        wh = config.new_webhook(
+            name=body.get("name") or "New Webhook",
+            strategy=body.get("strategy", "simple"),
+            default_qty=body.get("default_qty", 1),
+            tp_qty=body.get("tp_qty", 1),
+        )
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid webhook payload: {exc}") from exc
     config.update(lambda s: s.__setitem__("webhooks", [*(s.get("webhooks") or []), wh]))
     state.log_event("info", f"Webhook '{wh['name']}' created ({wh['strategy']})")
     return wh
@@ -775,27 +773,30 @@ async def api_update_webhook(webhook_id: str, request: Request) -> dict[str, Any
     body = await request.json()
     webhooks, i = _webhook_or_404(webhook_id)
     wh = webhooks[i]
-    if "name" in body:
-        wh["name"] = str(body["name"]) or wh["name"]
-    if "enabled" in body:
-        wh["enabled"] = bool(body["enabled"])
-    if "strategy" in body and body["strategy"] in config.STRATEGIES:
-        wh["strategy"] = body["strategy"]
-    if "default_qty" in body:
-        wh["default_qty"] = max(1, int(body["default_qty"] or 1))
-    if "tp_qty" in body:
-        wh["tp_qty"] = max(1, int(body["tp_qty"] or 1))
-    if "accounts" in body:
-        wh["accounts"] = [
-            {
-                "token_idx": int(a["token_idx"]),
-                "spec": a.get("spec", ""),
-                "enabled": bool(a.get("enabled")),
-                "qty_multiplier": float(a.get("qty_multiplier", 1) or 1),
-            }
-            for a in body["accounts"]
-            if a.get("spec") and a.get("token_idx") is not None
-        ]
+    try:
+        if "name" in body:
+            wh["name"] = str(body["name"]) or wh["name"]
+        if "enabled" in body:
+            wh["enabled"] = bool(body["enabled"])
+        if "strategy" in body and body["strategy"] in config.STRATEGIES:
+            wh["strategy"] = body["strategy"]
+        if "default_qty" in body:
+            wh["default_qty"] = max(1, int(body["default_qty"] or 1))
+        if "tp_qty" in body:
+            wh["tp_qty"] = max(1, int(body["tp_qty"] or 1))
+        if "accounts" in body:
+            wh["accounts"] = [
+                {
+                    "token_idx": int(a["token_idx"]),
+                    "spec": a.get("spec", ""),
+                    "enabled": bool(a.get("enabled")),
+                    "qty_multiplier": float(a.get("qty_multiplier", 1) or 1),
+                }
+                for a in body["accounts"]
+                if a.get("spec") and a.get("token_idx") is not None
+            ]
+    except (TypeError, ValueError, KeyError, AttributeError) as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid webhook payload: {exc}") from exc
     webhooks[i] = wh
     config.save_settings({"webhooks": webhooks})
     state.log_event("info", f"Webhook '{wh['name']}' updated")
@@ -959,9 +960,10 @@ async def _discord_health_loop() -> None:
         await asyncio.sleep(30.0)
 
 
-@app.on_event("startup")
+_loop_tasks: list[asyncio.Task] = []
+
+
 async def _startup() -> None:
-    import asyncio
     db.init()
     # Default each area's alert "Notify email" to its owner's address where unset.
     try:
@@ -971,8 +973,8 @@ async def _startup() -> None:
     except Exception as exc:  # noqa: BLE001 - never let a migration block startup
         state.log_event("warn", f"alert-email backfill failed: {exc}")
     state.log_event("info", f"Bridge started (v{config.get_version()})")
-    asyncio.create_task(_health_loop())
-    asyncio.create_task(_discord_health_loop())
+    _loop_tasks[:] = [asyncio.create_task(_health_loop(), name="health-loop"),
+                      asyncio.create_task(_discord_health_loop(), name="discord-health-loop")]
     # Start a Discord listener supervisor per existing area (isolated tasks; a
     # Discord failure can never crash order execution). New areas are picked up
     # by the health loop.
@@ -990,12 +992,17 @@ async def _startup() -> None:
         state.log_event("warn", f"[discord] listener startup failed: {exc}")
 
 
-@app.on_event("shutdown")
 async def _shutdown() -> None:
-    """Stop all Discord listeners and close the shared HTTP client cleanly."""
+    """Stop the background loops and Discord listeners; close the HTTP pool."""
+    for t in _loop_tasks:
+        t.cancel()
+    for t in _loop_tasks:
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await t
+    _loop_tasks.clear()
     for m in discord_listener.all_managers():
         try:
             await m.shutdown()
         except Exception as exc:  # noqa: BLE001
             state.log_event("warn", f"[discord] shutdown error: {exc}")
-    await discord_dispatcher.aclose()
+    await http.aclose_all()

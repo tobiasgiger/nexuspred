@@ -14,7 +14,7 @@ from collections import deque
 from datetime import datetime, timezone
 from typing import Any, Deque
 
-from .. import context
+from .. import context, state
 
 _MAX = 200
 _lock = threading.Lock()
@@ -56,6 +56,7 @@ def record(event: dict[str, Any]) -> dict[str, Any]:
             q.put_nowait(entry)
         except asyncio.QueueFull:
             pass
+    state.publish("discord", entry)  # also on the unified /api/stream
     return entry
 
 
