@@ -41,6 +41,7 @@ TOKEN_ACCOUNT_KEYS = ("access_token", "md_token")
 
 _fernet: Optional[Fernet] = None
 _source: str = ""
+_legacy: Optional[list[Fernet]] = None
 
 
 def _derive(material: str) -> bytes:
@@ -76,11 +77,39 @@ def _get() -> Fernet:
     return _fernet
 
 
+def _legacy_keys() -> list[Fernet]:
+    """Keys a secret may still be encrypted with after a key change: the
+    explicit previous key (``NEXUSPRED_ENCRYPTION_KEY_PREVIOUS``), the session
+    secret from the environment and the one stored in the database — in that
+    order, excluding whichever is the current key."""
+    global _legacy
+    if _legacy is not None:
+        return _legacy
+    _get()
+    materials: list[str] = []
+    prev = os.environ.get("NEXUSPRED_ENCRYPTION_KEY_PREVIOUS")
+    if prev:
+        materials.append(prev)
+    if _source != "env:session" and os.environ.get("SESSION_SECRET"):
+        materials.append(os.environ["SESSION_SECRET"])
+    if _source != "db":
+        try:
+            from . import db
+            stored = db.meta_get("session_secret")
+            if stored:
+                materials.append(stored)
+        except Exception:  # noqa: BLE001 - no DB yet
+            pass
+    _legacy = [Fernet(_derive(m)) for m in materials]
+    return _legacy
+
+
 def reset() -> None:
-    """Forget the cached key (tests, key rotation)."""
-    global _fernet, _source
+    """Forget the cached keys (tests, key rotation)."""
+    global _fernet, _source, _legacy
     _fernet = None
     _source = ""
+    _legacy = None
 
 
 def is_encrypted(value: Any) -> bool:
@@ -101,12 +130,34 @@ def decrypt(value: Any) -> Any:
     exception — a broken secret must never take the whole area's settings down."""
     if not is_encrypted(value):
         return value
+    token = value[len(PREFIX):].encode("ascii")
     try:
-        return _get().decrypt(value[len(PREFIX):].encode("ascii")).decode("utf-8")
+        return _get().decrypt(token).decode("utf-8")
     except (InvalidToken, ValueError, TypeError):
-        log.error("Cannot decrypt a stored secret — NEXUSPRED_ENCRYPTION_KEY / SESSION_SECRET "
-                  "changed? Re-enter the affected token in the dashboard.")
-        return ""
+        pass
+    # Key changed? Try the previous keys — the startup pass re-encrypts with
+    # the current one (see db.encrypt_existing_settings).
+    for f in _legacy_keys():
+        try:
+            return f.decrypt(token).decode("utf-8")
+        except (InvalidToken, ValueError, TypeError):
+            continue
+    log.error("Cannot decrypt a stored secret — NEXUSPRED_ENCRYPTION_KEY / SESSION_SECRET "
+              "changed? Set NEXUSPRED_ENCRYPTION_KEY_PREVIOUS to the old value once, or re-enter "
+              "the affected token in the dashboard.")
+    return ""
+
+
+def is_current(value: Any) -> bool:
+    """True when ``value`` is not a secret that would need re-encryption
+    (plain/empty, or encrypted with the current key)."""
+    if not is_encrypted(value):
+        return not (isinstance(value, str) and value)
+    try:
+        _get().decrypt(value[len(PREFIX):].encode("ascii"))
+        return True
+    except (InvalidToken, ValueError, TypeError):
+        return False
 
 
 def _map_settings(settings: dict[str, Any], fn) -> dict[str, Any]:
@@ -147,6 +198,21 @@ def has_plaintext_secret(settings: dict[str, Any]) -> bool:
     def probe(v: Any) -> Any:
         nonlocal found
         if isinstance(v, str) and v and not is_encrypted(v):
+            found = True
+        return v
+
+    _map_settings(settings, probe)
+    return found
+
+
+def needs_reencrypt(settings: dict[str, Any]) -> bool:
+    """True when a secret is plain text or encrypted with a previous key that
+    still decrypts — i.e. a re-save with the current key would fix it."""
+    found = False
+
+    def probe(v: Any) -> Any:
+        nonlocal found
+        if isinstance(v, str) and v and not is_current(v) and decrypt(v) != "":
             found = True
         return v
 

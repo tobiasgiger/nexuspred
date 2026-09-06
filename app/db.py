@@ -602,7 +602,7 @@ def encrypt_existing_settings() -> int:
     rewritten = 0
     for aid in all_area_ids():
         raw = get_area_settings_raw(aid)
-        if crypto.has_plaintext_secret(raw):
+        if crypto.needs_reencrypt(raw):  # plain text, or readable only with a previous key
             save_area_settings(aid, crypto.decrypt_settings(raw))
             rewritten += 1
     return rewritten

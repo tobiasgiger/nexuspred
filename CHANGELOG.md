@@ -4,6 +4,14 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.13
+- **Encryption key changes no longer lose secrets.** A secret that does not decrypt with
+  the current key is tried against the previous keys (`NEXUSPRED_ENCRYPTION_KEY_PREVIOUS`,
+  the environment's `SESSION_SECRET`, the database's auto-generated secret) and
+  re-encrypted with the current key at the next start. Introducing
+  `NEXUSPRED_ENCRYPTION_KEY` on an existing deployment therefore keeps the stored
+  Tradovate / Discord tokens intact.
+
 ## 5.0.0-alpha.12
 - **Live P&L on the Overview** (`app/pnl.py`). A new *Today's P&L* card at the top of the
   start page shows, per connected trade account and in total, today's realised P&L, the
