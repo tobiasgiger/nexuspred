@@ -11,8 +11,17 @@ Tradovate session:
   symbol and the dollar value per point,
 * ``/cashBalance/getcashbalancesnapshot`` per trade account (daily equity).
 
-Past days (before the bridge existed, or a day whose import didn't run) are
-back-filled from Tradovate's own CSV exports — see :mod:`app.journal_csv`.
+**History.** The entity *lists* above cover the current session, but the
+account's **cash-balance log** (``/cashBalanceLog/list``) is the broker's
+book-keeping and reaches back over the account's life: one entry per realised
+fill pair (``fillPairId``, ``delta`` = realised P&L) and per fee (``fillId``).
+Every import walks that log, looks up the pairs it has not processed yet by id
+(``/fillPair/items`` → ``/fill/items`` → contract/product), stores them as
+trades with the broker's own realised P&L and fees, and turns the log's
+running balance into one equity snapshot per account and trading day. Pair ids
+are remembered (``journal_seen``), so after the first run this is incremental.
+Tradovate's CSV exports remain available as a manual fallback
+(:mod:`app.journal_csv`).
 
 Each fill pair becomes one **round-trip trade** (``journal_trades``): side, qty,
 entry/exit price & time, points, gross P&L, fees, net P&L. When the API offers no
@@ -264,12 +273,30 @@ async def import_session(area_id: int, session: Any, *, today: Optional[date] = 
     except ImportProblem:
         pairs = []
     positions = {int(p["id"]): p for p in await r.list("/position/list") if p.get("id") is not None} if pairs else {}
+    # Pairs whose fills are not in the session list (the pair list reaching
+    # further back than the fill list): fetch those fills by id.
+    missing = [int(p.get(k) or 0) for p in pairs for k in ("buyFillId", "sellFillId")
+               if int(p.get(k) or 0) and int(p.get(k) or 0) not in fills_by_id]
+    if missing:
+        wanted = set(missing)
+        extra = {fid: f for fid, f in (await r.items("/fill/items", missing)).items() if fid in wanted}
+        if extra:
+            extra_orders = await r.items("/order/items", [f.get("orderId") for f in extra.values()])
+            for fid, f in extra.items():
+                o = extra_orders.get(int(f.get("orderId") or 0), {})
+                f["_accountId"] = int(o.get("accountId") or 0)
+                if not f.get("contractId"):
+                    f["contractId"] = o.get("contractId")
+                fills_by_id[fid] = f
+            more = await _contract_info(r, [int(f.get("contractId") or 0) for f in extra.values()
+                                            if int(f.get("contractId") or 0) not in info])
+            info.update(more)
     used_fill_ids: set[int] = set()
     for p in pairs:
         buy, sell = fills_by_id.get(int(p.get("buyFillId") or 0)), fills_by_id.get(int(p.get("sellFillId") or 0))
         if not buy or not sell:
             continue
-        acct = accounts_by_id.get(buy["_accountId"])
+        acct = accounts_by_id.get(buy.get("_accountId") or 0)
         if not acct:
             continue
         cid = int(buy.get("contractId") or positions.get(int(p.get("positionId") or 0), {}).get("contractId") or 0)
@@ -296,6 +323,13 @@ async def import_session(area_id: int, session: Any, *, today: Optional[date] = 
     trades = [t for t in trades if t["qty"] > 0]
     trades_new = sum(db.upsert_journal_trade(area_id, t) for t in trades)
 
+    # Past sessions from the cash-balance log (incremental; see module docstring).
+    hist = {"history_pairs": 0, "history_new": 0, "history_snapshots": 0, "history_error": ""}
+    try:
+        hist = await _history_from_cash_log(area_id, r, accounts_by_id, fees, info)
+    except Exception as exc:  # noqa: BLE001 - history must never break the session import
+        hist["history_error"] = str(exc)
+
     day = (today or datetime.now(tz())).isoformat() if isinstance(today, date) else datetime.now(tz()).date().isoformat()
     snapshots = 0
     for aid, acct in accounts_by_id.items():
@@ -304,7 +338,128 @@ async def import_session(area_id: int, session: Any, *, today: Optional[date] = 
             db.upsert_journal_snapshot(area_id, {"account_id": aid, "account_spec": acct["spec"], "day": day, **snap})
             snapshots += 1
     return {"login": session.name, "accounts": len(accounts_by_id), "fills": len(fills),
-            "fills_new": fills_new, "trades": len(trades), "trades_new": trades_new, "snapshots": snapshots}
+            "fills_new": fills_new, "trades": len(trades), "trades_new": trades_new, "snapshots": snapshots, **hist}
+
+
+FEE_CHANGE_TYPES = {"commission", "clearingfee", "exchangefee", "nfafee", "brokeragefee", "ipfee",
+                    "orderroutingfee", "fee", "otherfee"}
+HISTORY_MAX_PAIRS_PER_RUN = 2000  # ≈ 40 + 80 + … batched requests; the rest follows next run
+
+
+def _trade_day(entry: dict[str, Any], zone: ZoneInfo) -> str:
+    td = entry.get("tradeDate")
+    if isinstance(td, dict) and td.get("year"):
+        try:
+            return date(int(td["year"]), int(td["month"]), int(td["day"])).isoformat()
+        except (ValueError, TypeError):
+            pass
+    elif isinstance(td, str) and len(td) >= 10:
+        return td[:10]
+    ts = _ts(entry.get("timestamp"))
+    if ts:
+        return datetime.fromisoformat(ts).astimezone(zone).date().isoformat()
+    return ""
+
+
+async def _history_from_cash_log(area_id: int, r: _Reader, accounts_by_id: dict[int, dict[str, Any]],
+                                 fees: dict[int, dict[str, Any]], info: dict[int, tuple[str, float]]) -> dict[str, Any]:
+    """Trades + daily equity for past sessions, from ``/cashBalanceLog/list``."""
+    log = await r.list("/cashBalanceLog/list")
+    log = [e for e in log if int(e.get("accountId") or 0) in accounts_by_id]
+    out = {"history_pairs": 0, "history_new": 0, "history_snapshots": 0, "history_error": ""}
+    if not log:
+        return out
+    zone = tz()
+
+    # --- fees per fill and realised P&L per pair, straight from the book -------
+    pair_pnl: dict[int, float] = defaultdict(float)
+    pair_account: dict[int, int] = {}
+    fee_by_fill: dict[int, float] = defaultdict(float)
+    for e in log:
+        pid = int(e.get("fillPairId") or 0)
+        fid = int(e.get("fillId") or 0)
+        delta = _num(e.get("delta"), 0.0)
+        kind = str(e.get("cashChangeType") or "").replace("_", "").lower()
+        if pid:
+            pair_pnl[pid] += delta
+            pair_account[pid] = int(e.get("accountId") or 0)
+        elif fid and (kind in FEE_CHANGE_TYPES or delta < 0):
+            fee_by_fill[fid] += -delta
+
+    # --- pairs not processed before ---------------------------------------
+    todo = db.journal_unseen(area_id, "fillpair", sorted(pair_pnl))[:HISTORY_MAX_PAIRS_PER_RUN]
+    out["history_pairs"] = len(todo)
+    trades: list[dict[str, Any]] = []
+    done: list[int] = []
+    if todo:
+        pairs = await r.items("/fillPair/items", todo)
+        fill_ids = [int(p.get(k) or 0) for p in pairs.values() for k in ("buyFillId", "sellFillId")]
+        fills = await r.items("/fill/items", fill_ids)
+        need_orders = [f.get("orderId") for f in fills.values() if not f.get("contractId")]
+        orders = await r.items("/order/items", need_orders) if need_orders else {}
+        for f in fills.values():
+            if not f.get("contractId"):
+                f["contractId"] = orders.get(int(f.get("orderId") or 0), {}).get("contractId")
+        more = await _contract_info(r, [int(f.get("contractId") or 0) for f in fills.values()
+                                        if int(f.get("contractId") or 0) not in info])
+        info.update(more)
+        for pid in todo:
+            p = pairs.get(int(pid))
+            if not p:
+                continue  # not retrievable (yet) — retried next run
+            buy, sell = fills.get(int(p.get("buyFillId") or 0)), fills.get(int(p.get("sellFillId") or 0))
+            if not buy or not sell:
+                continue
+            acct = accounts_by_id.get(pair_account.get(int(pid), 0))
+            if not acct:
+                done.append(pid)
+                continue
+            qty = int(_num(p.get("qty"), 0) or 0)
+            cid = int(buy.get("contractId") or sell.get("contractId") or 0)
+            sym, vpp = info.get(cid, (str(cid), 1.0))
+            # fees: the book's per-fill fee (or the fillFee record), pro-rated by qty
+            fee_recs: dict[Any, dict[str, Any]] = {}
+            for f in (buy, sell):
+                fid = int(f.get("id") or 0)
+                if fid in fee_by_fill:
+                    fee_recs[fid] = {"commission": round(fee_by_fill[fid], 4)}
+                elif fid in fees:
+                    fee_recs[fid] = fees[fid]
+            t = build_trade(pair_id=f"pair:{buy['id']}:{sell['id']}", buy=buy, sell=sell, qty=qty,
+                            buy_price=_num(p.get("buyPrice"), _num(buy.get("price"))),
+                            sell_price=_num(p.get("sellPrice"), _num(sell.get("price"))),
+                            account=acct, symbol=sym, value_per_point=vpp, fees=fee_recs, source="history")
+            realised = round(pair_pnl[int(pid)], 2)
+            if realised and t["points"] and qty:   # the book's figure is authoritative
+                t["gross_pnl"] = realised
+                t["value_per_point"] = round(abs(realised / (t["points"] * qty)), 6)
+                t["net_pnl"] = round(realised - t["fees"], 2)
+            if t["qty"] > 0:
+                trades.append(t)
+                done.append(pid)
+        out["history_new"] = sum(db.upsert_journal_trade(area_id, t) for t in trades)
+        db.journal_mark_seen(area_id, "fillpair", done)
+
+    # --- daily equity from the running balance -----------------------------
+    by_day: dict[tuple[int, str], dict[str, Any]] = {}
+    for e in sorted(log, key=lambda e: (_ts(e.get("timestamp")), int(e.get("id") or 0))):
+        aid = int(e.get("accountId") or 0)
+        day = _trade_day(e, zone)
+        if not day:
+            continue
+        rec = by_day.setdefault((aid, day), {"realized": 0.0, "amount": None})
+        rec["realized"] += _num(e.get("delta"), 0.0) if e.get("fillPairId") else 0.0
+        if e.get("amount") is not None:
+            rec["amount"] = _num(e.get("amount"))
+    today_iso = datetime.now(zone).date().isoformat()
+    for (aid, day), rec in by_day.items():
+        if day == today_iso or rec["amount"] is None:
+            continue  # today comes from the live snapshot
+        db.upsert_journal_snapshot(area_id, {"account_id": aid, "account_spec": accounts_by_id[aid]["spec"], "day": day,
+                                             "total_cash": rec["amount"], "realized_pnl": round(rec["realized"], 2),
+                                             "open_pnl": 0.0, "week_realized_pnl": 0.0, "total_pnl": 0.0})
+        out["history_snapshots"] += 1
+    return out
 
 
 _locks: dict[int, asyncio.Lock] = {}
@@ -330,7 +485,9 @@ async def import_area(area_id: int, *, trigger: str = "manual", user_email: str 
                     results.append(await import_session(area_id, s))
                 except Exception as exc:  # noqa: BLE001 - one login failing must not stop the others
                     errors.append(f"{s.name}: {exc}")
-            totals = {k: sum(r.get(k, 0) for r in results) for k in ("accounts", "fills", "fills_new", "trades", "trades_new", "snapshots")}
+            totals = {k: sum(r.get(k, 0) for r in results)
+                      for k in ("accounts", "fills", "fills_new", "trades", "trades_new", "snapshots", "history_pairs", "history_new", "history_snapshots")}
+            errors += [f"{r.get('login')}: history: {r['history_error']}" for r in results if r.get("history_error")]
             status = "ok" if results and not errors else ("partial" if results else "error")
             rec = {"ts": started.isoformat(), "trigger": trigger, "status": status, "by": user_email,
                    "logins": len(sessions), "error": "; ".join(errors)[:1000], **totals,
@@ -341,7 +498,8 @@ async def import_area(area_id: int, *, trigger: str = "manual", user_email: str 
                 state.log_event("warn", f"Journal import failed: {rec['error']}")
             else:
                 state.log_event("info", f"Journal import ({trigger}): {totals['trades_new']} new trade(s), "
-                                        f"{totals['fills_new']} new fill(s) from {len(results)} login(s)"
+                                        f"{totals['fills_new']} new fill(s), {totals['history_new']} from history "
+                                        f"({totals['history_snapshots']} daily balances) from {len(results)} login(s)"
                                         + (f" — errors: {rec['error']}" if errors else ""))
         return rec
 

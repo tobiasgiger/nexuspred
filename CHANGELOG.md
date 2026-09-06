@@ -4,6 +4,18 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.8
+- **Journal history straight from Tradovate — no export needed.** Every import (daily
+  and *Import now*) now walks the account's **cash-balance log**
+  (`/cashBalanceLog/list`), the broker's own book that reaches back over the account's
+  life: each realised fill pair not yet journaled is fetched by id (`/fillPair/items` →
+  `/fill/items` → contract/product) and stored as a trade with the **broker's realised
+  P&L** and the per-fill fees from the same log; the log's running balance becomes one
+  equity snapshot per account and trading day. Processed pair ids are remembered
+  (`journal_seen`), so later runs are incremental (max 2 000 new pairs per run). Fill
+  pairs whose fills are no longer in the session list are also resolved by id. The
+  Imports table shows a **From history** column; CSV import stays as a fallback.
+
 ## 5.0.0-alpha.7
 - **Journal back-fill from Tradovate CSV exports** (`app/journal_csv.py`, **Import CSV**
   on the Journal page, `POST /api/journal/import-csv`). Tradovate's API only exposes the

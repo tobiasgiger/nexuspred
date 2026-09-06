@@ -16,8 +16,9 @@ class FakeSession:
     """Mimics TradovateSession for the importer: ``_request`` serves canned
     Tradovate entity lists, shaped like the real API responses."""
 
-    def __init__(self, name="Login A", accounts=None, *, pairs=True, fail=()):
+    def __init__(self, name="Login A", accounts=None, *, pairs=True, fail=(), history=False):
         self.name = name
+        self.history = history  # serve the cash-balance log (past sessions) or an empty one
         self.environment = "demo"
         self.enabled = True
         self.accounts = accounts or [{"id": 11, "spec": "DEMO11", "enabled": True}]
@@ -47,9 +48,38 @@ class FakeSession:
                 {"id": 502, "positionId": 8, "buyFillId": 4, "sellFillId": 3, "qty": 1, "buyPrice": 20130.0, "sellPrice": 20100.0},
             ],
             "/position/list": [{"id": 7, "accountId": 11, "contractId": 5}, {"id": 8, "accountId": 11, "contractId": 5}],
-            "/contract/items": [{"id": 5, "name": "MNQU6", "contractMaturityId": 50}],
-            "/contractMaturity/items": [{"id": 50, "productId": 500}],
-            "/product/items": [{"id": 500, "name": "MNQ", "valuePerPoint": 2.0}],
+            "/contract/items": [{"id": 5, "name": "MNQU6", "contractMaturityId": 50}, {"id": 6, "name": "MESU6", "contractMaturityId": 60}],
+            "/contractMaturity/items": [{"id": 50, "productId": 500}, {"id": 60, "productId": 600}],
+            "/product/items": [{"id": 500, "name": "MNQ", "valuePerPoint": 2.0}, {"id": 600, "name": "MES", "valuePerPoint": 5.0}],
+            # --- the account's book: today's pair 501 plus two pairs from August
+            "/cashBalanceLog/list": [
+                {"id": 9001, "accountId": 11, "timestamp": "2026-08-20T14:00:00Z", "tradeDate": {"year": 2026, "month": 8, "day": 20},
+                 "cashChangeType": "Commission", "fillId": 601, "delta": -1.32, "amount": 49998.68},
+                {"id": 9002, "accountId": 11, "timestamp": "2026-08-20T14:30:00Z", "tradeDate": {"year": 2026, "month": 8, "day": 20},
+                 "cashChangeType": "Commission", "fillId": 602, "delta": -1.32, "amount": 49997.36},
+                {"id": 9003, "accountId": 11, "timestamp": "2026-08-20T14:30:00Z", "tradeDate": {"year": 2026, "month": 8, "day": 20},
+                 "cashChangeType": "FillPair", "fillPairId": 701, "delta": 25.0, "amount": 50022.36},
+                {"id": 9004, "accountId": 11, "timestamp": "2026-08-21T15:00:00Z", "tradeDate": {"year": 2026, "month": 8, "day": 21},
+                 "cashChangeType": "FillPair", "fillPairId": 702, "delta": -12.5, "amount": 50009.86},
+                {"id": 9005, "accountId": 11, "timestamp": "2026-09-01T13:45:00Z", "tradeDate": {"year": 2026, "month": 9, "day": 1},
+                 "cashChangeType": "FillPair", "fillPairId": 501, "delta": 40.0, "amount": 50049.86},
+                {"id": 9006, "accountId": 99, "timestamp": "2026-08-21T15:00:00Z", "tradeDate": {"year": 2026, "month": 8, "day": 21},
+                 "cashChangeType": "FillPair", "fillPairId": 799, "delta": 5.0, "amount": 1.0},  # other account
+            ],
+            "/fillPair/items": [
+                {"id": 501, "buyFillId": 1, "sellFillId": 2, "qty": 2, "buyPrice": 20000.0, "sellPrice": 20010.0},
+                {"id": 701, "buyFillId": 601, "sellFillId": 602, "qty": 1, "buyPrice": 5600.0, "sellPrice": 5605.0},
+                {"id": 702, "buyFillId": 604, "sellFillId": 603, "qty": 1, "buyPrice": 5602.5, "sellPrice": 5600.0},
+            ],
+            "/fill/items": [
+                {"id": 1, "orderId": 100, "contractId": 5, "timestamp": "2026-09-01T13:30:00Z", "action": "Buy", "qty": 2, "price": 20000.0},
+                {"id": 2, "orderId": 101, "contractId": 5, "timestamp": "2026-09-01T13:45:00Z", "action": "Sell", "qty": 2, "price": 20010.0},
+                {"id": 601, "orderId": 800, "timestamp": "2026-08-20T14:00:00Z", "action": "Buy", "qty": 1, "price": 5600.0},
+                {"id": 602, "orderId": 801, "timestamp": "2026-08-20T14:30:00Z", "action": "Sell", "qty": 1, "price": 5605.0},
+                {"id": 603, "orderId": 802, "contractId": 6, "timestamp": "2026-08-21T14:40:00Z", "action": "Sell", "qty": 1, "price": 5600.0},
+                {"id": 604, "orderId": 803, "contractId": 6, "timestamp": "2026-08-21T15:00:00Z", "action": "Buy", "qty": 1, "price": 5602.5},
+            ],
+            "/order/items": [{"id": 800, "accountId": 11, "contractId": 6}, {"id": 801, "accountId": 11, "contractId": 6}],
         }
 
     def has_token(self):
@@ -60,6 +90,8 @@ class FakeSession:
         if path in self.fail:
             raise tradovate.TradovateError(f"boom {path}")
         if path == "/fillPair/list" and not self.pairs:
+            return []
+        if path == "/cashBalanceLog/list" and not self.history:
             return []
         if path == "/cashBalance/getcashbalancesnapshot":
             return {"totalCashValue": 50123.45, "realizedPnL": 12.5, "openPnL": 0.0, "weekRealizedPnL": 40.0, "totalPnL": 123.0}
@@ -241,3 +273,45 @@ async def test_settings_validation(client):
     assert (await client.post("/api/settings", json={"journal_timezone": "Mars/Olympus"})).status_code == 400
     r = await client.post("/api/settings", json={"journal_import_time": "7:5", "journal_timezone": "America/New_York"})
     assert r.status_code == 200 and r.json()["journal_import_time"] == "07:05" and r.json()["journal_timezone"] == "America/New_York"
+
+
+# ------------------------------------------------------------- history
+async def test_history_from_cash_balance_log(admin, monkeypatch):
+    sess = FakeSession(history=True)
+    _install(monkeypatch, sess)
+    rec = await journal.import_area(1)
+    assert rec["status"] == "ok", rec
+    assert rec["trades_new"] == 2 and rec["history_pairs"] == 3 and rec["history_new"] == 2  # 501 is today's, already stored
+    trades = db.list_journal_trades(1)
+    assert [(t["exit_ts"][:10], t["symbol"], t["side"], t["source"]) for t in trades] == [
+        ("2026-08-20", "MESU6", "long", "history"), ("2026-08-21", "MESU6", "short", "history"),
+        ("2026-09-01", "MNQU6", "long", "fillpair"), ("2026-09-02", "MNQU6", "short", "fillpair")]
+    h1, h2 = trades[0], trades[1]
+    assert h1["gross_pnl"] == 25.0 and h1["fees"] == 2.64 and h1["net_pnl"] == 22.36   # book's P&L + per-fill fees from the log
+    assert h1["value_per_point"] == 5.0 and h1["account_spec"] == "DEMO11"
+    assert h2["gross_pnl"] == -12.5 and h2["fees"] == 0.0 and h2["entry_price"] == 5600.0 and h2["exit_price"] == 5602.5
+    snaps = {(s["day"]): s for s in db.list_journal_snapshots(1, days=400)}
+    assert snaps["2026-08-20"]["total_cash"] == 50022.36 and snaps["2026-08-20"]["realized_pnl"] == 25.0
+    assert snaps["2026-08-21"]["realized_pnl"] == -12.5 and rec["history_snapshots"] == 3
+    assert "/cashBalanceLog/list" in sess.calls and "/fillPair/items" in sess.calls
+    # incremental: nothing left to do on the next run
+    rec2 = await journal.import_area(1)
+    assert rec2["history_pairs"] == 0 and rec2["history_new"] == 0 and len(db.list_journal_trades(1)) == 4
+    assert db.list_journal_imports(1)[0]["history_new"] == 0 and db.list_journal_imports(1)[1]["history_new"] == 2
+
+
+async def test_history_failure_does_not_break_session_import(admin, monkeypatch):
+    _install(monkeypatch, FakeSession(history=True, fail={"/cashBalanceLog/list"}))
+    rec = await journal.import_area(1)
+    assert rec["trades_new"] == 2 and rec["history_new"] == 0 and rec["status"] == "partial" and "history" in rec["error"]
+
+
+async def test_pairs_with_fills_outside_the_session_list(admin, monkeypatch):
+    """A fill-pair list that reaches further back than the fill list: fills are fetched by id."""
+    sess = FakeSession()
+    sess.data["/fillPair/list"] = sess.data["/fillPair/list"] + [
+        {"id": 701, "positionId": 9, "buyFillId": 601, "sellFillId": 602, "qty": 1, "buyPrice": 5600.0, "sellPrice": 5605.0}]
+    _install(monkeypatch, sess)
+    rec = await journal.import_area(1)
+    assert rec["trades_new"] == 3 and "/fill/items" in sess.calls
+    assert [t["symbol"] for t in db.list_journal_trades(1)][0] == "MESU6"

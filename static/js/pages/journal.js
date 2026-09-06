@@ -89,6 +89,7 @@ export default {
       { label: "Logins", className: "num", render: (r) => String(r.logins) },
       { label: "Fills (new)", className: "num", render: (r) => `${r.fills} (${r.fills_new})` },
       { label: "Trades (new)", className: "num", render: (r) => `${r.trades} (${r.trades_new})` },
+      { label: "From history", className: "num", render: (r) => String(r.history_new ?? 0) },
       { label: "Error", render: (r) => r.error ? h("span", { class: "neg" }, r.error) : "—" },
     ] });
 
@@ -210,7 +211,7 @@ export default {
       importBtn.disabled = true; importBtn.textContent = "Importing…";
       try {
         const r = await api.post("/api/journal/import");
-        toast(r.status === "ok" ? `Imported ${r.trades_new} new trade(s), ${r.fills_new} new fill(s)` : `Import ${r.status}: ${r.error || ""}`, r.status === "ok" ? "success" : "error");
+        toast(r.status === "ok" ? `Imported ${r.trades_new} new trade(s) from today, ${r.history_new || 0} from history` : `Import ${r.status}: ${r.error || ""}`, r.status === "ok" ? "success" : "error");
         await load();
       } catch (e) { toast(e.message, "error"); }
       finally { importBtn.disabled = false; clear(importBtn); importBtn.append(icon("download"), "Import now"); }
@@ -302,7 +303,7 @@ export default {
         vizCard("By weekday", null, byWeekday, byWeekdayTable),
         vizCard(`By hour of day`, "Exit time, journal timezone.", byHour, byHourTable)),
       card({ title: "Trades", hint: "Click a trade to add a note and tags." }, trades.el, h("div", { class: "form-actions", style: "margin-top:8px" }, moreBtn)),
-      card({ title: "Imports", hint: "Automatic daily import after the CME close (Settings → General → Trading journal), on demand with Import now, or a CSV export from Tradovate for past days (Import CSV)." }, imports.el),
+      card({ title: "Imports", hint: "Every import reads today's session and walks the account's cash-balance log for past trades not yet journaled (\"From history\"). Runs daily after the CME close (Settings → General → Trading journal) or on demand with Import now; a Tradovate CSV export (Import CSV) remains available as a fallback." }, imports.el),
     );
     load();
     return () => { closeDrawer(); };
