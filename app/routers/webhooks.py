@@ -8,8 +8,9 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from .. import config, context, signals, state
+from .. import config, context, db, marketplace, signals, state
 from ..tradovate import TradovateError
+from ..web import require_admin
 
 router = APIRouter(tags=["webhooks"])
 
@@ -68,7 +69,10 @@ def _webhook_or_404(webhook_id: str) -> tuple[list[dict[str, Any]], int]:
 
 @router.get("/api/webhooks")
 async def api_list_webhooks() -> list[dict[str, Any]]:
-    return config.load_settings().get("webhooks", [])
+    """The area's webhooks, each with its marketplace subscriber count."""
+    counts = db.subscriber_counts(context.get_area())
+    return [{**wh, "subscriber_count": counts.get(wh.get("id"), 0)}
+            for wh in config.load_settings().get("webhooks", [])]
 
 
 @router.post("/api/webhooks")
@@ -128,8 +132,52 @@ async def api_delete_webhook(webhook_id: str) -> dict[str, Any]:
     webhooks, i = _webhook_or_404(webhook_id)
     removed = webhooks.pop(i)
     config.save_settings({"webhooks": webhooks})
-    state.log_event("info", f"Webhook '{removed.get('name')}' deleted")
-    return {"status": "deleted", "id": webhook_id}
+    dropped = db.delete_subscriptions_for_webhook(context.get_area(), webhook_id)
+    state.log_event("info", f"Webhook '{removed.get('name')}' deleted"
+                    + (f" ({dropped} subscription(s) removed)" if dropped else ""))
+    return {"status": "deleted", "id": webhook_id, "subscriptions_removed": dropped}
+
+
+# ================================================================= Marketplace
+@router.put("/api/webhooks/{webhook_id}/sharing")
+async def api_update_sharing(webhook_id: str, request: Request) -> dict[str, Any]:
+    """Publish / unpublish a webhook on the marketplace (admins only). Existing
+    subscriptions are kept but paused while it's unpublished."""
+    user = require_admin(request)
+    body = await request.json()
+    webhooks, i = _webhook_or_404(webhook_id)
+    wh = webhooks[i]
+    before = marketplace.sharing_of(wh)
+    wh["sharing"] = marketplace.normalize_sharing(body, wh.get("sharing"))
+    webhooks[i] = wh
+    config.save_settings({"webhooks": webhooks})
+    after = wh["sharing"]
+    if before["enabled"] != after["enabled"]:
+        db.log_action(user["id"], user["email"], "webhook_share", after["title"] or wh.get("name", ""),
+                      "published" if after["enabled"] else "unpublished")
+        state.log_event("info", f"Webhook '{wh.get('name')}' {'published on' if after['enabled'] else 'removed from'} the marketplace")
+    return {**wh, "subscriber_count": db.subscriber_counts(context.get_area()).get(webhook_id, 0)}
+
+
+@router.get("/api/webhooks/{webhook_id}/subscribers")
+async def api_list_subscribers(webhook_id: str, request: Request) -> list[dict[str, Any]]:
+    require_admin(request)
+    _webhook_or_404(webhook_id)
+    return db.list_subscribers(context.get_area(), webhook_id)
+
+
+@router.delete("/api/webhooks/{webhook_id}/subscribers/{sub_id}")
+async def api_remove_subscriber(webhook_id: str, sub_id: int, request: Request) -> dict[str, Any]:
+    """Publisher removes a subscriber ("kick")."""
+    user = require_admin(request)
+    _webhook_or_404(webhook_id)
+    removed = db.delete_subscription(sub_id, publisher_area_id=context.get_area())
+    if not removed or removed["webhook_id"] != webhook_id:
+        raise HTTPException(status_code=404, detail="Subscriber not found")
+    email = db.area_owner_email(removed["area_id"]) or str(removed["area_id"])
+    db.log_action(user["id"], user["email"], "subscriber_remove", email, f"webhook {webhook_id}")
+    state.log_event("info", f"Subscriber {email} removed from webhook {webhook_id}")
+    return {"status": "deleted", "id": sub_id}
 
 
 @router.post("/api/webhooks/{webhook_id}/regenerate-token")
@@ -142,14 +190,19 @@ async def api_regenerate_webhook_token(webhook_id: str) -> dict[str, Any]:
 
 
 @router.post("/api/webhooks/{webhook_id}/test")
-async def api_test_webhook(webhook_id: str, request: Request) -> dict[str, Any]:
+async def api_test_webhook(webhook_id: str, request: Request, subscribers: bool = False) -> dict[str, Any]:
     """Run a payload through the signal pipeline for a specific webhook (real
-    execution — respects the trading_enabled switch, same as a live POST)."""
+    execution — respects the trading_enabled switch, same as a live POST).
+    With ``?subscribers=true`` a published webhook's test signal is also
+    forwarded to its marketplace subscribers (off by default)."""
     webhooks, i = _webhook_or_404(webhook_id)
     wh = webhooks[i]
     payload = await request.json()
     state.log_signal(payload, result="test")
     try:
-        return await signals.process(payload, wh)
+        result = await signals.process(payload, wh)
     except (signals.SignalError, TradovateError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if subscribers:
+        result = {**result, "forwarded": signals.forward_to_subscribers(payload, wh)}
+    return result

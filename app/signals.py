@@ -131,22 +131,53 @@ def _webhook_executors(webhook: dict[str, Any]) -> list[Any]:
 _bg_tasks: set[asyncio.Task] = set()
 
 
-def accept(payload: dict[str, Any], webhook: dict[str, Any]) -> None:
-    """Acknowledge a signal for an enabled webhook and execute it in the
-    background (the caller's area context is inherited by the task). Shared by
-    the TradingView ingress and the in-process Discord dispatch."""
-    state.log_signal(payload, result="received")
-    task = asyncio.get_running_loop().create_task(process_background(payload, webhook))
+def _spawn(coro: Any) -> asyncio.Task:
+    """Run a coroutine in the background; the current context (area) is inherited."""
+    task = asyncio.get_running_loop().create_task(coro)
     _bg_tasks.add(task)
     task.add_done_callback(_bg_tasks.discard)
+    return task
 
 
-async def process_background(payload: dict[str, Any], webhook: dict[str, Any]) -> None:
+def accept(payload: dict[str, Any], webhook: dict[str, Any], *, forward: bool = True) -> None:
+    """Acknowledge a signal for an enabled webhook and execute it in the
+    background (the caller's area context is inherited by the task). Shared by
+    the TradingView ingress and the in-process Discord dispatch. A published
+    webhook's signal is also forwarded to its marketplace subscribers."""
+    state.log_signal(payload, result="received")
+    _spawn(process_background(payload, webhook))
+    if forward:
+        forward_to_subscribers(payload, webhook)
+
+
+def forward_to_subscribers(payload: dict[str, Any], webhook: dict[str, Any],
+                           publisher_area: int | None = None) -> int:
+    """Fan a published webhook's signal out to every enabled subscription, each
+    executed in the subscriber's own area (their accounts, trading switch,
+    symbol map, alerts and logs). Returns how many subscribers were dispatched.
+    Failures are isolated per subscriber and never affect the publisher."""
+    from . import db, marketplace
+
+    if not marketplace.sharing_of(webhook)["enabled"]:
+        return 0
+    aid = publisher_area if publisher_area is not None else context.get_area()
+    subs = db.active_subscriptions(aid, webhook.get("id", ""))
+    for sub in subs:
+        view = marketplace.subscription_view(webhook, sub, aid)
+        with context.use_area(sub["area_id"]):
+            state.log_signal(dict(payload), result="received")
+            _spawn(process_background(dict(payload), view, trusted=True))
+    if subs:
+        state.log_event("info", f"[{webhook.get('name', '?')}] forwarded to {len(subs)} subscriber(s)")
+    return len(subs)
+
+
+async def process_background(payload: dict[str, Any], webhook: dict[str, Any], *, trusted: bool = False) -> None:
     """Run the pipeline for an already-accepted signal: log the outcome, alert on
     failure, never raise (a background task must not die silently)."""
     name = webhook.get("name", "?")
     try:
-        result = await process(payload, webhook)
+        result = await process(payload, webhook, trusted=trusted)
         state.log_signal(payload, result=result.get("status", "ok"))
     except (SignalError, TradovateError) as exc:
         state.log_event("error", f"Signal error: {exc}", payload=payload)
@@ -160,7 +191,8 @@ async def process_background(payload: dict[str, Any], webhook: dict[str, Any]) -
 
 # ------------------------------------------------------------ entry point
 async def process(
-    payload: dict[str, Any], webhook: dict[str, Any] | None = None, *, simulate: bool = False
+    payload: dict[str, Any], webhook: dict[str, Any] | None = None, *,
+    simulate: bool = False, trusted: bool = False,
 ) -> dict[str, Any]:
     """Validate, authorise and execute a webhook payload. Returns a summary dict.
 
@@ -169,7 +201,9 @@ async def process(
     case a synthetic bracket webhook + the in-memory sim account is used.
 
     When ``simulate`` is True, orders are filled in memory (no Tradovate calls) and
-    the live-only guards (trading switch, passphrase) are skipped.
+    the live-only guards (trading switch, passphrase) are skipped. ``trusted``
+    skips only the passphrase check — used for marketplace subscriptions, whose
+    signal was already authenticated by the publisher's webhook.
     """
     s = config.load_settings()
     active_map = _map_for(simulate)
@@ -179,7 +213,7 @@ async def process(
             raise SignalError("No webhook context for this signal")
         webhook = _synthetic_bracket_webhook(s)
 
-    if not simulate:
+    if not simulate and not trusted:
         # passphrase (optional, defence in depth on top of the URL secret)
         if s.get("webhook_passphrase"):
             if payload.get("passphrase") != s["webhook_passphrase"]:

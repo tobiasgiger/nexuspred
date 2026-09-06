@@ -112,6 +112,7 @@ def reset_caches() -> None:
     _area_ids = None
     _users.clear()
     _primary_area.clear()
+    _subs_changed()
 
 
 def init() -> None:
@@ -172,6 +173,17 @@ def init() -> None:
                     created_at TEXT NOT NULL,
                     expires_at TEXT NOT NULL,
                     used_at TEXT
+                );
+                CREATE TABLE IF NOT EXISTS subscriptions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    area_id INTEGER NOT NULL,
+                    publisher_area_id INTEGER NOT NULL,
+                    webhook_id TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    accounts TEXT NOT NULL DEFAULT '[]',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(area_id, publisher_area_id, webhook_id)
                 );
                 """
             )
@@ -355,6 +367,8 @@ def delete_user(user_id: int) -> None:
         for aid in area_ids:
             c.execute("DELETE FROM memberships WHERE area_id=?", (aid,))
             c.execute("DELETE FROM areas WHERE id=?", (aid,))
+            # Their subscriptions, and everyone's subscriptions to their webhooks.
+            c.execute("DELETE FROM subscriptions WHERE area_id=? OR publisher_area_id=?", (aid, aid))
         c.execute("DELETE FROM users WHERE id=?", (user_id,))
     _areas_generation += 1
     reset_caches()
@@ -427,6 +441,157 @@ def save_area_settings(area_id: int, settings: dict[str, Any]) -> None:
 def area_owner(area_id: int) -> Optional[int]:
     a = get_area(area_id)
     return a["owner_user_id"] if a else None
+
+
+def area_owner_email(area_id: int) -> Optional[str]:
+    owner = area_owner(area_id)
+    user = get_user(owner) if owner else None
+    return user["email"] if user else None
+
+
+# --------------------------------------------------------------- subscriptions
+# A subscription = one area following a webhook another area has published on
+# the marketplace, executed on the subscriber's own accounts (see app.marketplace
+# and signals.forward_to_subscribers).
+_active_subs: dict[tuple[int, str], list[dict[str, Any]]] = {}
+_sub_counts: dict[int, dict[str, int]] = {}  # publisher area → {webhook_id: count}
+
+
+def _subs_changed() -> None:
+    _active_subs.clear()
+    _sub_counts.clear()
+
+
+def _row_to_sub(r: sqlite3.Row) -> dict[str, Any]:
+    try:
+        accounts = json.loads(r["accounts"] or "[]")
+    except json.JSONDecodeError:
+        accounts = []
+    return {"id": r["id"], "area_id": r["area_id"], "publisher_area_id": r["publisher_area_id"],
+            "webhook_id": r["webhook_id"], "enabled": bool(r["enabled"]), "accounts": accounts,
+            "created_at": r["created_at"], "updated_at": r["updated_at"]}
+
+
+def upsert_subscription(area_id: int, publisher_area_id: int, webhook_id: str,
+                        accounts: list[dict[str, Any]], enabled: bool = True) -> dict[str, Any]:
+    """Create or update the subscriber area's subscription to a published webhook."""
+    init()
+    now = _now()
+    with _connect() as c:
+        c.execute(
+            "INSERT INTO subscriptions(area_id,publisher_area_id,webhook_id,enabled,accounts,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,?) "
+            "ON CONFLICT(area_id,publisher_area_id,webhook_id) DO UPDATE SET "
+            "enabled=excluded.enabled, accounts=excluded.accounts, updated_at=excluded.updated_at",
+            (area_id, publisher_area_id, webhook_id, 1 if enabled else 0, json.dumps(accounts), now, now),
+        )
+        row = c.execute("SELECT * FROM subscriptions WHERE area_id=? AND publisher_area_id=? AND webhook_id=?",
+                        (area_id, publisher_area_id, webhook_id)).fetchone()
+    _subs_changed()
+    return _row_to_sub(row)
+
+
+def get_subscription(sub_id: int, area_id: Optional[int] = None) -> Optional[dict[str, Any]]:
+    init()
+    with _connect() as c:
+        row = c.execute("SELECT * FROM subscriptions WHERE id=?", (sub_id,)).fetchone()
+    if not row or (area_id is not None and row["area_id"] != area_id):
+        return None
+    return _row_to_sub(row)
+
+
+def update_subscription(sub_id: int, area_id: int, *, enabled: Optional[bool] = None,
+                        accounts: Optional[list[dict[str, Any]]] = None) -> Optional[dict[str, Any]]:
+    """Update a subscriber's own subscription (enabled flag and/or routed accounts)."""
+    cur = get_subscription(sub_id, area_id)
+    if not cur:
+        return None
+    init()
+    with _connect() as c:
+        c.execute("UPDATE subscriptions SET enabled=?, accounts=?, updated_at=? WHERE id=?",
+                  (1 if (cur["enabled"] if enabled is None else enabled) else 0,
+                   json.dumps(cur["accounts"] if accounts is None else accounts), _now(), sub_id))
+    _subs_changed()
+    return get_subscription(sub_id, area_id)
+
+
+def delete_subscription(sub_id: int, *, area_id: Optional[int] = None,
+                        publisher_area_id: Optional[int] = None) -> Optional[dict[str, Any]]:
+    """Remove a subscription — by its subscriber (``area_id``) or by the publisher
+    (``publisher_area_id``, "kick"). Returns the removed row or None."""
+    init()
+    with _connect() as c:
+        row = c.execute("SELECT * FROM subscriptions WHERE id=?", (sub_id,)).fetchone()
+        if not row:
+            return None
+        if area_id is not None and row["area_id"] != area_id:
+            return None
+        if publisher_area_id is not None and row["publisher_area_id"] != publisher_area_id:
+            return None
+        c.execute("DELETE FROM subscriptions WHERE id=?", (sub_id,))
+    _subs_changed()
+    return _row_to_sub(row)
+
+
+def delete_subscriptions_for_webhook(publisher_area_id: int, webhook_id: str) -> int:
+    init()
+    with _connect() as c:
+        cur = c.execute("DELETE FROM subscriptions WHERE publisher_area_id=? AND webhook_id=?",
+                        (publisher_area_id, webhook_id))
+        n = cur.rowcount
+    _subs_changed()
+    return n
+
+
+def list_subscriptions(area_id: int) -> list[dict[str, Any]]:
+    """The subscriptions an area holds (as a subscriber)."""
+    init()
+    with _connect() as c:
+        rows = c.execute("SELECT * FROM subscriptions WHERE area_id=? ORDER BY id", (area_id,)).fetchall()
+    return [_row_to_sub(r) for r in rows]
+
+
+def list_subscribers(publisher_area_id: int, webhook_id: str) -> list[dict[str, Any]]:
+    """Everyone subscribed to one published webhook, with the subscriber's email."""
+    init()
+    with _connect() as c:
+        rows = c.execute(
+            "SELECT s.*, u.email AS email FROM subscriptions s "
+            "JOIN areas a ON a.id = s.area_id JOIN users u ON u.id = a.owner_user_id "
+            "WHERE s.publisher_area_id=? AND s.webhook_id=? ORDER BY s.id",
+            (publisher_area_id, webhook_id)).fetchall()
+    return [{**_row_to_sub(r), "email": r["email"]} for r in rows]
+
+
+def subscriber_counts(publisher_area_id: int) -> dict[str, int]:
+    """webhook_id → number of subscriptions (enabled or not) for a publisher area.
+    Cached (the webhook list asks on every load) until a subscription changes."""
+    cached = _sub_counts.get(publisher_area_id)
+    if cached is not None:
+        return dict(cached)
+    init()
+    with _connect() as c:
+        rows = c.execute("SELECT webhook_id, COUNT(*) n FROM subscriptions WHERE publisher_area_id=? GROUP BY webhook_id",
+                         (publisher_area_id,)).fetchall()
+    counts = {r["webhook_id"]: r["n"] for r in rows}
+    _sub_counts[publisher_area_id] = counts
+    return dict(counts)
+
+
+def active_subscriptions(publisher_area_id: int, webhook_id: str) -> list[dict[str, Any]]:
+    """Enabled subscriptions to a published webhook — the hot path of the signal
+    fan-out, cached until any subscription changes."""
+    key = (publisher_area_id, webhook_id)
+    cached = _active_subs.get(key)
+    if cached is not None:
+        return [dict(s) for s in cached]
+    init()
+    with _connect() as c:
+        rows = c.execute("SELECT * FROM subscriptions WHERE publisher_area_id=? AND webhook_id=? AND enabled=1 ORDER BY id",
+                         key).fetchall()
+    subs = [_row_to_sub(r) for r in rows]
+    _active_subs[key] = subs
+    return [dict(s) for s in subs]
 
 
 def _load_features(area_id: int) -> dict[str, Any]:

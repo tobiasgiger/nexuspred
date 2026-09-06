@@ -8,7 +8,8 @@ import { dataTable } from "../components/table.js";
 const ACTION_LABEL = {
   invite_create: "Invite created", invite_revoke: "Invite revoked", user_delete: "User deleted",
   feature_set: "Feature changed", password_reset: "Password reset", password_change: "Password changed",
-  flatten_all: "Flatten all",
+  flatten_all: "Flatten all", subscribe: "Subscribed", unsubscribe: "Unsubscribed",
+  webhook_share: "Marketplace publish", subscriber_remove: "Subscriber removed",
 };
 
 export default {

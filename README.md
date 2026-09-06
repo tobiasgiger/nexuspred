@@ -372,6 +372,34 @@ Discord connection.
 all work even if it isn't installed (the tab shows "No library"). It's listed in
 `requirements.txt`, so a normal install/deploy picks it up.
 
+## Marketplace (share a webhook with other users)
+
+An admin can **publish** one of their webhooks; other users find it on the
+**Marketplace** page and **subscribe** — choosing which of *their own* trade accounts
+(with a qty multiplier) the signal should trade, and switching the subscription on/off.
+
+- **Publish**: Webhooks → open the webhook → **Sharing** tab → *Publish on the
+  marketplace*, with a title, a description and the visibility (**every registered
+  user** or **only selected users**). The same tab lists the subscribers (email, on/off,
+  routed accounts) with a **Remove** button. The webhook table shows `shared · N`.
+- **Subscribe**: Marketplace → *Subscribe* → route accounts + Qty × → save. Your
+  subscriptions are listed under Webhooks → *Subscribed signals* (toggle, manage,
+  unsubscribe).
+- **Execution**: when a TradingView alert hits the published webhook it runs in the
+  publisher's area as usual **and** is forwarded to every enabled subscription, each in
+  the subscriber's own area — their accounts, their **Trading** switch, their symbol
+  mapping, their alert channels and their logs. Subscribers never see the publisher's
+  URL, token or accounts; the publisher never sees the subscribers' accounts. A failure
+  on one side never affects the other. Subscribers' own webhook passphrase is not
+  applied (the publisher's webhook already authenticated the alert).
+- **Test signals** stay in the publisher's area unless *Also forward to marketplace
+  subscribers* is switched on (confirmation required).
+- Unpublishing pauses subscriptions; deleting the webhook removes them. Publish,
+  subscribe, unsubscribe and removals are recorded in the admin audit log.
+
+Subscriptions are stored in the `subscriptions` table; the sharing config lives on the
+webhook itself (`sharing` key), so v4 data stays compatible.
+
 ## Users, areas & login (multi-tenant)
 
 Fluxbridge is **multi-user**. Each user signs in with **email + password** and gets
@@ -464,7 +492,12 @@ the dashboard **Update** button works.
 | `GET/POST` | `/api/webhooks` | List all webhooks / create one |
 | `PUT/DELETE` | `/api/webhooks/{id}` | Update / delete a webhook (name, strategy, qty, accounts) |
 | `POST` | `/api/webhooks/{id}/regenerate-token` | Rotate a webhook's secret token |
-| `POST` | `/api/webhooks/{id}/test` | Run a payload through the pipeline for this webhook |
+| `POST` | `/api/webhooks/{id}/test` | Run a payload through the pipeline for this webhook (`?subscribers=true` also forwards it) |
+| `PUT`  | `/api/webhooks/{id}/sharing` | Publish / unpublish on the marketplace (admin): title, description, visibility, allowed users |
+| `GET/DELETE` | `/api/webhooks/{id}/subscribers[/{sub_id}]` | List / remove subscribers of a published webhook (admin) |
+| `GET`  | `/api/marketplace` | Published webhooks visible to me (with my subscription, if any) |
+| `POST` | `/api/marketplace/{area}/{webhook_id}/subscribe` | Subscribe (routed accounts + enabled) |
+| `GET/PUT/DELETE` | `/api/subscriptions[/{id}]` | My subscriptions: list / update / unsubscribe |
 | `GET`  | `/api/scenarios` | List built-in simulator scenarios |
 | `POST` | `/api/simulate` | Run a signal in simulation (no broker) |
 | `GET`  | `/api/simulate/state` | Simulated positions & working orders |

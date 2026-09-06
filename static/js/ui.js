@@ -86,11 +86,19 @@ export function toast(message, type = "") {
 }
 
 /* --------------------------------------------------------------- dialogs */
+const _openDialogs = new Set();
+
+/** Close every open confirm dialog (resolving it as cancelled) — e.g. on navigation. */
+export function closeDialogs() {
+  for (const finish of [..._openDialogs]) finish(false);
+}
+
 /** Accessible confirm dialog. Resolves true/false. */
 export function confirmDialog({ title, body, confirmText = "Confirm", cancelText = "Cancel", danger = false }) {
   return new Promise((resolve) => {
     let done = false;
-    const finish = (v) => { if (done) return; done = true; dlg.close(); dlg.remove(); resolve(v); };
+    const finish = (v) => { if (done) return; done = true; _openDialogs.delete(finish); dlg.close(); dlg.remove(); resolve(v); };
+    _openDialogs.add(finish);
     const ok = h("button", { class: `btn ${danger ? "btn-sos" : "btn-primary"}`, onClick: () => finish(true) }, confirmText);
     const dlg = h("dialog", { class: `dlg ${danger ? "danger" : ""}` },
       h("div", { class: "dlg-body" }, h("h2", null, title), body ? h("p", null, body) : null),

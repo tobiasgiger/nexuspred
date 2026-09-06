@@ -1,6 +1,6 @@
 /* Fluxbridge dashboard — bootstrap, hash router, shell (sidebar + topbar),
    live stream and the reconcile polling. Build-free ES modules. */
-import { $, h, clear, toast } from "./ui.js";
+import { $, h, clear, toast, closeDialogs } from "./ui.js";
 import { store, can } from "./store.js";
 import { actions } from "./actions.js";
 import { connectStream } from "./stream.js";
@@ -61,6 +61,7 @@ function render() {
     return;
   }
   // Tear the old page down first (it may close its drawer), then announce the route.
+  closeDialogs();
   if (cleanup) { try { cleanup(); } catch (e) { console.error(e); } cleanup = null; }
   closeDrawer();
   store.set("route", { path, params: m.params, query, title: titleFor(path) });

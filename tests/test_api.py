@@ -227,7 +227,7 @@ async def test_webhook_crud(client):
     r = await client.post(f"/api/webhooks/{wh['id']}/regenerate-token")
     assert r.json()["token"] != wh["token"]
     assert (await client.put("/api/webhooks/nope", json={})).status_code == 404
-    assert (await client.delete(f"/api/webhooks/{wh['id']}")).json() == {"status": "deleted", "id": wh["id"]}
+    assert (await client.delete(f"/api/webhooks/{wh['id']}")).json() == {"status": "deleted", "id": wh["id"], "subscriptions_removed": 0}
     assert (await client.get("/api/webhooks")).json() == []
 
 

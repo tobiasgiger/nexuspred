@@ -4,6 +4,19 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.3
+- **Marketplace: share a webhook with other users.** An admin publishes a webhook
+  (Webhooks → Sharing tab: title, description, visibility *everyone* / *selected
+  users*, subscriber list with Remove). Other users subscribe on the new
+  **Marketplace** page, route it to their **own** trade accounts with a qty
+  multiplier and switch it on/off; their subscriptions are listed under Webhooks →
+  *Subscribed signals*. Every alert on the published webhook is executed in the
+  publisher's area and forwarded to each enabled subscription in the subscriber's own
+  area (own Trading switch, symbol map, alerts, logs) — isolated per subscriber, no
+  URL/token/accounts exposed in either direction. Test signals forward only on
+  request. Unpublishing pauses, deleting removes subscriptions; all of it lands in the
+  admin audit log. New table `subscriptions`; settings schema unchanged.
+
 ## 5.0.0-alpha.2
 _On `main` since 2026-09-06 (fast-forwarded from branch `v5`). The previous line, 4.11.0,
 is preserved on branch `backup/v4.11.0`; database and settings are compatible both ways._

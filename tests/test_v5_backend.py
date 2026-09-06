@@ -158,6 +158,7 @@ async def test_password_work_runs_off_loop(admin):
 
 async def test_warm_request_path_needs_no_database(client, monkeypatch):
     assert (await client.get("/api/status")).status_code == 200  # warms every cache
+    assert (await client.get("/api/webhooks")).status_code == 200  # (incl. subscriber counts)
 
     def boom():
         raise AssertionError("request path must not touch SQLite once warm")
