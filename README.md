@@ -148,9 +148,12 @@ includes a `render.yaml` blueprint.
   self-updater (`git reset` + restart of the whole process) is admin-only; the Discord
   routes require the admin-granted *Discord Signals* entitlement; an invite bound to an
   email can only be redeemed by that address.
-- **Secrets** (Tradovate tokens, Discord user token, SMTP password) are masked in every
-  API response and never logged. They are stored in the SQLite DB on the persistent
-  disk, so protect that disk like a password store.
+- **Secrets** (Tradovate tokens, Discord user token, SMTP password, alert webhook URL,
+  passphrase, Discord-target secrets) are masked in every API response, never logged,
+  and **encrypted at rest** in the SQLite DB (Fernet / AES-128-CBC + HMAC). The key
+  comes from `NEXUSPRED_ENCRYPTION_KEY`, else `SESSION_SECRET`, else an auto-generated
+  key in the DB (weakest — set one of the env vars on any public host). Rotating the
+  key makes stored tokens unreadable; re-enter them afterwards.
 
 1. Go to **Settings → Tradovate Accounts** → add one login per Tradovate account with its
    own access token (start in **Demo**), save, then **Connect & Verify** — the trade

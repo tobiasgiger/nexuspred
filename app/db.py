@@ -34,6 +34,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from . import crypto
 from .context import DEFAULT_AREA_ID
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -317,7 +318,7 @@ def create_user(email: str, password: str, is_admin: bool = False,
     init_settings = dict(initial_settings or {})
     if not init_settings.get("alert_email_to"):
         init_settings["alert_email_to"] = email
-    settings_json = json.dumps(init_settings)
+    settings_json = json.dumps(crypto.encrypt_settings(init_settings))
     with _connect() as c:
         # First user is forced admin; area id of the very first user is DEFAULT_AREA_ID.
         first = c.execute("SELECT COUNT(*) n FROM users").fetchone()["n"] == 0
@@ -456,7 +457,8 @@ def get_area(area_id: int) -> Optional[dict[str, Any]]:
                 "created_at": row["created_at"]}
 
 
-def get_area_settings(area_id: int) -> dict[str, Any]:
+def get_area_settings_raw(area_id: int) -> dict[str, Any]:
+    """The stored settings JSON as-is (secrets still encrypted)."""
     init()
     with _connect() as c:
         row = c.execute("SELECT settings FROM areas WHERE id=?", (area_id,)).fetchone()
@@ -468,10 +470,30 @@ def get_area_settings(area_id: int) -> dict[str, Any]:
         return {}
 
 
+def get_area_settings(area_id: int) -> dict[str, Any]:
+    """An area's settings with every secret decrypted (see :mod:`app.crypto`)."""
+    return crypto.decrypt_settings(get_area_settings_raw(area_id))
+
+
 def save_area_settings(area_id: int, settings: dict[str, Any]) -> None:
+    """Persist an area's settings; secret fields are encrypted on the way in."""
     init()
     with _connect() as c:
-        c.execute("UPDATE areas SET settings=? WHERE id=?", (json.dumps(settings), area_id))
+        c.execute("UPDATE areas SET settings=? WHERE id=?",
+                  (json.dumps(crypto.encrypt_settings(settings)), area_id))
+
+
+def encrypt_existing_settings() -> int:
+    """One-shot upgrade: re-save every area whose stored settings still hold a
+    plain-text secret. Returns how many areas were rewritten. Idempotent."""
+    init()
+    rewritten = 0
+    for aid in all_area_ids():
+        raw = get_area_settings_raw(aid)
+        if crypto.has_plaintext_secret(raw):
+            save_area_settings(aid, crypto.decrypt_settings(raw))
+            rewritten += 1
+    return rewritten
 
 
 def area_owner(area_id: int) -> Optional[int]:

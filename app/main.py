@@ -13,7 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, config, context, db, health, http, security, state
+from . import auth, config, context, crypto, db, health, http, security, state
 from .discord_signals.routes import router as discord_router
 from .routers import ROUTERS
 from .web import BASE_DIR, is_auth_exempt, wants_html
@@ -30,6 +30,16 @@ async def _startup() -> None:
                 config.invalidate(aid)
     except Exception as exc:  # noqa: BLE001 - never let a migration block startup
         state.log_event("warn", f"alert-email backfill failed: {exc}")
+    # Encrypt secrets written by earlier versions (idempotent, one pass).
+    try:
+        if db.encrypt_existing_settings():
+            config.invalidate()
+        if crypto.key_source() == "db":
+            state.log_event("warn", "Secrets are encrypted with the auto-generated key stored in the "
+                                    "database. Set NEXUSPRED_ENCRYPTION_KEY (or SESSION_SECRET) in the "
+                                    "environment so the key lives outside the DB file.")
+    except Exception as exc:  # noqa: BLE001 - never block startup on the migration
+        state.log_event("warn", f"secret encryption pass failed: {exc}")
     state.log_event("info", f"Bridge started (v{config.get_version()})")
     _loop_tasks[:] = [asyncio.create_task(health.health_loop(), name="health-loop"),
                       asyncio.create_task(health.discord_health_loop(), name="discord-health-loop")]

@@ -24,7 +24,7 @@ os.environ.setdefault("PORT", "9000")
 import httpx  # noqa: E402
 import pytest  # noqa: E402
 
-from app import auth, config, context, db, http, security, signals, state, tradovate  # noqa: E402
+from app import auth, config, context, crypto, db, http, security, signals, state, tradovate  # noqa: E402
 from app.discord_signals import hub, listener  # noqa: E402
 from app.main import app  # noqa: E402
 
@@ -46,6 +46,7 @@ def _reset_runtime() -> None:
     db.DB_FILE = _DATA / f"test-{_counter['n']}.db"
     db.reset_caches()
     auth._KEY = None
+    crypto.reset()
     config._version = None
     config.DEFAULT_SETTINGS.clear()
     config.DEFAULT_SETTINGS.update(copy.deepcopy(_PRISTINE_DEFAULTS))

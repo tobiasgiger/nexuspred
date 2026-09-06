@@ -5,6 +5,13 @@ Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
 ## 5.0.0-alpha.5
+- **Secrets encrypted at rest** (`app/crypto.py`, Fernet). Tradovate access/MD tokens,
+  the Discord user token, SMTP password, alert webhook URL, webhook passphrase and
+  Discord-target secrets are stored as `enc:v1:…` inside `areas.settings`; every caller
+  above `app.db` still sees plain values. Key: `NEXUSPRED_ENCRYPTION_KEY` →
+  `SESSION_SECRET` → auto-generated key in the DB (a startup warning tells you when the
+  weakest option is in use). Existing plain-text secrets are encrypted once on the first
+  start after the upgrade. New dependency: `cryptography`.
 - **Sign-ins in the audit log.** Every successful, failed and rate-limited sign-in is
   recorded with the client IP (`login_ok` / `login_failed` / `login_blocked`), including
   the auto sign-in after invite registration and password reset. Users → new
