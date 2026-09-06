@@ -149,11 +149,18 @@ _generation = 0
 _webhook_index: tuple[tuple[int, int], dict[str, tuple[int, dict[str, Any]]]] | None = None
 
 
-def get_version() -> str:
-    try:
-        return VERSION_FILE.read_text(encoding="utf-8").strip()
-    except OSError:
-        return "0.0.0"
+_version: str | None = None
+
+
+def get_version(force: bool = False) -> str:
+    """The VERSION file, read once (``force=True`` after a self-update)."""
+    global _version
+    if _version is None or force:
+        try:
+            _version = VERSION_FILE.read_text(encoding="utf-8").strip()
+        except OSError:
+            _version = "0.0.0"
+    return _version
 
 
 def legacy_settings_file() -> dict[str, Any] | None:

@@ -121,3 +121,65 @@ async def test_webhook_ingress_uses_index(client):
     assert (await client.post(f"/webhook/{token}", json={"action": "buy", "symbol": "MNQ1!"})).status_code == 403
     with context.use_area(1):
         assert config.load_settings()["webhooks"][0]["token"] != token
+
+
+# -------------------------------------------------------------- db caches
+def test_connection_is_reused_per_thread_and_follows_db_file(admin):
+    c1 = db._connect()
+    assert db._connect() is c1
+    db.DB_FILE = db.DB_FILE.with_name(db.DB_FILE.stem + "-b.db")
+    db._initialized = False
+    assert db._connect() is not c1
+
+
+def test_user_caches_invalidate_on_create_and_delete(admin):
+    assert db.user_count() == 1
+    u2 = db.create_user("two@example.com", "password123")
+    assert db.user_count() == 2 and db.get_user(u2["id"])["email"] == "two@example.com"
+    assert db.user_primary_area(u2["id"]) == 2
+    got = db.get_user(u2["id"])
+    got["email"] = "mutated"  # callers get copies, never the cache entry
+    assert db.get_user(u2["id"])["email"] == "two@example.com"
+    db.delete_user(u2["id"])
+    assert db.user_count() == 1 and db.get_user(u2["id"]) is None
+    assert db.user_primary_area(u2["id"]) is None
+
+
+async def test_password_work_runs_off_loop(admin):
+    assert (await db.authenticate_async("admin@example.com", "password123"))["id"] == admin["id"]
+    assert await db.authenticate_async("admin@example.com", "nope") is None
+    await db.set_password_async(admin["id"], "newpassword1")
+    assert await db.authenticate_async("admin@example.com", "newpassword1")
+    assert await db.authenticate_async("admin@example.com", "password123") is None
+
+
+async def test_warm_request_path_needs_no_database(client, monkeypatch):
+    assert (await client.get("/api/status")).status_code == 200  # warms every cache
+
+    def boom():
+        raise AssertionError("request path must not touch SQLite once warm")
+    monkeypatch.setattr(db, "_connect", boom)
+    r = await client.get("/api/status")
+    assert r.status_code == 200 and r.json()["version"] == config.get_version()
+    assert (await client.get("/api/settings")).status_code == 200
+    assert (await client.get("/api/webhooks")).status_code == 200
+    from tests.conftest import _make_client
+    async with _make_client() as anon:  # the anonymous path is DB-free as well
+        assert (await anon.get("/api/status")).status_code == 401
+
+
+async def test_setup_is_serialised(anon_client):
+    form = {"email": "a@example.com", "password": "password123", "password2": "password123"}
+    r1, r2 = await asyncio.gather(anon_client.post("/setup", data=form),
+                                  anon_client.post("/setup", data={**form, "email": "b@example.com"}))
+    assert sorted([r1.headers["location"], r2.headers["location"]]) == ["/", "/login"]
+    assert db.user_count() == 1
+
+
+def test_version_is_cached_until_forced(monkeypatch):
+    assert config.get_version() == "5.0.0-alpha.1"
+    monkeypatch.setattr(config, "VERSION_FILE", config.VERSION_FILE.with_name("VERSION.missing"))
+    assert config.get_version() == "5.0.0-alpha.1"
+    assert config.get_version(force=True) == "0.0.0"
+    monkeypatch.undo()
+    assert config.get_version(force=True) == "5.0.0-alpha.1"

@@ -13,11 +13,16 @@ areas):
 * **invites** — single-use invite codes (registration is invite-only).
 * **meta** — small key/value store (e.g. the session-cookie signing secret).
 
-Kept dependency-free (stdlib ``sqlite3``) with WAL mode and a short busy timeout;
-connections are opened per operation (low traffic).
+Kept dependency-free (stdlib ``sqlite3``) with WAL mode and a short busy timeout.
+v5 keeps one connection per thread (v4 opened — and never closed — one per
+call) and caches the hot auth lookups (``user_count``, ``get_user``,
+``user_primary_area``) so a warm request path needs no SQLite at all. Password
+hashing (PBKDF2, ~100 ms) has ``*_async`` wrappers that run it in a worker
+thread instead of stalling the event loop.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -65,14 +70,46 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+_local = threading.local()
+
+
 def _connect() -> sqlite3.Connection:
+    """This thread's connection, (re)opened when ``DB_FILE`` changes.
+
+    Callers use it as ``with _connect() as c:`` — that commits / rolls back the
+    statement block but never closes, so the connection (and its WAL/pragma
+    setup) is reused for the thread's lifetime."""
+    conn = getattr(_local, "conn", None)
+    if conn is not None and getattr(_local, "path", None) == str(DB_FILE):
+        return conn
+    if conn is not None:
+        try:
+            conn.close()
+        except sqlite3.Error:
+            pass
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB_FILE), timeout=10.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
+    _local.conn = conn
+    _local.path = str(DB_FILE)
     return conn
+
+
+# --- hot-path caches (auth middleware) --------------------------------------
+# Invalidated by the only writers that can change them (create/delete user).
+_user_count: Optional[int] = None
+_users: dict[int, dict[str, Any]] = {}
+_primary_area: dict[int, Optional[int]] = {}
+
+
+def reset_caches() -> None:
+    global _user_count
+    _user_count = None
+    _users.clear()
+    _primary_area.clear()
 
 
 def init() -> None:
@@ -184,9 +221,12 @@ def verify_password(password: str, stored: str) -> bool:
 
 # --------------------------------------------------------------- users
 def user_count() -> int:
-    init()
-    with _connect() as c:
-        return c.execute("SELECT COUNT(*) n FROM users").fetchone()["n"]
+    global _user_count
+    if _user_count is None:
+        init()
+        with _connect() as c:
+            _user_count = c.execute("SELECT COUNT(*) n FROM users").fetchone()["n"]
+    return _user_count
 
 
 def _row_to_user(row: sqlite3.Row) -> dict[str, Any]:
@@ -195,10 +235,17 @@ def _row_to_user(row: sqlite3.Row) -> dict[str, Any]:
 
 
 def get_user(user_id: int) -> Optional[dict[str, Any]]:
+    cached = _users.get(user_id)
+    if cached is not None:
+        return dict(cached)
     init()
     with _connect() as c:
         row = c.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
-        return _row_to_user(row) if row else None
+    if not row:
+        return None
+    user = _row_to_user(row)
+    _users[user_id] = user
+    return dict(user)
 
 
 def get_user_by_email(email: str) -> Optional[dict[str, Any]]:
@@ -267,6 +314,7 @@ def create_user(email: str, password: str, is_admin: bool = False,
             (uid, area_id, "owner", _now()),
         )
     _areas_generation += 1
+    reset_caches()
     return get_user(uid)  # type: ignore[return-value]
 
 
@@ -275,6 +323,25 @@ def set_password(user_id: int, new_password: str) -> None:
     with _connect() as c:
         c.execute("UPDATE users SET password_hash=? WHERE id=?",
                   (hash_password(new_password), user_id))
+
+
+# Async wrappers: PBKDF2 (200k rounds) takes ~100 ms of CPU; run it in a
+# worker thread so a login never stalls order processing on the event loop.
+async def authenticate_async(email: str, password: str) -> Optional[dict[str, Any]]:
+    return await asyncio.to_thread(authenticate, email, password)
+
+
+async def create_user_async(email: str, password: str, is_admin: bool = False,
+                            initial_settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    return await asyncio.to_thread(create_user, email, password, is_admin, initial_settings)
+
+
+async def set_password_async(user_id: int, new_password: str) -> None:
+    await asyncio.to_thread(set_password, user_id, new_password)
+
+
+async def consume_password_reset_async(token: str, new_password: str) -> Optional[int]:
+    return await asyncio.to_thread(consume_password_reset, token, new_password)
 
 
 def delete_user(user_id: int) -> None:
@@ -288,17 +355,23 @@ def delete_user(user_id: int) -> None:
             c.execute("DELETE FROM areas WHERE id=?", (aid,))
         c.execute("DELETE FROM users WHERE id=?", (user_id,))
     _areas_generation += 1
+    reset_caches()
 
 
 # --------------------------------------------------------------- areas
 def user_primary_area(user_id: int) -> Optional[int]:
+    if user_id in _primary_area:
+        return _primary_area[user_id]
     init()
     with _connect() as c:
         row = c.execute(
             "SELECT area_id FROM memberships WHERE user_id=? ORDER BY area_id LIMIT 1",
             (user_id,),
         ).fetchone()
-        return row["area_id"] if row else None
+    area = row["area_id"] if row else None
+    if area is not None:  # never cache a miss (the user may be mid-creation)
+        _primary_area[user_id] = area
+    return area
 
 
 def user_area_ids(user_id: int) -> list[int]:

@@ -1,6 +1,7 @@
 """FastAPI application: webhook endpoint + dashboard + management API."""
 from __future__ import annotations
 
+import asyncio
 import base64
 import os
 import secrets
@@ -98,7 +99,7 @@ async def login_page(request: Request, error: str = "") -> HTMLResponse:
 @app.post("/login")
 async def login_submit(request: Request):
     form = await request.form()
-    user = db.authenticate(str(form.get("email", "")), str(form.get("password", "")))
+    user = await db.authenticate_async(str(form.get("email", "")), str(form.get("password", "")))
     if not user:
         return RedirectResponse("/login?error=bad", status_code=302)
     resp = RedirectResponse("/", status_code=302)
@@ -123,6 +124,9 @@ async def setup_page(request: Request, error: str = "") -> HTMLResponse:
         "setup.html", {"request": request, "error": msgs.get(error, "")})
 
 
+_setup_lock = asyncio.Lock()  # two racing first-run POSTs must not both create an admin
+
+
 @app.post("/setup")
 async def setup_submit(request: Request):
     if db.user_count() > 0:
@@ -136,9 +140,12 @@ async def setup_submit(request: Request):
         return RedirectResponse("/setup?error=mismatch", status_code=302)
     if len(pw) < 8:
         return RedirectResponse("/setup?error=short", status_code=302)
-    # Seed the first admin's area with any pre-multi-tenant settings.json.
-    legacy = config.legacy_settings_file() or {}
-    user = db.create_user(email, pw, is_admin=True, initial_settings=legacy)
+    async with _setup_lock:
+        if db.user_count() > 0:
+            return RedirectResponse("/login", status_code=302)
+        # Seed the first admin's area with any pre-multi-tenant settings.json.
+        legacy = config.legacy_settings_file() or {}
+        user = await db.create_user_async(email, pw, is_admin=True, initial_settings=legacy)
     area = db.user_primary_area(user["id"])
     config.invalidate(area)
     config.migrate_legacy_webhook(area_id=area)
@@ -178,7 +185,7 @@ async def register_submit(request: Request):
         return RedirectResponse(f"/register?code={code}&error=short", status_code=302)
     if db.get_user_by_email(email):
         return RedirectResponse(f"/register?code={code}&error=exists", status_code=302)
-    user = db.create_user(email, pw, is_admin=invite.get("is_admin", False))
+    user = await db.create_user_async(email, pw, is_admin=invite.get("is_admin", False))
     db.consume_invite(code, user["id"])
     area = db.user_primary_area(user["id"])
     config.migrate_legacy_webhook(area_id=area)  # give the new area a Default webhook
@@ -306,9 +313,9 @@ async def api_change_password(request: Request) -> dict[str, Any]:
     new = str(body.get("new", ""))
     if len(new) < 8:
         raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
-    if not db.authenticate(user["email"], current):
+    if not await db.authenticate_async(user["email"], current):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
-    db.set_password(user["id"], new)
+    await db.set_password_async(user["id"], new)
     db.log_action(user["id"], user["email"], "password_change", user["email"])
     state.log_event("info", f"Password changed for {user['email']}")
     return {"status": "ok"}
@@ -353,7 +360,7 @@ async def reset_submit(request: Request):
         return RedirectResponse(f"/reset?token={token}&error=mismatch", status_code=302)
     if len(pw) < 8:
         return RedirectResponse(f"/reset?token={token}&error=short", status_code=302)
-    uid = db.consume_password_reset(token, pw)
+    uid = await db.consume_password_reset_async(token, pw)
     if uid is None:
         return RedirectResponse(f"/reset?token={token}&error=token", status_code=302)
     user = db.get_user(uid)
@@ -388,10 +395,10 @@ async def guide() -> FileResponse:
     return FileResponse(str(BASE_DIR / "docs" / "setup-guide.html"))
 
 
-@app.get("/api/extension/token-extractor.zip")
-async def extension_zip() -> Response:
-    """Serve the browser token-extractor extension as a downloadable .zip so it
-    can be installed via chrome://extensions -> Load unpacked (Tools tab)."""
+_EXT_ZIP: bytes | None = None
+
+
+def _build_extension_zip() -> bytes:
     import io
     import zipfile
 
@@ -404,8 +411,19 @@ async def extension_zip() -> Response:
             if path.is_file():
                 # Keep the top-level folder name so unzip yields token-extractor/.
                 z.write(path, path.relative_to(ext_dir.parent))
+    return buf.getvalue()
+
+
+@app.get("/api/extension/token-extractor.zip")
+async def extension_zip() -> Response:
+    """Serve the browser token-extractor extension as a downloadable .zip so it
+    can be installed via chrome://extensions -> Load unpacked (Tools tab).
+    Built once per process (the files ship with the code)."""
+    global _EXT_ZIP
+    if _EXT_ZIP is None:
+        _EXT_ZIP = await asyncio.to_thread(_build_extension_zip)
     return Response(
-        content=buf.getvalue(),
+        content=_EXT_ZIP,
         media_type="application/zip",
         headers={"Content-Disposition": 'attachment; filename="token-extractor.zip"'},
     )

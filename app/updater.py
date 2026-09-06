@@ -139,7 +139,7 @@ async def apply_update() -> dict[str, Any]:
         _run, [sys.executable, "-m", "pip", "install", "-q", "-r", "requirements.txt"]
     )
 
-    new_version = config.get_version()
+    new_version = config.get_version(force=True)
     state.log_event("info", f"Updated v{old_version} → v{new_version}; restarting…")
 
     # Restart shortly after responding so the dashboard gets the response first.

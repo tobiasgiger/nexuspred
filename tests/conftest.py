@@ -44,6 +44,9 @@ def _reset_runtime() -> None:
     _counter["n"] += 1
     db._initialized = False
     db.DB_FILE = _DATA / f"test-{_counter['n']}.db"
+    db.reset_caches()
+    auth._KEY = None
+    config._version = None
     config.DEFAULT_SETTINGS.clear()
     config.DEFAULT_SETTINGS.update(copy.deepcopy(_PRISTINE_DEFAULTS))
     config._cache.clear()

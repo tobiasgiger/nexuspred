@@ -22,12 +22,19 @@ COOKIE = "fb_session"
 SESSION_TTL = 30 * 24 * 3600  # 30 days
 
 
+_KEY: Optional[bytes] = None
+
+
 def _secret_key() -> bytes:
-    key = os.environ.get("SESSION_SECRET") or db.meta_get("session_secret")
-    if not key:
-        key = secrets.token_urlsafe(48)
-        db.meta_set("session_secret", key)
-    return key.encode()
+    """The cookie-signing key, resolved once (env, else persisted in ``meta``)."""
+    global _KEY
+    if _KEY is None:
+        key = os.environ.get("SESSION_SECRET") or db.meta_get("session_secret")
+        if not key:
+            key = secrets.token_urlsafe(48)
+            db.meta_set("session_secret", key)
+        _KEY = key.encode()
+    return _KEY
 
 
 def _b64e(data: bytes) -> str:
