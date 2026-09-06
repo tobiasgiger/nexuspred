@@ -172,17 +172,35 @@ def fifo_pairs(fills: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 # ---------------------------------------------------------------- importer
 class _Reader:
-    """Thin wrapper over a session's ``_request`` with tolerant defaults."""
+    """Thin wrapper over a session's ``_request`` with tolerant defaults. Records
+    what every endpoint returned (counts, column names, a few distinct values —
+    never prices or ids) in ``diag`` so an empty import can be explained."""
 
     def __init__(self, session: Any) -> None:
         self.s = session
+        self.diag: dict[str, Any] = {}
+
+    def _note(self, path: str, data: Any, error: str = "") -> None:
+        d: dict[str, Any] = {"count": len(data) if isinstance(data, list) else (1 if isinstance(data, dict) else 0)}
+        if error:
+            d["error"] = error[:300]
+        sample = data[0] if isinstance(data, list) and data and isinstance(data[0], dict) else (data if isinstance(data, dict) else None)
+        if sample:
+            d["columns"] = sorted(sample.keys())[:40]
+        prev = self.diag.get(path)
+        if prev and "count" in prev:
+            d["count"] += prev["count"]
+        self.diag[path] = d
 
     async def list(self, path: str) -> list[dict[str, Any]]:
         try:
             data = await self.s._request("GET", path)
         except Exception as exc:  # noqa: BLE001
+            self._note(path, None, str(exc))
             raise ImportProblem(f"{path}: {exc}") from exc
-        return list(data or []) if isinstance(data, list) else []
+        out = list(data or []) if isinstance(data, list) else []
+        self._note(path, out)
+        return out
 
     async def items(self, path: str, ids: list[int]) -> dict[int, dict[str, Any]]:
         out: dict[int, dict[str, Any]] = {}
@@ -191,8 +209,10 @@ class _Reader:
             chunk = ids[i:i + 50]
             try:
                 data = await self.s._request("GET", path, params={"ids": ",".join(map(str, chunk))})
-            except Exception:  # noqa: BLE001 - name lookups are best effort
+            except Exception as exc:  # noqa: BLE001 - name lookups are best effort
+                self._note(path, None, str(exc))
                 continue
+            self._note(path, data if isinstance(data, list) else [])
             for it in data or []:
                 if isinstance(it, dict) and it.get("id") is not None:
                     out[int(it["id"])] = it
@@ -240,6 +260,16 @@ async def import_session(area_id: int, session: Any, *, today: Optional[date] = 
             accounts_by_id[int(a["id"])] = {"id": int(a["id"]), "spec": a.get("spec") or "",
                                             "name": a.get("spec") or session.name,
                                             "environment": session.environment}
+    if not accounts_by_id or any(not a.get("id") for a in session.accounts):
+        # Accounts saved before "Connect & Verify" carry no ids: ask the broker.
+        try:
+            for a in await r.list("/account/list"):
+                if a.get("id") and a.get("name"):
+                    accounts_by_id.setdefault(int(a["id"]), {"id": int(a["id"]), "spec": str(a["name"]),
+                                                              "name": str(a["name"]), "environment": session.environment})
+        except ImportProblem:
+            pass
+    r.diag["accounts"] = [{"id": a["id"], "spec": a["spec"]} for a in accounts_by_id.values()]
     fills = await r.list("/fill/list")
     orders = {int(o["id"]): o for o in await r.list("/order/list") if o.get("id") is not None}
     fills = [f for f in fills if f.get("id") is not None]
@@ -337,8 +367,11 @@ async def import_session(area_id: int, session: Any, *, today: Optional[date] = 
         if snap:
             db.upsert_journal_snapshot(area_id, {"account_id": aid, "account_spec": acct["spec"], "day": day, **snap})
             snapshots += 1
+    r.diag["fills_for_my_accounts"] = len(fills)
+    r.diag["pairs_resolved"] = len(trades)
     return {"login": session.name, "accounts": len(accounts_by_id), "fills": len(fills),
-            "fills_new": fills_new, "trades": len(trades), "trades_new": trades_new, "snapshots": snapshots, **hist}
+            "fills_new": fills_new, "trades": len(trades), "trades_new": trades_new, "snapshots": snapshots,
+            **hist, "diag": r.diag}
 
 
 FEE_CHANGE_TYPES = {"commission", "clearingfee", "exchangefee", "nfafee", "brokeragefee", "ipfee",
@@ -364,21 +397,49 @@ def _trade_day(entry: dict[str, Any], zone: ZoneInfo) -> str:
 async def _history_from_cash_log(area_id: int, r: _Reader, accounts_by_id: dict[int, dict[str, Any]],
                                  fees: dict[int, dict[str, Any]], info: dict[int, tuple[str, float]]) -> dict[str, Any]:
     """Trades + daily equity for past sessions, from ``/cashBalanceLog/list``."""
-    log = await r.list("/cashBalanceLog/list")
-    log = [e for e in log if int(e.get("accountId") or 0) in accounts_by_id]
+    raw_log = await r.list("/cashBalanceLog/list")
+    if not raw_log:
+        # Some tenants only answer per account.
+        for aid in accounts_by_id:
+            try:
+                raw_log += await r.list(f"/cashBalanceLog/deps?masterid={aid}")
+            except ImportProblem:
+                pass
+    from collections import Counter
+    r.diag["cash_log"] = {
+        "entries": len(raw_log),
+        "accounts": sorted({int(e.get("accountId") or 0) for e in raw_log})[:20],
+        "change_types": dict(Counter(str(e.get("cashChangeType") or "?") for e in raw_log).most_common(15)),
+        "with_fillPairId": sum(1 for e in raw_log if e.get("fillPairId")),
+        "with_tradeId": sum(1 for e in raw_log if e.get("tradeId")),
+        "with_fillId": sum(1 for e in raw_log if e.get("fillId")),
+        "with_delta": sum(1 for e in raw_log if e.get("delta") is not None),
+        "first_trade_date": min((_trade_day(e, tz()) for e in raw_log), default=""),
+        "last_trade_date": max((_trade_day(e, tz()) for e in raw_log), default=""),
+    }
+    log = [e for e in raw_log if int(e.get("accountId") or 0) in accounts_by_id]
+    r.diag["cash_log"]["entries_for_my_accounts"] = len(log)
     out = {"history_pairs": 0, "history_new": 0, "history_snapshots": 0, "history_error": ""}
     if not log:
         return out
     zone = tz()
+
+    def pair_ref(e: dict[str, Any]) -> int:
+        """The fill-pair id of a realised-P&L entry: ``fillPairId``, else the
+        ``tradeId`` of a FillPair-typed entry (field naming differs by tenant)."""
+        pid = int(e.get("fillPairId") or e.get("fillPairID") or 0)
+        if not pid and "fillpair" in str(e.get("cashChangeType") or "").replace("_", "").lower():
+            pid = int(e.get("tradeId") or e.get("pairId") or 0)
+        return pid
 
     # --- fees per fill and realised P&L per pair, straight from the book -------
     pair_pnl: dict[int, float] = defaultdict(float)
     pair_account: dict[int, int] = {}
     fee_by_fill: dict[int, float] = defaultdict(float)
     for e in log:
-        pid = int(e.get("fillPairId") or 0)
+        pid = pair_ref(e)
         fid = int(e.get("fillId") or 0)
-        delta = _num(e.get("delta"), 0.0)
+        delta = _num(e.get("delta"), _num(e.get("realizedPnL"), 0.0)) if pid else _num(e.get("delta"), 0.0)
         kind = str(e.get("cashChangeType") or "").replace("_", "").lower()
         if pid:
             pair_pnl[pid] += delta
@@ -387,6 +448,7 @@ async def _history_from_cash_log(area_id: int, r: _Reader, accounts_by_id: dict[
             fee_by_fill[fid] += -delta
 
     # --- pairs not processed before ---------------------------------------
+    r.diag["cash_log"]["pairs_in_book"] = len(pair_pnl)
     todo = db.journal_unseen(area_id, "fillpair", sorted(pair_pnl))[:HISTORY_MAX_PAIRS_PER_RUN]
     out["history_pairs"] = len(todo)
     trades: list[dict[str, Any]] = []
@@ -448,7 +510,7 @@ async def _history_from_cash_log(area_id: int, r: _Reader, accounts_by_id: dict[
         if not day:
             continue
         rec = by_day.setdefault((aid, day), {"realized": 0.0, "amount": None})
-        rec["realized"] += _num(e.get("delta"), 0.0) if e.get("fillPairId") else 0.0
+        rec["realized"] += _num(e.get("delta"), 0.0) if pair_ref(e) else 0.0
         if e.get("amount") is not None:
             rec["amount"] = _num(e.get("amount"))
     today_iso = datetime.now(zone).date().isoformat()
@@ -489,8 +551,10 @@ async def import_area(area_id: int, *, trigger: str = "manual", user_email: str 
                       for k in ("accounts", "fills", "fills_new", "trades", "trades_new", "snapshots", "history_pairs", "history_new", "history_snapshots")}
             errors += [f"{r.get('login')}: history: {r['history_error']}" for r in results if r.get("history_error")]
             status = "ok" if results and not errors else ("partial" if results else "error")
+            import json as _json
+            detail = _json.dumps({res.get("login", "?"): res.get("diag", {}) for res in results}, default=str)[:20000]
             rec = {"ts": started.isoformat(), "trigger": trigger, "status": status, "by": user_email,
-                   "logins": len(sessions), "error": "; ".join(errors)[:1000], **totals,
+                   "logins": len(sessions), "error": "; ".join(errors)[:1000], "detail": detail, **totals,
                    "duration_ms": round((datetime.now(timezone.utc) - started).total_seconds() * 1000)}
             db.insert_journal_import(area_id, rec)
             config.save_settings({"journal_last_import": rec["ts"]}, area_id=area_id)

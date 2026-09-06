@@ -82,7 +82,7 @@ export default {
     const moreBtn = h("button", { type: "button", class: "btn btn-sm", onClick: () => loadTrades(true) }, "Load more");
     let tradeRows = [], nextBefore = null;
 
-    const imports = dataTable({ empty: "No imports yet", compact: true, columns: [
+    const imports = dataTable({ empty: "No imports yet", compact: true, onRow: (r) => showImportDetail(r), columns: [
       { label: "When", render: (r) => fmtDateTime(r.ts) },
       { label: "Trigger", render: (r) => r.trigger + (r.by ? ` (${r.by})` : "") },
       { label: "Status", render: (r) => tag(r.status, r.status === "ok" ? "ok" : r.status === "partial" ? "warn" : "error") },
@@ -215,6 +215,20 @@ export default {
         await load();
       } catch (e) { toast(e.message, "error"); }
       finally { importBtn.disabled = false; clear(importBtn); importBtn.append(icon("download"), "Import now"); }
+    }
+
+    function showImportDetail(r) {
+      let pretty = r.detail || "";
+      try { pretty = JSON.stringify(JSON.parse(r.detail), null, 2); } catch (e) { /* plain text */ }
+      const pre = h("pre", { class: "code", style: "white-space:pre-wrap;font-size:11.5px;max-height:60vh;overflow:auto" }, pretty || "No diagnostics recorded for this run.");
+      openDrawer({ title: `Import ${fmtDateTime(r.ts)} · ${r.status}`, width: "640px",
+        body: h("div", null,
+          h("p", { class: "hint" }, `${r.trigger}${r.by ? " by " + r.by : ""} · ${r.logins} login(s), ${r.accounts} account(s) · ${r.fills} fills (${r.fills_new} new) · ${r.trades} trades (${r.trades_new} new) · ${r.history_new || 0} from history · ${r.duration_ms} ms`),
+          r.error ? h("div", { class: "callout danger" }, r.error) : null,
+          h("div", { class: "hint" }, "What each Tradovate endpoint returned (counts and column names only — no prices, ids or balances). Copy this when reporting an empty import."),
+          pre),
+        foot: h("div", { class: "form-actions" }, h("button", { type: "button", class: "btn", onClick: async () => { try { await navigator.clipboard.writeText(pretty); toast("Copied", "success"); } catch (e) { toast("Copy failed", "error"); } } }, "Copy diagnostics"),
+          h("button", { type: "button", class: "btn btn-ghost", onClick: () => closeDrawer() }, "Close")) });
     }
 
     let knownAccounts = [];

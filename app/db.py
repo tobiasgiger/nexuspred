@@ -281,7 +281,8 @@ def init() -> None:
                     snapshots INTEGER NOT NULL DEFAULT 0,
                     duration_ms INTEGER NOT NULL DEFAULT 0,
                     error TEXT NOT NULL DEFAULT '',
-                    history_new INTEGER NOT NULL DEFAULT 0
+                    history_new INTEGER NOT NULL DEFAULT 0,
+                    detail TEXT NOT NULL DEFAULT ''
                 );
                 CREATE TABLE IF NOT EXISTS subscriptions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -304,6 +305,8 @@ def init() -> None:
             imp_cols = {r["name"] for r in c.execute("PRAGMA table_info(journal_imports)").fetchall()}
             if imp_cols and "history_new" not in imp_cols:
                 c.execute("ALTER TABLE journal_imports ADD COLUMN history_new INTEGER NOT NULL DEFAULT 0")
+            if imp_cols and "detail" not in imp_cols:
+                c.execute("ALTER TABLE journal_imports ADD COLUMN detail TEXT NOT NULL DEFAULT ''")
             area_cols = {r["name"] for r in c.execute("PRAGMA table_info(areas)").fetchall()}
             if "features" not in area_cols:
                 c.execute("ALTER TABLE areas ADD COLUMN features TEXT NOT NULL DEFAULT '{}'")
@@ -1152,12 +1155,12 @@ def insert_journal_import(area_id: int, rec: dict[str, Any]) -> int:
     init()
     with _connect() as c:
         cur = c.execute(
-            "INSERT INTO journal_imports(area_id,ts,trigger,status,by,logins,accounts,fills,fills_new,trades,trades_new,snapshots,duration_ms,error,history_new) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO journal_imports(area_id,ts,trigger,status,by,logins,accounts,fills,fills_new,trades,trades_new,snapshots,duration_ms,error,history_new,detail) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (area_id, rec.get("ts") or _now(), rec.get("trigger", ""), rec.get("status", ""), rec.get("by", ""),
              rec.get("logins", 0), rec.get("accounts", 0), rec.get("fills", 0), rec.get("fills_new", 0),
              rec.get("trades", 0), rec.get("trades_new", 0), rec.get("snapshots", 0), rec.get("duration_ms", 0),
-             rec.get("error", ""), rec.get("history_new", 0)))
+             rec.get("error", ""), rec.get("history_new", 0), rec.get("detail", "")))
         return int(cur.lastrowid or 0)
 
 

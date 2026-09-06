@@ -4,6 +4,14 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.9
+- **Import diagnostics.** Every journal import now records what each Tradovate endpoint
+  returned (row counts, column names, cash-log change types, date span — never prices,
+  ids or balances); click a row in the Imports table to see it and copy it. Accounts
+  saved without ids (before *Connect & Verify*) are resolved via `/account/list`; the
+  cash-balance log is also tried per account (`/cashBalanceLog/deps`) and accepts
+  `tradeId` on FillPair entries as the pair reference.
+
 ## 5.0.0-alpha.8
 - **Journal history straight from Tradovate — no export needed.** Every import (daily
   and *Import now*) now walks the account's **cash-balance log**

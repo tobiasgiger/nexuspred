@@ -315,3 +315,30 @@ async def test_pairs_with_fills_outside_the_session_list(admin, monkeypatch):
     rec = await journal.import_area(1)
     assert rec["trades_new"] == 3 and "/fill/items" in sess.calls
     assert [t["symbol"] for t in db.list_journal_trades(1)][0] == "MESU6"
+
+
+async def test_import_records_diagnostics_and_resolves_account_ids(admin, monkeypatch):
+    sess = FakeSession(history=True, accounts=[{"spec": "DEMO11", "enabled": True}])  # saved without ids
+    sess.data["/account/list"] = [{"id": 11, "name": "DEMO11", "active": True}]
+    _install(monkeypatch, sess)
+    rec = await journal.import_area(1)
+    assert rec["trades_new"] == 2 and rec["history_new"] == 2 and "/account/list" in sess.calls
+    import json
+    diag = json.loads(db.list_journal_imports(1)[0]["detail"])["Login A"]
+    assert diag["accounts"] == [{"id": 11, "spec": "DEMO11"}]
+    assert diag["/fill/list"]["count"] == 5 and "price" in diag["/fill/list"]["columns"]
+    assert diag["cash_log"]["entries"] == 6 and diag["cash_log"]["entries_for_my_accounts"] == 5
+    assert diag["cash_log"]["change_types"]["FillPair"] == 4 and diag["cash_log"]["pairs_in_book"] == 3
+    assert diag["cash_log"]["first_trade_date"] == "2026-08-20"
+    r = await journal.import_area(1)
+    assert r["status"] == "ok"
+
+
+async def test_cash_log_with_tradeId_instead_of_fillPairId(admin, monkeypatch):
+    sess = FakeSession(history=True)
+    for e in sess.data["/cashBalanceLog/list"]:
+        if "fillPairId" in e:
+            e["tradeId"] = e.pop("fillPairId")
+    _install(monkeypatch, sess)
+    rec = await journal.import_area(1)
+    assert rec["history_new"] == 2
