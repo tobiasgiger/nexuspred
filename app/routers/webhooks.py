@@ -198,7 +198,7 @@ async def api_test_webhook(webhook_id: str, request: Request, subscribers: bool 
     webhooks, i = _webhook_or_404(webhook_id)
     wh = webhooks[i]
     payload = await request.json()
-    state.log_signal(payload, result="test")
+    state.log_signal(payload, result="test", webhook=wh.get("name", ""))
     try:
         result = await signals.process(payload, wh)
     except (signals.SignalError, TradovateError) as exc:

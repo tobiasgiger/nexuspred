@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -142,6 +143,29 @@ async def api_orders() -> list[dict[str, Any]]:
 @router.get("/api/events")
 async def api_events() -> list[dict[str, Any]]:
     return state.recent_events()
+
+
+@router.get("/api/history/signals")
+async def api_history_signals(limit: int = 100, before: int | None = None,
+                              result: str = "", q: str = "") -> dict[str, Any]:
+    """Persisted signals, newest first, cursor-paginated (``next_before``)."""
+    return db.list_signals(context.get_area(), limit=limit, before=before,
+                           result=result[:50], q=q[:100])
+
+
+@router.get("/api/history/orders")
+async def api_history_orders(limit: int = 100, before: int | None = None,
+                             symbol: str = "", account: str = "") -> dict[str, Any]:
+    return db.list_orders(context.get_area(), limit=limit, before=before,
+                          symbol=symbol[:40], account=account[:120])
+
+
+@router.get("/api/history/stats")
+async def api_history_stats(days: int = 7) -> dict[str, Any]:
+    """Signal outcomes + order counts per day for the last ``days`` days."""
+    days = max(1, min(int(days), 365))
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    return {"days_window": days, **db.history_stats(context.get_area(), since)}
 
 
 @router.get("/api/stream")

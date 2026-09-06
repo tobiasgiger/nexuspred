@@ -5,6 +5,15 @@ Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
 ## 5.0.0-alpha.5
+- **Signals and orders are persisted** (`signal_log` / `order_log` in SQLite,
+  `app/history.py`). A deploy or restart no longer wipes the record: the live 200-entry
+  buffers are refilled from the tables at startup, writes go through a background writer
+  (never on the request path), rows older than `NEXUSPRED_HISTORY_DAYS` (default 90)
+  are pruned daily. Signal entries now carry the webhook name. New endpoints
+  `GET /api/history/signals` and `/api/history/orders` (cursor-paginated, filters) and
+  `/api/history/stats?days=7` (per-day received / executed / errors / skipped / orders).
+  Logs page: 7-day summary, **Load older signals** (result + text filter) and an **Order
+  history** table.
 - **Contract-rollover warning** (`app/rollover.py`). Once a day the bridge parses every
   dated contract in the symbol map (`MNQU6`, `ESZ26`, …), estimates its roll date per
   product family (index: 3rd-Friday expiry; FX: 2 business days before the 3rd

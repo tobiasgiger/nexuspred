@@ -13,7 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, config, context, crypto, db, health, http, security, state
+from . import auth, config, context, crypto, db, health, history, http, security, state
 from .discord_signals.routes import router as discord_router
 from .routers import ROUTERS
 from .web import BASE_DIR, is_auth_exempt, wants_html
@@ -40,9 +40,29 @@ async def _startup() -> None:
                                     "environment so the key lives outside the DB file.")
     except Exception as exc:  # noqa: BLE001 - never block startup on the migration
         state.log_event("warn", f"secret encryption pass failed: {exc}")
+    # Durable signal/order history: prune, refill the live buffers, start the writer.
+    try:
+        pruned = history.prune()
+        loaded = history.hydrate(db.all_area_ids())
+        if loaded or pruned:
+            state.log_event("info", f"History: {loaded} signal/order rows restored"
+                                    + (f", {pruned} expired rows pruned" if pruned else ""))
+    except Exception as exc:  # noqa: BLE001
+        state.log_event("warn", f"history restore failed: {exc}")
+    history.start()
     state.log_event("info", f"Bridge started (v{config.get_version()})")
     _loop_tasks[:] = [asyncio.create_task(health.health_loop(), name="health-loop"),
-                      asyncio.create_task(health.discord_health_loop(), name="discord-health-loop")]
+                      asyncio.create_task(health.discord_health_loop(), name="discord-health-loop"),
+                      asyncio.create_task(_history_prune_loop(), name="history-prune-loop")]
+
+
+async def _history_prune_loop() -> None:
+    while True:
+        await asyncio.sleep(24 * 3600)
+        try:
+            await asyncio.to_thread(history.prune)
+        except Exception:  # noqa: BLE001
+            pass
     health.start_discord_listeners()
 
 
@@ -56,6 +76,7 @@ async def _shutdown() -> None:
     _loop_tasks.clear()
     await health.stop_discord_listeners()
     await http.aclose_all()
+    await asyncio.to_thread(history.stop)  # drain queued history writes
 
 
 @asynccontextmanager

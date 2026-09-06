@@ -157,21 +157,37 @@ def rollover_warnings(area_id: int | None = None) -> list[dict[str, Any]]:
 
 
 # ------------------------------------------------------------- rolling logs
-def log_signal(payload: dict[str, Any], result: str = "received") -> dict[str, Any]:
-    entry = {"ts": _now(), "payload": payload, "result": result}
-    st = _st()
+def log_signal(payload: dict[str, Any], result: str = "received", webhook: str = "") -> dict[str, Any]:
+    from . import history
+    entry = {"ts": _now(), "payload": payload, "result": result, "webhook": webhook or ""}
+    aid = context.get_area()
+    st = _st_for(aid)
     with _lock:
         st.signals.appendleft(entry)
     _broadcast(st, {"kind": "signal", "data": entry})
+    history.record_signal(aid, entry)
     return entry
 
 
 def log_order(order: dict[str, Any]) -> None:
+    from . import history
     entry = {"ts": _now(), **order}
-    st = _st()
+    aid = context.get_area()
+    st = _st_for(aid)
     with _lock:
         st.orders.appendleft(entry)
     _broadcast(st, {"kind": "order", "data": entry})
+    history.record_order(aid, entry)
+
+
+def hydrate(area_id: int, *, signals: list[dict[str, Any]], orders: list[dict[str, Any]]) -> None:
+    """Seed an area's ring buffers from persisted history (newest first)."""
+    st = _st_for(area_id)
+    with _lock:
+        st.signals.clear()
+        st.signals.extend(signals[:_MAX])
+        st.orders.clear()
+        st.orders.extend(orders[:_MAX])
 
 
 def log_event(level: str, message: str, **extra: Any) -> None:

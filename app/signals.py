@@ -145,7 +145,7 @@ def accept(payload: dict[str, Any], webhook: dict[str, Any], *, forward: bool = 
     background (the caller's area context is inherited by the task). Shared by
     the TradingView ingress and the in-process Discord dispatch. A published
     webhook's signal is also forwarded to its marketplace subscribers."""
-    state.log_signal(payload, result="received")
+    state.log_signal(payload, result="received", webhook=webhook.get("name", ""))
     _spawn(process_background(payload, webhook))
     if forward:
         forward_to_subscribers(payload, webhook)
@@ -166,7 +166,7 @@ def forward_to_subscribers(payload: dict[str, Any], webhook: dict[str, Any],
     for sub in subs:
         view = marketplace.subscription_view(webhook, sub, aid)
         with context.use_area(sub["area_id"]):
-            state.log_signal(dict(payload), result="received")
+            state.log_signal(dict(payload), result="received", webhook=view.get("name", ""))
             _spawn(process_background(dict(payload), view, trusted=True))
     if subs:
         state.log_event("info", f"[{webhook.get('name', '?')}] forwarded to {len(subs)} subscriber(s)")
@@ -179,14 +179,14 @@ async def process_background(payload: dict[str, Any], webhook: dict[str, Any], *
     name = webhook.get("name", "?")
     try:
         result = await process(payload, webhook, trusted=trusted)
-        state.log_signal(payload, result=result.get("status", "ok"))
+        state.log_signal(payload, result=result.get("status", "ok"), webhook=name)
     except (SignalError, TradovateError) as exc:
         state.log_event("error", f"Signal error: {exc}", payload=payload)
-        state.log_signal(payload, result=f"error: {exc}")
+        state.log_signal(payload, result=f"error: {exc}", webhook=name)
         await alerts.webhook_failed(name, str(exc))
     except Exception as exc:  # noqa: BLE001
         state.log_event("error", f"Signal failed: {exc}", payload=payload)
-        state.log_signal(payload, result=f"error: {exc}")
+        state.log_signal(payload, result=f"error: {exc}", webhook=name)
         await alerts.webhook_failed(name, str(exc))
 
 
