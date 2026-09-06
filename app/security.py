@@ -239,7 +239,12 @@ class BodyLimitMiddleware:
 
         try:
             await self.app(scope, guarded_receive, guarded_send)
-        except _BodyTooLarge:
+        except Exception as exc:
+            # Starlette's BaseHTTPMiddleware runs ``receive`` inside a task group,
+            # so the marker may arrive wrapped in an ExceptionGroup (Python 3.9
+            # compatible walk instead of ``except*``).
+            if not _contains(exc, _BodyTooLarge):
+                raise
             if not responded:
                 await self._reject(send)
 
@@ -254,6 +259,13 @@ class BodyLimitMiddleware:
 
 class _BodyTooLarge(Exception):
     pass
+
+
+def _contains(exc: BaseException, cls: type) -> bool:
+    if isinstance(exc, cls):
+        return True
+    subs = getattr(exc, "exceptions", None)  # ExceptionGroup (3.11+) / anyio backport
+    return bool(subs) and any(_contains(e, cls) for e in subs)
 
 
 # ------------------------------------------------------------- SSRF guard

@@ -4,6 +4,13 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.5
+- **CI pipeline** (`.github/workflows/ci.yml`): every push and pull request runs the
+  test suite on Python 3.11 and 3.12 (deprecation warnings are errors), byte-compiles
+  the app, syntax-checks every ES module and runs `pip-audit --strict` against the
+  pinned requirements; the audit also runs weekly. **Dependabot** opens grouped
+  weekly PRs for the web stack and monthly ones for the actions.
+
 ## 5.0.0-alpha.4
 Security hardening release (no functional changes to signals or trading).
 - **Session cookies are bound to the password hash**: changing or resetting a
@@ -37,10 +44,11 @@ Security hardening release (no functional changes to signals or trading).
   `render.yaml`): the dashboard shows webhook URLs on this origin whichever hostname it
   was opened on (`/api/status` → `public_url`), and emailed invite / reset links are built
   on it instead of the request's `Host` header.
-- **Dependencies** bumped to CVE-fixed releases: FastAPI 0.115.12 / Starlette 0.46
-  (CVE-2024-47874 multipart DoS), python-multipart 0.0.20 (CVE-2024-53981), Jinja2 3.1.6
-  (CVE-2024-56201, CVE-2024-56326, CVE-2025-27516), httpx 0.28.1, pydantic 2.10.6,
-  uvicorn 0.34.3.
+- **Dependencies** bumped to the current releases (all with a clean `pip-audit`):
+  FastAPI 0.141.1 / Starlette 1.6.0, python-multipart 0.0.32, Jinja2 3.1.6, httpx 0.28.1,
+  pydantic 2.13.5, uvicorn 0.52.4. The previous pins carried multiple published
+  advisories (multipart-form DoS in Starlette 0.37 and python-multipart 0.0.9, Jinja2
+  sandbox escapes).
 - Tests: 32 new (`tests/test_security.py`), 197 total.
 
 ## 5.0.0-alpha.3

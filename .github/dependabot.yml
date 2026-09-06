@@ -1,0 +1,15 @@
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      web-stack:
+        patterns: ["fastapi", "starlette", "uvicorn", "httpx", "pydantic", "jinja2", "python-multipart"]
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly

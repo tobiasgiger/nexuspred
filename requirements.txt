@@ -1,9 +1,9 @@
-fastapi==0.115.12
-uvicorn[standard]==0.34.3
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
 httpx==0.28.1
-pydantic==2.10.6
+pydantic==2.13.5
 jinja2==3.1.6
-python-multipart==0.0.20
+python-multipart==0.0.32
 packaging>=23.2
 # Optional: `pip install h2` enables HTTP/2 for the pooled Tradovate client
 # (app/http.py detects it; without it the pool uses HTTP/1.1 keep-alive).
