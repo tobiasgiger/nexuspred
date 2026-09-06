@@ -4,7 +4,7 @@ httpx==0.28.1
 pydantic==2.13.5
 jinja2==3.1.6
 python-multipart==0.0.32
-packaging>=23.2
+packaging>=26.3
 tzdata>=2024.1                # zoneinfo database on Windows (journal schedule / buckets)
 cryptography>=44.0.0        # Fernet: secrets encrypted at rest (app/crypto.py)
 # Web Push (VAPID) notifications to the installed dashboard app.
