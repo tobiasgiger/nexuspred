@@ -9,4 +9,4 @@ packaging>=23.2
 # (app/http.py detects it; without it the pool uses HTTP/1.1 keep-alive).
 # Discord signal listener (self-bot). Imports as `discord`; the module imports
 # it lazily, so the bridge still boots if this fails to install.
-discord.py-self>=2.0.0
+discord.py-self>=2.1.0
