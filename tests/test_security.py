@@ -264,3 +264,15 @@ async def test_public_url_pins_links_and_status(client, admin, monkeypatch):
                           headers={"host": "evil.example", "x-forwarded-host": "evil.example"})
     assert r.json()["url"].startswith("https://bridge.example.com/register?code=")
     assert (await client.get("/api/status")).json()["public_url"] == "https://bridge.example.com"
+
+
+# ------------------------------------------------------------------- PWA
+async def test_pwa_manifest_and_icons(anon_client, admin):
+    r = await anon_client.get("/static/manifest.webmanifest")
+    assert r.status_code == 200
+    m = r.json()
+    assert m["display"] == "standalone" and m["start_url"].startswith("/")
+    for icon in m["icons"]:
+        assert (await anon_client.get(icon["src"])).status_code == 200
+    page = await anon_client.get("/login")
+    assert 'rel="manifest"' in page.text and "apple-touch-icon" in page.text

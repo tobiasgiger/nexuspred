@@ -5,6 +5,11 @@ Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
 ## 5.0.0-alpha.5
+- **Installable as an app (PWA).** Web-app manifest with icons (192/512, maskable,
+  Apple touch icon), theme colour per light/dark scheme and standalone display, so the
+  dashboard installs on phones and desktops from the browser menu ("Add to Home Screen"
+  / "Install"). Shortcuts to Overview, Webhooks and Logs. No service worker on purpose —
+  the dashboard always loads the freshly deployed modules.
 - **CI pipeline** (`.github/workflows/ci.yml`): every push and pull request runs the
   test suite on Python 3.11 and 3.12 (deprecation warnings are errors), byte-compiles
   the app, syntax-checks every ES module and runs `pip-audit --strict` against the

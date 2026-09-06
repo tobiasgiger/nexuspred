@@ -1,0 +1,25 @@
+{
+  "name": "Fluxbridge",
+  "short_name": "Fluxbridge",
+  "description": "TradingView → Tradovate webhook bridge: live signals, orders and the emergency Flatten-all button.",
+  "id": "/",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0b0e14",
+  "theme_color": "#0b0e14",
+  "lang": "en",
+  "categories": ["finance", "productivity"],
+  "icons": [
+    { "src": "/static/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/static/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/static/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/static/icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ],
+  "shortcuts": [
+    { "name": "Overview", "url": "/#/" },
+    { "name": "Webhooks", "url": "/#/webhooks" },
+    { "name": "Logs", "url": "/#/logs" }
+  ]
+}
