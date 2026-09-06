@@ -1025,6 +1025,31 @@ def upsert_journal_trade(area_id: int, t: dict[str, Any]) -> int:
         return int(cur.rowcount or 0)
 
 
+def find_similar_journal_trade(area_id: int, t: dict[str, Any], tolerance_s: int = 5) -> Optional[int]:
+    """Id of an already-stored trade that is the same round trip under a key of a
+    *different family* (``pair:`` = fill ids from the API or a Performance export,
+    ``ord:``/``fill:``/``fifo:`` = FIFO-paired): same account, symbol, side, qty,
+    entry/exit price and an exit within ``tolerance_s`` seconds. Same-family
+    trades are keyed exactly, so two genuinely identical split fills (two 1-lot
+    pairs at the same price and second) are never collapsed."""
+    init()
+    try:
+        exit_dt = datetime.fromisoformat(str(t.get("exit_ts")).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    lo = (exit_dt - timedelta(seconds=tolerance_s)).isoformat()
+    hi = (exit_dt + timedelta(seconds=tolerance_s)).isoformat()
+    family = str(t.get("pair_id", "")).split(":", 1)[0] + ":"
+    with _connect() as c:
+        r = c.execute(
+            "SELECT id FROM journal_trades WHERE area_id=? AND account_id=? AND symbol=? AND side=? AND qty=? "
+            "AND ABS(entry_price-?)<1e-6 AND ABS(exit_price-?)<1e-6 AND exit_ts BETWEEN ? AND ? "
+            "AND substr(pair_id, 1, instr(pair_id, ':')) <> ? LIMIT 1",
+            (area_id, t.get("account_id", 0), t.get("symbol", ""), t.get("side", ""), t.get("qty", 0),
+             float(t.get("entry_price") or 0), float(t.get("exit_price") or 0), lo, hi, family)).fetchone()
+    return int(r["id"]) if r else None
+
+
 def _trade_row(r: sqlite3.Row) -> dict[str, Any]:
     d = dict(r)
     d["tags"] = [x for x in (d.get("tags") or "").split(",") if x]

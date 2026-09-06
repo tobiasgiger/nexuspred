@@ -27,6 +27,10 @@ from fastapi import Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 
 MAX_BODY_BYTES = 256 * 1024  # generous for any alert / settings payload
+# Paths that legitimately carry bigger bodies (file uploads).
+BODY_LIMITS: dict[str, int] = {
+    "/api/journal/import-csv": 16 * 1024 * 1024,
+}
 
 # --------------------------------------------------------------- client IP
 def client_ip(request: Request) -> str:
@@ -211,10 +215,11 @@ class BodyLimitMiddleware:
             await self.app(scope, receive, send)
             return
         headers = dict(scope.get("headers") or [])
+        limit = BODY_LIMITS.get(scope.get("path", ""), self.max_bytes)
         declared = headers.get(b"content-length")
         if declared is not None:
             try:
-                too_big = int(declared) > self.max_bytes
+                too_big = int(declared) > limit
             except ValueError:
                 too_big = True
             if too_big:
@@ -222,7 +227,6 @@ class BodyLimitMiddleware:
                 return
 
         seen = 0
-        limit = self.max_bytes
         responded = False
 
         async def guarded_receive() -> dict[str, Any]:

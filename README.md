@@ -142,10 +142,14 @@ monthly P&L, equity curve, month calendar, breakdowns by symbol, account, weekda
 hour, plus win rate, profit factor, expectancy and max drawdown. Every chart has a table
 view; every trade takes a note and tags; the filtered set exports as CSV.
 
-> Tradovate's REST lists cover the current trading session, so a day whose import did
-> not run (bridge offline at import time) cannot be fetched later — the scheduled
-> import is the source of continuity. Trades placed through the simulator are not
-> journaled (they never reach Tradovate).
+**Past days.** Tradovate's REST lists cover the current trading session only, so
+history — everything before the bridge existed, or a day whose import did not run — is
+back-filled from Tradovate's own exports: in the platform open **Reports →
+Performance**, choose the account and date range, export the CSV and load it with
+**Import CSV** on the Journal page (Orders exports work too and are paired FIFO). Rows
+are keyed by their fill ids, so a trade that also arrived via the API is never
+duplicated. Trades placed through the simulator are not journaled (they never reach
+Tradovate).
 
 ### Security hardening (built in)
 
@@ -539,6 +543,7 @@ the dashboard **Update** button works.
 | `GET`  | `/api/journal/trades` | Imported round-trip trades (filters as above, `limit`, `before`) |
 | `PUT`  | `/api/journal/trades/{id}` | Set a trade's `note` / `tags` |
 | `POST` | `/api/journal/import` | Import fills / trades / snapshots from Tradovate now |
+| `POST` | `/api/journal/import-csv` | Back-fill from a Tradovate Performance / Orders / Fills CSV export (multipart `file`, `account`, `timezone`, `fee_per_side`) |
 | `GET`  | `/api/journal/imports` | Import history |
 | `GET`  | `/api/journal/snapshots` | Daily account cash / P&L snapshots |
 | `GET`  | `/api/journal/export.csv` | CSV export of the filtered trades |

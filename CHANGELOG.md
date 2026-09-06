@@ -4,6 +4,19 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.7
+- **Journal back-fill from Tradovate CSV exports** (`app/journal_csv.py`, **Import CSV**
+  on the Journal page, `POST /api/journal/import-csv`). Tradovate's API only exposes the
+  current session; past days come from the platform's own reports (Reports →
+  Performance / Orders → Export). Performance exports (one row per round trip, with
+  P&L) are keyed by their fill ids exactly like the API import, so a trade never appears
+  twice; Orders / Fills exports are paired FIFO and matched fuzzily (account, symbol,
+  side, qty, prices, exit within 5 s) against API-imported trades. Pick the account the
+  export belongs to (a configured Tradovate account merges with API data; any other
+  label becomes a manual account), the timezone the platform displayed, and an optional
+  flat fee per contract and side. Uploads up to 16 MB. Value-per-point table for common
+  CME products when the broker's product record is unavailable.
+
 ## 5.0.0-alpha.6
 - **Trading journal** (new **Journal** page, `app/journal.py`). Executed trades are
   imported from every enabled Tradovate login — fills, Tradovate's own fill pairs (FIFO

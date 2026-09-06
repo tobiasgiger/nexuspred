@@ -9,7 +9,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
-from .. import config, context, db, journal
+from .. import config, context, db, journal, journal_csv
 
 router = APIRouter(prefix="/api/journal", tags=["journal"])
 
@@ -51,6 +51,8 @@ async def api_overview(range: str = "month", frm: str = "", to: str = "", accoun
         "stats": journal.stats(trades, zone),
         "summary": journal.summary(trades, period, zone),
         "accounts": db.journal_accounts(context.get_area()),
+        "trade_accounts": [a.get("spec") or a.get("account_spec") or "" for t in (s.get("token_accounts") or [])
+                           for a in (t.get("accounts") or []) if a.get("spec") or a.get("account_spec")],
         "symbols": db.journal_symbols(context.get_area()),
         "last_import": s.get("journal_last_import") or "",
         "schedule": {"enabled": bool(s.get("journal_auto_import", True)),
@@ -118,6 +120,55 @@ async def api_import(request: Request) -> dict[str, Any]:
     if rec.get("status") == "running":
         raise HTTPException(status_code=409, detail=rec.get("detail"))
     return rec
+
+
+def _account_from_label(label: str) -> dict[str, Any]:
+    """Resolve the account the user picked for a CSV: a configured Tradovate
+    trade account (by spec) keeps its id/environment; anything else becomes a
+    manual account named by the label."""
+    label = (label or "").strip()[:120]
+    if not label:
+        raise HTTPException(status_code=400, detail="Pick or name the account the export belongs to")
+    for idx, t in enumerate(config.load_settings().get("token_accounts") or []):
+        for a in (t.get("accounts") or []):
+            spec = a.get("spec") or a.get("account_spec") or ""
+            if spec == label:
+                return {"id": int(a.get("id") or a.get("account_id") or 0), "spec": spec, "name": spec,
+                        "environment": t.get("environment") or "demo"}
+    # Manual account: a stable synthetic id derived from the label (negative to
+    # never collide with Tradovate ids).
+    import zlib
+    return {"id": -(zlib.crc32(label.lower().encode()) % 1_000_000_000 + 1), "spec": label, "name": label,
+            "environment": "csv"}
+
+
+@router.post("/import-csv")
+async def api_import_csv(request: Request) -> dict[str, Any]:
+    """Back-fill from a Tradovate CSV export (multipart: ``file``, ``account``,
+    optional ``timezone`` and ``fee_per_side``)."""
+    form = await request.form()
+    upload = form.get("file")
+    if upload is None or not hasattr(upload, "read"):
+        raise HTTPException(status_code=400, detail="Attach the CSV export as 'file'")
+    raw = await upload.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="The file is empty")
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1")
+    account = _account_from_label(str(form.get("account") or ""))
+    try:
+        fee = float(str(form.get("fee_per_side") or "0").replace(",", "."))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="fee_per_side must be a number") from exc
+    user = getattr(request.state, "user", None) or {}
+    try:
+        return journal_csv.import_csv(context.get_area(), text, account=account, tz_name=str(form.get("timezone") or ""),
+                                      fee_per_side=max(0.0, fee), user_email=user.get("email", ""),
+                                      filename=getattr(upload, "filename", "") or "")
+    except journal_csv.CsvError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/imports")

@@ -11,6 +11,9 @@ Tradovate session:
   symbol and the dollar value per point,
 * ``/cashBalance/getcashbalancesnapshot`` per trade account (daily equity).
 
+Past days (before the bridge existed, or a day whose import didn't run) are
+back-filled from Tradovate's own CSV exports — see :mod:`app.journal_csv`.
+
 Each fill pair becomes one **round-trip trade** (``journal_trades``): side, qty,
 entry/exit price & time, points, gross P&L, fees, net P&L. When the API offers no
 pairs, the fills are paired FIFO per account and contract instead. Everything is
@@ -35,6 +38,25 @@ from . import config, context, db, state
 
 FEE_KEYS = ("commission", "clearingFee", "exchangeFee", "nfaFee", "brokerageFee",
             "ipFee", "orderRoutingFee")
+
+# Dollar value of one full point per contract — used when the product record is
+# not available (CSV back-fill, product lookup failure). Unknown roots → 1.0
+# (P&L then equals points × qty; the trade still records correctly and the
+# multiplier can be fixed later).
+VALUE_PER_POINT: dict[str, float] = {
+    "ES": 50, "MES": 5, "NQ": 20, "MNQ": 2, "RTY": 50, "M2K": 5, "YM": 5, "MYM": 0.5, "NKD": 5, "EMD": 100,
+    "GC": 100, "MGC": 10, "SI": 5000, "SIL": 1000, "HG": 25000, "MHG": 2500, "PL": 50, "PA": 100,
+    "CL": 1000, "MCL": 100, "QM": 500, "NG": 10000, "QG": 2500, "MNG": 1000, "RB": 42000, "HO": 42000, "BZ": 1000,
+    "ZC": 50, "ZS": 50, "ZW": 50, "ZM": 100, "ZL": 600, "ZO": 50, "KE": 50, "XC": 10, "XK": 10, "XW": 10,
+    "ZB": 1000, "ZN": 1000, "ZF": 1000, "ZT": 2000, "UB": 1000, "TN": 1000, "ZQ": 4167, "SR3": 2500,
+    "6E": 125000, "6J": 12500000, "6B": 62500, "6A": 100000, "6C": 100000, "6S": 125000, "6N": 100000, "6M": 500000,
+    "M6E": 12500, "M6A": 10000, "M6B": 6250, "E7": 62500, "J7": 6250000,
+    "BTC": 5, "MBT": 0.1, "ETH": 50, "MET": 0.1,
+}
+
+
+def value_per_point(root: str) -> float:
+    return float(VALUE_PER_POINT.get((root or "").upper(), 1.0))
 
 
 # ------------------------------------------------------------------ helpers
@@ -182,7 +204,9 @@ async def _contract_info(r: _Reader, contract_ids: list[int]) -> dict[int, tuple
     for cid, c in contracts.items():
         mat = maturities.get(int(c.get("contractMaturityId") or 0), {})
         prod = products.get(int(mat.get("productId") or 0), {})
-        out[cid] = (str(c.get("name") or cid), _num(prod.get("valuePerPoint"), 1.0) or 1.0)
+        name = str(c.get("name") or cid)
+        vpp = _num(prod.get("valuePerPoint"), 0.0) or value_per_point(_root(name))
+        out[cid] = (name, vpp)
     return out
 
 
@@ -251,7 +275,7 @@ async def import_session(area_id: int, session: Any, *, today: Optional[date] = 
         cid = int(buy.get("contractId") or positions.get(int(p.get("positionId") or 0), {}).get("contractId") or 0)
         sym, vpp = info.get(cid, (str(cid), 1.0))
         trades.append(build_trade(
-            pair_id=f"tv:{p.get('id')}", buy=buy, sell=sell, qty=int(_num(p.get("qty"), 0) or 0),
+            pair_id=f"pair:{buy['id']}:{sell['id']}", buy=buy, sell=sell, qty=int(_num(p.get("qty"), 0) or 0),
             buy_price=_num(p.get("buyPrice"), _num(buy.get("price"))),
             sell_price=_num(p.get("sellPrice"), _num(sell.get("price"))),
             account=acct, symbol=sym, value_per_point=vpp, fees=fees, source="fillpair"))

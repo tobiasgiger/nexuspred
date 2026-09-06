@@ -44,6 +44,7 @@ export default {
     const sideSel = h("select", { class: "input-sm", onChange: (e) => { f.side = e.target.value; load(); } },
       h("option", { value: "" }, "Long + short"), h("option", { value: "long" }, "Long only"), h("option", { value: "short" }, "Short only"));
     const importBtn = h("button", { type: "button", class: "btn btn-primary", onClick: importNow }, icon("download"), "Import now");
+    const csvBtn = h("button", { type: "button", class: "btn", onClick: () => openCsvImport() }, icon("inbox"), "Import CSV");
     const importInfo = h("span", { class: "muted", style: "font-size:12px" }, "");
     const exportLink = h("a", { class: "btn btn-ghost btn-sm", href: "#", onClick: (e) => { e.preventDefault(); window.open(`/api/journal/export.csv?${qs()}`, "_blank"); } }, icon("external"), "CSV");
 
@@ -144,6 +145,8 @@ export default {
       fillOptions(symbolSel, ov.symbols.map((s) => [s, s]), f.symbol);
       importInfo.textContent = (ov.last_import ? `Last import ${fmtDateTime(ov.last_import)}` : "Never imported") +
         (ov.schedule.enabled ? ` · daily at ${ov.schedule.time} ${ov.schedule.timezone}` : " · auto-import off");
+      importInfo.dataset.tz = ov.schedule.timezone;
+      knownAccounts = [...new Set([...(ov.accounts || []).map((a) => a.account_spec || a.account_name), ...(ov.trade_accounts || [])].filter(Boolean))];
     }
 
     function bucketTable(buckets) {
@@ -213,6 +216,48 @@ export default {
       finally { importBtn.disabled = false; clear(importBtn); importBtn.append(icon("download"), "Import now"); }
     }
 
+    let knownAccounts = [];
+    function openCsvImport() {
+      const file = h("input", { type: "file", accept: ".csv,text/csv", class: "input" });
+      const accountInput = h("input", { class: "input", list: "journal-accounts", placeholder: "e.g. DEMO12345 or Apex 50k", value: knownAccounts[0] || "" });
+      const datalist = h("datalist", { id: "journal-accounts" }, knownAccounts.map((a) => h("option", { value: a })));
+      const tzInput = h("input", { class: "input", placeholder: "Europe/Zurich", value: (importInfo.dataset.tz || "") });
+      const feeInput = h("input", { class: "input", type: "number", step: "0.01", min: "0", value: "0", style: "max-width:140px" });
+      const result = h("div", { class: "muted", style: "font-size:12.5px;white-space:pre-wrap" });
+      const go = h("button", { type: "button", class: "btn btn-primary", onClick: async () => {
+        if (!file.files || !file.files[0]) { toast("Choose a CSV file first", "error"); return; }
+        go.disabled = true; go.textContent = "Importing…";
+        try {
+          const fd = new FormData();
+          fd.append("file", file.files[0]);
+          fd.append("account", accountInput.value.trim());
+          fd.append("timezone", tzInput.value.trim());
+          fd.append("fee_per_side", feeInput.value || "0");
+          const res = await fetch("/api/journal/import-csv", { method: "POST", body: fd, credentials: "same-origin" });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.detail || res.statusText);
+          result.textContent = `${data.format} export: ${data.rows ?? data.fills} rows → ${data.trades} trades, ${data.trades_new} new, ${data.duplicates} already known, ${data.skipped} rows skipped.`
+            + (data.skipped_rows?.length ? "\n" + data.skipped_rows.join("\n") : "");
+          toast(`${data.trades_new} new trade(s) imported`, "success");
+          await load();
+        } catch (e) { toast(e.message, "error"); result.textContent = e.message; }
+        finally { go.disabled = false; go.textContent = "Import file"; }
+      } }, "Import file");
+      openDrawer({ title: "Import a Tradovate CSV export", width: "560px",
+        body: h("div", null,
+          h("p", { class: "hint" }, "Tradovate's API only exposes the current session, so past days come from the platform's own reports: in Tradovate open ",
+            h("strong", null, "Reports → Performance"), " (best: one row per round trip with P&L), select the account and date range, and export the CSV. ",
+            h("strong", null, "Orders"), " exports (filled orders) are paired FIFO instead. Trades already imported via the API are recognised and skipped."),
+          h("div", { class: "field" }, h("label", null, "CSV file"), file),
+          h("div", { class: "field" }, h("label", null, "Account the export belongs to"), accountInput, datalist,
+            h("div", { class: "field-hint" }, "Use the Tradovate account name (spec) to merge with API imports; any other label creates a separate manual account.")),
+          h("div", { class: "grid grid-2" },
+            h("div", { class: "field" }, h("label", null, "Timestamps are in timezone"), tzInput, h("div", { class: "field-hint" }, "The timezone the platform displayed when exporting; empty = journal timezone.")),
+            h("div", { class: "field" }, h("label", null, "Fees per contract per side ($)"), feeInput, h("div", { class: "field-hint" }, "Exports carry no fees; applied to every row."))),
+          result),
+        foot: h("div", { class: "form-actions" }, h("button", { type: "button", class: "btn btn-ghost", onClick: () => closeDrawer() }, "Close"), go) });
+    }
+
     function openTrade(t) {
       const note = h("textarea", { class: "input", rows: 5, placeholder: "What happened? Setup, execution, mistakes, lessons…" });
       note.value = t.note || "";
@@ -239,7 +284,7 @@ export default {
 
     root.append(
       pageHead("Journal", "Executed trades imported from Tradovate with realised P&L, fees and notes. Reporting per day, week and month; every chart has a table view.", [
-        exportLink, importBtn,
+        exportLink, csvBtn, importBtn,
       ]),
       h("div", { class: "journal-toolbar" }, rangeSel, periodSel, accountSel, symbolSel, sideSel, h("span", { class: "spacer" }), importInfo),
       card({ title: "Net result" }, hero, heroSub),
@@ -257,7 +302,7 @@ export default {
         vizCard("By weekday", null, byWeekday, byWeekdayTable),
         vizCard(`By hour of day`, "Exit time, journal timezone.", byHour, byHourTable)),
       card({ title: "Trades", hint: "Click a trade to add a note and tags." }, trades.el, h("div", { class: "form-actions", style: "margin-top:8px" }, moreBtn)),
-      card({ title: "Imports", hint: "Automatic daily import after the CME close (Settings → General → Trading journal) or on demand with Import now." }, imports.el),
+      card({ title: "Imports", hint: "Automatic daily import after the CME close (Settings → General → Trading journal), on demand with Import now, or a CSV export from Tradovate for past days (Import CSV)." }, imports.el),
     );
     load();
     return () => { closeDrawer(); };
