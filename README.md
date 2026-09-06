@@ -3,9 +3,14 @@
 _(repository: `tobiasgiger/nexuspred`)_
 
 A self-hosted bridge that receives **TradingView** alerts via a webhook and routes them
-to **Tradovate** as live/demo orders. Ships with a dark, professional dashboard for
+to **Tradovate** as live/demo orders. Ships with a modern dashboard (dark & light) for
 configuration and monitoring, an optional Discord signal listener, **multi-user accounts (invite-only)**
 access control, and a built-in GitHub auto-updater.
+
+> **This is the `v5` branch** — a refactored, faster platform that runs *in parallel* to
+> the stable `main` line. Same trading logic, same API, same settings and database schema;
+> restructured code, pooled connections, more concurrency and a new build-free UI. See
+> [Architecture (v5)](#architecture-v5) and [Running v5 next to v4](#running-v5-next-to-v4).
 
 ![dashboard](docs/dashboard.png)
 
@@ -29,7 +34,11 @@ access control, and a built-in GitHub auto-updater.
 - **Token refresh & health monitoring**: renews each account's token via
   `/auth/renewaccesstoken` before expiry (access token → check token, no password), and a
   background loop continuously verifies every connection is up.
-- **Dark-themed dashboard** to manage settings, watch positions/orders, and read logs.
+- **Dashboard** (dark & light theme, phone-friendly) to manage settings, watch
+  positions/orders live and read logs — deep-linkable pages, one live event stream, no
+  build step and no CDN.
+- **🆘 Flatten all**: a one-click emergency kill-switch that cancels every working order
+  and closes every position on all accounts — even while trading is paused.
 - **Auto-updater** that checks the GitHub repo and shows an **Update** button when a new
   version is available — one click pulls the latest code and restarts.
 - **One dedicated webhook per strategy** (`POST /webhook/{token}`), created/edited/deleted
@@ -112,16 +121,15 @@ includes a `render.yaml` blueprint.
 > `/webhook/<token>` and `/healthz` paths stay open (`GET /healthz` is an unauthenticated
 > liveness probe).
 
-1. Go to **Settings → Token Accounts** → add one row per Tradovate account with its own
-   access token (start in **Demo**), then **Connect & Verify**.
-2. Go to **Settings → Trade Accounts** and switch on the accounts you want available for
-   trading.
-3. Go to the **Webhooks** tab → **+ Add Webhook** for each strategy, pick its strategy
-   type (`simple` or `bracket`), and enable the accounts (with qty multipliers) that
-   strategy should trade.
-4. Flip **Trading enabled** on (Settings tab) when you're ready to go live.
-5. Copy each webhook's URL from its card (or the *Test & Webhook* tab) into the matching
-   TradingView alert.
+1. Go to **Settings → Tradovate Accounts** → add one login per Tradovate account with its
+   own access token (start in **Demo**), save, then **Connect & Verify** — the trade
+   accounts under each login are discovered automatically.
+2. Go to **Webhooks** → **Add webhook** for each strategy, pick its strategy type
+   (`simple`, `bracket` or `TS-Hunter`) and, on the **Accounts** tab of the drawer, route
+   the accounts (with qty multipliers) that strategy should trade.
+3. Copy the webhook's URL and alert message from the **Alert template** tab (or the
+   **Tools** page) into the matching TradingView alert.
+4. Flip **Trading** on (topbar pill or Settings → General & Trading) when you're ready.
 
 ---
 
@@ -223,7 +231,9 @@ routes to.
 | `bracket` | `buy` / `sell` | tp1, tp2, tp3 (if present) | Limit | webhook `tp_qty` each × account multiplier |
 | `bracket` | `buy` / `sell` | sl | Stop | full position |
 | `bracket` | `move_sl` | modify the stop order | — | — |
-| `bracket` | `close_all` | cancel working orders + flatten | Market | full position |
+| `bracket` | `trail_active` | resize the stop to the remaining position | — | — |
+| any | `set_sl_tp` | place/replace the stop and/or target on the open position | Stop / Limit | current position |
+| any | `close_all` | cancel working orders + flatten | Market | full position |
 | `ts_hunter` | `signal` | entry | Market | `risk.value` × account multiplier |
 | `ts_hunter` | `signal` | sl (if present) | Stop | same as entry qty |
 | `ts_hunter` | `partial_close_percent` | market-close `percent`% of what remains + resize sl | Market | `percent`% of current remaining qty |
@@ -257,7 +267,7 @@ orders are tagged **SIM** in the Monitor. No credentials or `trading_enabled` re
 
 **Token-only, multi-account.** There is no username/password — each **login** is
 authenticated by its **own Tradovate access token**. Add logins under
-**Settings → Token Accounts**, one row each:
+**Settings → Tradovate Accounts**, one row each:
 
 - **Name**, **Environment** (Demo/Live), **Access token** (and optional **Check token**),
   **Enabled** (master switch for that login), and a default **quantity multiplier**.
@@ -298,13 +308,15 @@ Token lifecycle:
   under your Google Account's security settings, not your normal login password (Gmail
   rejects plain passwords for SMTP). Notify address defaults to your own.
 
-Three triggers, each independently toggled:
+Six triggers, each independently toggled:
 
 | Trigger | Channels | Detail included |
 |---|---|---|
 | Connection lost | Discord + email | which account, environment (demo/live) and error |
 | Connection restored | Discord + email | which account and environment |
 | Trade executed | Discord only | which webhook/strategy, action, contract, accounts |
+| Signal received but not executed | Discord + email | which webhook and why execution failed |
+| Discord listener offline / back online | Discord + email | after a configurable grace period |
 
 Connection lost/restored only fires on the actual transition (never on the first
 observation of a session, and never twice in a row for the same state) — so you get one
@@ -329,16 +341,17 @@ order execution.
 
 **Configure it under Settings → Discord Listener** (the live feed is on the Discord tab):
 
-- **Enable listener** and paste your Discord **user token** (stored masked in
-  `data/settings.json`, like every other secret).
+- **Enable listener** and paste your Discord **user token** (stored in your area's
+  settings in the SQLite database, masked in the dashboard like every other secret).
 - **Global dry-run** — parse and display signals but send to **no** webhook.
 - **Channels** — each is a Discord channel ID with a label and one or more **targets**.
   A target is either one of the bridge's **own webhooks** (pick it from a dropdown — the
-  signal is posted to that webhook's URL, so it flows straight into your strategy routing)
-  or a **custom URL** (for an external logging system or second bridge, with an optional
-  **secret** sent as the `X-Webhook-Secret` header). Each target has an on/off toggle.
-  Every *enabled* target of a channel receives each signal **in parallel**, each with its
-  own 5 s timeout and isolated error handling.
+  signal is handed to that webhook **in-process**, with the same accept/reject semantics
+  as a TradingView POST, so it flows straight into your strategy routing) or a **custom
+  URL** (for an external logging system or second bridge, with an optional **secret**
+  sent as the `X-Webhook-Secret` header). Each target has an on/off toggle. Every
+  *enabled* target of a channel receives each signal **in parallel**, each with its own
+  5 s timeout and isolated error handling.
 
 All of the above is read **live per event**, so changes take effect without a restart.
 
@@ -369,10 +382,11 @@ is shared between areas (shared areas are planned for a later release).
   **first admin** account. Any pre-existing single-user `data/settings.json` is
   migrated into that admin's area.
 - **Invite-only:** there is no open sign-up. An admin creates **invite links** under
-  **Settings → Account & Users** (optionally granting admin). Share the link; the new
-  user registers and gets their own area.
-- **Admin** can list users, create/revoke invites, and delete users (which removes
-  their area and data).
+  **Settings → Users** (optionally granting admin, optionally emailed). Share the link;
+  the new user registers and gets their own area.
+- **Admin** can list users, grant the *Discord Signals* feature per user, create/revoke
+  invites, issue password-reset links, delete users (which removes their area and data),
+  and review the admin **audit log**.
 
 Storage is a **SQLite** database at `<NEXUSPRED_DATA_DIR>/fluxbridge.db` (users, areas,
 memberships, invites). Passwords are salted **PBKDF2** hashes. The login session is a
@@ -383,7 +397,7 @@ behind login; a webhook token routes to whichever user's area owns it.
 
 ## Symbol mapping
 
-TradingView sends continuous symbols like `MNQ1!`. **Settings → Current Symbol Mapping**
+TradingView sends continuous symbols like `MNQ1!`. **Settings → Symbol Mapping**
 maps each one to the **exact Tradovate contract** used for orders — update it after every
 rollover. Defaults:
 
@@ -410,9 +424,12 @@ and are gated by the **Allowed symbols** list.
 - Clicking it runs `git fetch` + `git reset --hard origin/<branch>`, refreshes
   dependencies, and **re-execs** the process so it boots on the new code.
 - Requires the app to be running from a `git` checkout. Override the tracked branch with
-  the `NEXUSPRED_BRANCH` environment variable (default `main`).
+  the `NEXUSPRED_BRANCH` environment variable (default `main`). **On a v5 install set
+  `NEXUSPRED_BRANCH=v5`**, otherwise the updater would reset the checkout to `main`.
 
-To cut a new release, bump `VERSION` and tag it (`vX.Y.Z`).
+To cut a new release on `main`, bump `VERSION` and tag it (`vX.Y.Z`). The `v5` branch
+uses pre-release versions (`5.0.0-alpha.N`) and is deliberately **never tagged**, so
+`main` installations don't see it as an available update.
 
 ### "Not a git checkout" — connecting a ZIP download
 
@@ -432,10 +449,13 @@ the dashboard **Update** button works.
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/webhook/{token}` | Receive a TradingView alert for a specific webhook |
-| `GET`  | `/api/status` | Connection + trading status |
-| `GET/POST` | `/api/settings` | Read / update settings |
+| `POST` | `/webhook/{token}` | Receive a TradingView alert for a specific webhook (202 accepted, processed in the background) |
+| `GET`  | `/api/status` | Connection + trading status, trade accounts, active trades |
+| `GET/POST` | `/api/settings` | Read / update settings (secrets masked; only the keys you send change) |
 | `GET`  | `/api/orders` `/api/signals` `/api/events` | Rolling logs |
+| `GET`  | `/api/stream` | Live feed (Server-Sent Events): `event`, `signal`, `order`, `session`, `discord` messages + `ping` heartbeat |
+| `POST` | `/api/flatten-all` | 🆘 Cancel every working order and flatten every position on all accounts (ignores the trading switch) |
+| `POST` | `/api/alerts/test` | Send a test notification on every enabled alert channel |
 | `GET`  | `/api/positions` | Live Tradovate positions |
 | `POST` | `/api/connect` | Reload sessions & verify every token account |
 | `GET/POST` | `/api/token-accounts` | List / save logins (tokens, enable flags & default multipliers) |
@@ -457,15 +477,57 @@ the dashboard **Update** button works.
 | `GET`  | `/api/discord/stream` | Live signal feed (Server-Sent Events) |
 | `POST` | `/api/discord/test` | Push a synthetic embed through the pipeline |
 | `GET`  | `/api/extension/token-extractor.zip` | Download the browser token-extractor extension |
-| `GET/POST` | `/setup` · `/login` · `/register` · `/logout` | User auth (first-admin setup, login, invited signup, logout) |
-| `GET`  | `/api/me` · `/api/users` · `/api/invites` | Current user / admin user management |
+| `GET/POST` | `/setup` · `/login` · `/register` · `/reset` · `/logout` | User auth (first-admin setup, login, invited signup, password reset, logout) |
+| `GET`  | `/api/me` · `/api/users` · `/api/invites` · `/api/audit` | Current user / admin user management / admin audit log |
+| `POST` | `/api/account/password` · `/api/users/{id}/reset` · `/api/users/{id}/features` | Change own password / admin reset link / feature grant |
 
 ---
 
 ## Configuration & data
 
-Runtime settings are stored in `data/settings.json` (git-ignored, never committed).
+Runtime settings live **per area** in the SQLite database at
+`<NEXUSPRED_DATA_DIR>/fluxbridge.db` (default `data/`, git-ignored, never committed). A
+pre-multi-tenant `data/settings.json` is migrated into the first admin's area on setup.
 Secrets are masked in the dashboard and never sent back to the browser in plain text.
+Environment variables are documented in [`.env.example`](.env.example).
+
+## Architecture (v5)
+
+```
+run.py                  uvicorn entry point (one worker — runtime state is in-process)
+app/main.py             app factory: auth middleware, lifespan (loops, HTTP pool), routers
+app/routers/            auth, users, core (status/settings/logs/stream), accounts,
+                        webhooks (ingress + CRUD), simulator, updater, extension
+app/signals.py          signal entry point: validation, per-trade locks, active-trade tracking
+app/engine/             strategy handlers: simple, bracket, manage (close_all/set_sl_tp), ts_hunter
+app/tradovate.py        token sessions, per-account executors, diff-based SessionManager
+app/http.py             pooled keep-alive httpx clients (tradovate / outbound)
+app/health.py           token-renewal + Discord health loops (all areas concurrently)
+app/config.py           per-area settings (deep-copied reads, atomic update(), webhook-token index)
+app/db.py / auth.py     SQLite (per-thread connection, cached auth lookups), signed-cookie sessions
+app/state.py            per-area rolling logs, session status and the live-stream bus
+app/discord_signals/    parser → pipeline → dispatcher (in-process for bridge webhooks) + listener
+templates/, static/     shell + auth templates; ES-module dashboard (no build step)
+tests/                  pytest characterisation suite — run with `pip install -r requirements-dev.txt && pytest`
+```
+
+Everything is I/O-bound and runs on one asyncio loop: blocking work (PBKDF2, SMTP,
+SQLite) is kept off the loop, and independent broker calls are issued concurrently. Run a
+**single uvicorn worker** — sessions, active trades and live subscribers are in-process.
+
+## Running v5 next to v4
+
+`main` (v4) and `v5` are separate branches with **identical database schema and settings
+keys**, so a v4 data directory starts unchanged under v5 and stays readable by v4.
+
+- **Never run both against the same `NEXUSPRED_DATA_DIR` at the same time.** Both would
+  renew the same Tradovate tokens and execute the same webhooks twice. For a side-by-side
+  comparison, **copy** the data directory and enable **Trading** in only one instance.
+- Each instance needs its own port (`PORT`) and, on Render, its own service + disk
+  (`render.yaml` on this branch defines `nexuspred-v5` with `branch: v5`).
+- Set `NEXUSPRED_BRANCH=v5` on v5 installs so the self-updater follows this branch.
+- Point TradingView at whichever instance should trade; webhook tokens are the same in a
+  copied data directory, so only one instance may have trading enabled.
 
 ## Disclaimer
 

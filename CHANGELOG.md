@@ -4,6 +4,53 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.2 (branch `v5`)
+- **New dashboard, build-free.** The single 1,100-line template + `app.js` is replaced
+  by ES modules served straight from `/static` (no bundler, no CDN): a design-token
+  based shell with **dark and light themes** (follows the OS, toggle persisted), a
+  grouped sidebar with a collapsible Settings section, icon rail and mobile drawer, a
+  sticky topbar with live-stream / connection / **trading kill-switch** pills, the 🆘
+  Flatten-all button and the update badge. Confirmations use a proper `<dialog>`
+  instead of `window.confirm`; copy actions use the iOS-safe helper everywhere.
+- **Hash router with deep links** — `#/webhooks/<id>`, `#/settings/alerts`, … — so a
+  reload lands where you were (v4 always reopened the Dashboard).
+- **One SSE connection feeds the whole UI**: events, signals, **orders, session status
+  and Discord** signals arrive live; polling is only a periodic reconcile.
+- **Webhooks** page: table + detail drawer with tabs (General / Accounts / Alert
+  template / Test signal / Danger zone). **Settings** is one page per concern and each
+  page posts only its own keys. Auth pages share one base template and stylesheet.
+- Same API payloads and all settings keys as v4 — a v4 `fluxbridge.db` works unchanged.
+
+## 5.0.0-alpha.1 (branch `v5`)
+Behaviour-preserving backend refactor of 4.11.0, verified by a characterisation test
+suite (`pytest`, 150+ tests) written against the unchanged 4.11 code first.
+- **Speed / concurrency**
+  - Pooled keep-alive HTTP clients (`app/http.py`) — no TCP+TLS handshake per Tradovate
+    order, Discord alert or GitHub check any more.
+  - Warm request path needs **no SQLite**: one connection per thread, cached
+    `user_count` / user / area lookups (auth middleware went from 4 queries per request
+    to none); PBKDF2 (login/setup/register/password change) runs in a worker thread.
+  - `SessionManager.reload()` is diff-based: unchanged logins keep their session
+    (token state, renew lock, contract cache) across health cycles; re-pasted tokens are
+    adopted in place. Health loops run all areas concurrently; order cancels,
+    liquidations, `/api/positions` and alert channels are gathered instead of looped;
+    connection alerts fire as background tasks so SMTP can't stall a health check.
+  - In-memory webhook-token index: a TradingView POST is a dict lookup instead of a scan
+    over every area's settings.
+  - Discord targets that reference a bridge webhook are dispatched **in-process** (same
+    202/403 semantics) — no loopback HTTP through `127.0.0.1:$PORT`.
+  - Per-trade locks are released after `close_all` / `full_close` (v4 grew them without
+    bound).
+- **Fixes found by the tests**: `config.load_settings()` handed out shallow copies, so
+  creating a webhook in a fresh area appended into `DEFAULT_SETTINGS` itself and leaked
+  into every other fresh area; `/setup` could create two admins on racing first-run
+  POSTs; malformed webhook payloads returned 500 instead of 400.
+- **Structure**: `app/routers/*` (one module per concern), `app/engine/*` (strategy
+  handlers), `app/health.py` (background loops), `app/web.py`; `app/main.py` is the app
+  factory with a proper lifespan (loops cancelled and HTTP pool closed on shutdown).
+- Versioning: PEP 440 pre-release (`5.0.0-alpha.N`); **no GitHub release tags** on this
+  branch, so `main` installations never see it as an update.
+
 ## 4.11.0
 - **Fix: simultaneous TP/management signals no longer race (one getting lost).**
   When two signals for the *same* trade arrived almost together (e.g. two take-

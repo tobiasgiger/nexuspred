@@ -137,7 +137,8 @@
         <thead><tr><th>Key</th><th>Value</th><th>Why</th></tr></thead>
         <tbody>
           <tr><td><code>NEXUSPRED_DATA_DIR</code></td><td><code>/var/data</code></td><td>Store settings/tokens on the disk (must match A4's mount path)</td></tr>
-          <tr><td><code>DASHBOARD_PASSWORD</code></td><td>your password</td><td>Protects the public dashboard (HTTP Basic auth)</td></tr>
+          <tr><td><code>SESSION_SECRET</code></td><td>a long random string</td><td>Pins the login-cookie signing key across deploys (the blueprint generates one)</td></tr>
+          <tr><td><code>NEXUSPRED_BRANCH</code></td><td><code>v5</code></td><td>Which branch this install follows (v5 platform)</td></tr>
           <tr><td><code>PYTHON_VERSION</code></td><td><code>3.11.9</code></td><td>Avoids a too-new Python with no prebuilt wheels (build fails otherwise)</td></tr>
         </tbody>
       </table>
@@ -161,7 +162,7 @@
       <div class="card-head"><h2>A5 · Deploy &amp; first login</h2></div>
       <ol class="steps">
         <li><span class="step-num">1</span><div>Wait for the deploy to finish (Logs show <em>Uvicorn running</em>). You get a URL like <code>https://nexuspred.onrender.com</code>.</div></li>
-        <li><span class="step-num">2</span><div>Open it. A login box appears — enter <strong>any username</strong> and your <code>DASHBOARD_PASSWORD</code> (only the password is checked).</div></li>
+        <li><span class="step-num">2</span><div>Open it. On first run you land on <strong>/setup</strong> — create the first <strong>admin account</strong> (email + password). Access is invite-only from then on: invite further users under <strong>Settings → Users</strong>.</div></li>
         <li><span class="step-num">3</span><div>Continue with <strong>Part C</strong> below to configure Tradovate. ✅</div></li>
       </ol>
     </div>
@@ -278,7 +279,7 @@ $ ngrok http 9000</pre>
     <div class="card">
       <div class="card-head"><h2>C1 · Set a dashboard password</h2></div>
       <ol class="steps">
-        <li><span class="step-num">1</span><div>On a public host this is essential. On Render it's the <code>DASHBOARD_PASSWORD</code> env var (already set in A3). Self-hosting publicly? Set <strong>Settings → Webhook Security → Dashboard password</strong>.</div></li>
+        <li><span class="step-num">1</span><div>The dashboard is protected by your <strong>account login</strong> (created at <code>/setup</code> on first run). Use a strong password; optionally set a <strong>webhook passphrase</strong> under <strong>Settings → Security</strong> as an extra check on every alert body.</div></li>
       </ol>
     </div>
 
@@ -286,12 +287,12 @@ $ ngrok http 9000</pre>
       <div class="card-head"><h2>C2 · Add your Tradovate token accounts</h2></div>
       <p class="hint">nexuspred is <strong>token-only</strong> — there is no username/password. Each
         account is authenticated by its own Tradovate <strong>access token</strong>. Go to
-        Settings → <em>Token Accounts</em> and add one row per account:</p>
+        Settings → <em>Tradovate Accounts</em> and add one row per login:</p>
       <ol class="steps">
         <li><span class="step-num">1</span><div>Click <strong>Add account</strong>. Give it a <strong>Name</strong>, pick the <strong>Environment</strong> (<em>Demo</em> for now), and toggle <strong>On</strong>.</div></li>
         <li><span class="step-num">2</span><div>Paste the account's <code>accessToken</code> into <strong>Access token</strong> (and optionally its <code>mdAccessToken</code> into <strong>Check token</strong>). Tokens are auto-renewed via <code>renewaccesstoken</code> — no password is ever needed.</div></li>
         <li><span class="step-num">3</span><div>Click <strong>Connect &amp; Verify</strong>. The bridge authenticates and <strong>discovers every trade account</strong> under that login.</div></li>
-        <li><span class="step-num">4</span><div>Open <strong>Settings → Trade Accounts</strong>. One login can hold several accounts — switch <strong>execution on/off per account</strong> and set a per-account <strong>Qty ×</strong>, then <strong>Save</strong>. Each signal fans out to all accounts switched on, in parallel.</div></li>
+        <li><span class="step-num">4</span><div>The discovered accounts appear under <strong>Discovered trade accounts</strong>. One login can hold several — <strong>which accounts a strategy trades, and their Qty ×</strong>, is chosen per webhook on the <strong>Webhooks</strong> page (Accounts tab). Each signal fans out to every routed account in parallel.</div></li>
       </ol>
     </div>
 
@@ -343,7 +344,7 @@ $ ngrok http 9000</pre>
     <div class="card">
       <div class="card-head"><h2>D1 · Your webhook URL</h2></div>
       <ol class="steps">
-        <li><span class="step-num">1</span><div>Each webhook created in the <strong>Webhooks</strong> tab has its own secret URL, shown on its card (and selectable in <strong>Test &amp; Webhook</strong>).</div></li>
+        <li><span class="step-num">1</span><div>Each webhook created on the <strong>Webhooks</strong> page has its own secret URL, shown in its drawer (Alert template tab) and on the <strong>Tools</strong> page.</div></li>
         <li><span class="step-num">2</span><div>It looks like:
           <pre class="code">https://YOUR-SERVICE.onrender.com/webhook/YOUR_TOKEN
 # self-host:  http://YOUR_HOST:9000/webhook/YOUR_TOKEN (front with HTTPS — see B7)</pre></div></li>
@@ -387,8 +388,8 @@ $ ngrok http 9000</pre>
     </div>
 
     <div class="card">
-      <div class="card-head"><h2>E2 · Test &amp; Webhook</h2></div>
-      <div class="callout warn">⚠ The <strong>Test &amp; Webhook</strong> tab runs the <em>live</em> pipeline and <strong>places real orders</strong> if Trading is enabled. Use it on Demo, or keep Trading off to just see routing.</div>
+      <div class="card-head"><h2>E2 · Test signal (Tools / webhook drawer)</h2></div>
+      <div class="callout warn">⚠ <strong>Send test signal</strong> (Tools page, or a webhook's Test signal tab) runs the <em>live</em> pipeline and <strong>places real orders</strong> if Trading is enabled. Use it on Demo, or keep Trading off to just see routing.</div>
     </div>
 
     <!-- ===== PART F — GO LIVE ===== -->

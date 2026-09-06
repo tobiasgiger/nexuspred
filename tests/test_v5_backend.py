@@ -180,12 +180,13 @@ async def test_setup_is_serialised(anon_client):
 
 
 def test_version_is_cached_until_forced(monkeypatch):
-    assert config.get_version() == "5.0.0-alpha.1"
+    real = config.VERSION_FILE.read_text(encoding="utf-8").strip()
+    assert real.startswith("5.") and config.get_version() == real
     monkeypatch.setattr(config, "VERSION_FILE", config.VERSION_FILE.with_name("VERSION.missing"))
-    assert config.get_version() == "5.0.0-alpha.1"
+    assert config.get_version() == real
     assert config.get_version(force=True) == "0.0.0"
     monkeypatch.undo()
-    assert config.get_version(force=True) == "5.0.0-alpha.1"
+    assert config.get_version(force=True) == real
 
 
 # ---------------------------------------------------------- session reload
