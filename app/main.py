@@ -57,8 +57,19 @@ async def _lifespan(_app: FastAPI):
         await _shutdown()
 
 
+class _Static(StaticFiles):
+    """Static files whose scripts/styles always revalidate (ETag → 304), so a
+    deploy never leaves a browser with a stale ES module next to a fresh one."""
+
+    async def get_response(self, path: str, scope):  # type: ignore[override]
+        resp = await super().get_response(path, scope)
+        if path.endswith((".js", ".css")):
+            resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+
 app = FastAPI(title="Fluxbridge", version=config.get_version(), lifespan=_lifespan)
-app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+app.mount("/static", _Static(directory=str(BASE_DIR / "static")), name="static")
 for _router in ROUTERS:
     app.include_router(_router)
 app.include_router(discord_router)  # Discord signal module (same server + auth)

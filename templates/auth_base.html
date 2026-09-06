@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark light" />
+  <title>{% block title %}Fluxbridge{% endblock %}</title>
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem("fb_theme");
+        if (!t || t === "system") {
+          t = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+        }
+        document.documentElement.dataset.theme = t;
+      } catch (e) { /* ignore */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/css/tokens.css" />
+  <link rel="stylesheet" href="/static/css/auth.css" />
+</head>
+<body>
+  <main class="auth">
+    <div class="auth-box">
+      <div class="auth-head">
+        <div class="auth-logo" aria-hidden="true">◈</div>
+        <h1>{% block heading %}Fluxbridge{% endblock %}</h1>
+        <div class="auth-sub">{% block subheading %}{% endblock %}</div>
+      </div>
+      {% if error %}<div class="auth-err" role="alert">{{ error }}</div>{% endif %}
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+</body>
+</html>

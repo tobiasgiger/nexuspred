@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark light" />
+  <title>Fluxbridge</title>
+  <script>
+    // Resolve the theme before first paint (no flash): explicit choice, else OS.
+    (function () {
+      try {
+        var t = localStorage.getItem("fb_theme");
+        if (!t || t === "system") {
+          t = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+        }
+        document.documentElement.dataset.theme = t;
+      } catch (e) { /* ignore */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/css/tokens.css?v={{ version }}" />
+  <link rel="stylesheet" href="/static/css/base.css?v={{ version }}" />
+  <link rel="stylesheet" href="/static/css/layout.css?v={{ version }}" />
+  <link rel="stylesheet" href="/static/css/components.css?v={{ version }}" />
+  <link rel="stylesheet" href="/static/css/pages.css?v={{ version }}" />
+</head>
+<body>
+  <div class="shell" id="shell">
+    <div class="scrim" id="scrim"></div>
+    <aside class="sidebar" id="sidebar" aria-label="Navigation"></aside>
+    <div class="main">
+      <header class="topbar" id="topbar"></header>
+      <main class="view" id="view"></main>
+    </div>
+  </div>
+  <div id="drawerRoot"></div>
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+  <script>window.__FB_VERSION__ = "{{ version }}";</script>
+  <script type="module" src="/static/js/app.js?v={{ version }}"></script>
+</body>
+</html>
