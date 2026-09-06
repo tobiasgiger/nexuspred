@@ -1,12 +1,13 @@
 /* Settings pages that are plain forms over /api/settings: general, alerts,
    security, updates, symbol map, account. Each page posts only its own keys. */
-import { h, card, toast, confirmDialog, pageHead, fmtDateTime } from "../ui.js";
+import { h, card, tag, toast, confirmDialog, pageHead, fmtDateTime } from "../ui.js";
 import { icon } from "../icons.js";
 import { api } from "../api.js";
 import { store } from "../store.js";
 import { actions } from "../actions.js";
 import { settingsForm } from "../components/form.js";
 import { dataTable } from "../components/table.js";
+import { enablePush, disablePush, currentSubscription, unsupportedReason, isIOS, isStandalone } from "../push.js";
 
 const lead = "Changes are saved per page — only this page's settings are sent.";
 
@@ -107,6 +108,89 @@ export const updates = {
   },
 };
 
+/* "Push notifications" block: this device's subscription + every registered device. */
+function pushPanel() {
+  const status = h("p", { class: "hint" }, "Checking this device…");
+  const enableBtn = h("button", { type: "button", class: "btn btn-primary", disabled: true }, icon("bell"), "Enable on this device");
+  const disableBtn = h("button", { type: "button", class: "btn btn-ghost", hidden: true }, "Disable on this device");
+  const testAllBtn = h("button", { type: "button", class: "btn btn-secondary", hidden: true }, icon("send"), "Test push");
+  const actionsRow = h("div", { class: "form-actions", style: "margin-top:12px" }, enableBtn, disableBtn, testAllBtn);
+  const table = dataTable({ empty: "No device registered yet.", compact: true, columns: [
+    { label: "Device", render: (d) => [h("strong", null, d.device || "Device"), " ", h("span", { class: "muted" }, d.endpoint_host || "")] },
+    { label: "Added", render: (d) => fmtDateTime(d.created_at) },
+    { label: "Last push", render: (d) => d.last_used_at ? fmtDateTime(d.last_used_at) : "—" },
+    { label: "Status", render: (d) => d.failures ? tag(`failing (${d.failures})`, "error") : tag("ok", "ok") },
+    { label: "", render: (d) => h("div", { class: "inline-actions" },
+      h("button", { type: "button", class: "btn btn-ghost btn-sm", title: "Send a test push to this device", onClick: async () => {
+        try { const r = await api.post("/api/push/test", { id: d.id }); toast(r.sent ? "Test push sent" : `Not delivered: ${r.gone ? "device unsubscribed" : "push service rejected it"}`, r.sent ? "success" : "error"); load(); }
+        catch (e) { toast(e.message, "error"); }
+      } }, icon("send")),
+      h("button", { type: "button", class: "btn btn-ghost btn-sm", title: "Remove", onClick: async () => {
+        if (!(await confirmDialog({ title: `Remove "${d.device || "this device"}"?`, body: "The device stops receiving push notifications until it is enabled again.", confirmText: "Remove", danger: true }))) return;
+        try { await api.del("/api/push/subscribe", { id: d.id }); toast("Device removed", "success"); load(); refreshThisDevice(); } catch (e) { toast(e.message, "error"); }
+      } }, icon("trash"))) },
+  ] });
+
+  let devices = [];
+  async function load() {
+    try { devices = await api.get("/api/push/subscriptions"); table.update(devices); testAllBtn.hidden = devices.length === 0; }
+    catch (e) { /* ignore */ }
+  }
+  async function refreshThisDevice() {
+    const why = unsupportedReason();
+    if (why) {
+      status.textContent = why;
+      status.className = "hint";
+      enableBtn.disabled = true; disableBtn.hidden = true;
+      return;
+    }
+    if (Notification.permission === "denied") {
+      status.textContent = "Notifications are blocked for this site. Allow them in the browser / iOS Settings → Notifications and reload.";
+      enableBtn.disabled = true; disableBtn.hidden = true;
+      return;
+    }
+    let sub = null;
+    try { sub = await currentSubscription(); } catch (e) { sub = null; }
+    const known = !!sub && !!(await isKnown(sub.endpoint));
+    if (sub && known) {
+      status.textContent = `This device receives push notifications${isIOS() && isStandalone() ? " (Home Screen app)" : ""}.`;
+      status.className = "hint";
+      enableBtn.disabled = true; enableBtn.hidden = true; disableBtn.hidden = false;
+    } else {
+      status.textContent = sub ? "This device has a browser subscription but is not registered with the bridge — press Enable to register it."
+        : (isIOS() ? "Ready. Press Enable and allow notifications — iOS asks once." : "Ready. Press Enable and allow notifications when the browser asks.");
+      enableBtn.disabled = false; enableBtn.hidden = false; disableBtn.hidden = true;
+    }
+  }
+  async function isKnown(endpoint) {
+    // The bridge never returns full endpoints; compare host + whether *any* device
+    // matches this browser's subscription via a HEAD-style check on subscribe.
+    try { const r = await api.post("/api/push/known", { endpoint }); return !!r.known; } catch (e) { return false; }
+  }
+  enableBtn.addEventListener("click", async () => {
+    enableBtn.disabled = true; status.textContent = "Asking for permission…";
+    try { await enablePush(); toast("Push enabled on this device", "success"); }
+    catch (e) { toast(e.message, "error"); status.textContent = e.message; status.className = "hint err"; enableBtn.disabled = false; return; }
+    await load(); await refreshThisDevice();
+  });
+  disableBtn.addEventListener("click", async () => {
+    disableBtn.disabled = true;
+    try { await disablePush(); toast("Push disabled on this device", "success"); } catch (e) { toast(e.message, "error"); }
+    disableBtn.disabled = false;
+    await load(); await refreshThisDevice();
+  });
+  testAllBtn.addEventListener("click", async () => {
+    try { const r = await api.post("/api/push/test"); toast(`Test push: ${r.sent} sent, ${r.failed} failed, ${r.gone} removed`, r.sent ? "success" : "error"); load(); }
+    catch (e) { toast(e.message, "error"); }
+  });
+  const el = h("div", null, status, actionsRow,
+    h("h3", { style: "margin:18px 0 6px" }, "Registered devices"),
+    h("p", { class: "hint" }, "Every device that enabled push for this workspace. On iPhone/iPad open the Home Screen app to enable it; Safari tabs can't receive push."),
+    table.el);
+  load(); refreshThisDevice();
+  return el;
+}
+
 export const alerts = {
   title: "Alerts",
   render(root) {
@@ -116,7 +200,7 @@ export const alerts = {
       try {
         const r = await api.post("/api/alerts/test");
         const on = Object.entries(r.channels || {}).filter(([, v]) => v).map(([k]) => k);
-        if (r.status === "none") { testHint.textContent = "No channel enabled — turn on Discord and/or email, save, then test."; testHint.className = "save-hint err"; toast("No alert channel is enabled", "error"); }
+        if (r.status === "none") { testHint.textContent = "No channel enabled — turn on Discord, email or push, save, then test."; testHint.className = "save-hint err"; toast("No alert channel is enabled", "error"); }
         else { testHint.textContent = `Sent to: ${on.join(", ")}. Check that it arrived.`; testHint.className = "save-hint ok"; toast("Test alert sent", "success"); }
       } catch (e) { testHint.textContent = e.message; testHint.className = "save-hint err"; toast(e.message, "error"); }
     } }, icon("bell"), "Send test alert");
@@ -137,7 +221,10 @@ export const alerts = {
           { name: "alert_smtp_username", type: "text", label: "SMTP username", placeholder: "you@gmail.com" },
           { name: "alert_smtp_password", type: "password", label: "SMTP password", placeholder: "App Password" },
         ] },
-        { title: "Triggers", hint: "Each trigger has its own switch. Trade executed is Discord-only by design; the others go to both channels.", fields: [
+        { title: "Push notifications", hint: "Notifications on your phone or desktop, even when the dashboard is closed. Works in Chrome/Edge/Firefox and on iPhone/iPad (iOS 16.4+) once the dashboard is added to the Home Screen.", fields: [
+          { name: "alert_push_enabled", type: "switch", label: "Push alerts enabled", hint: "Master switch for every registered device" },
+        ], after: pushPanel() },
+        { title: "Triggers", hint: "Each trigger has its own switch. Trade executed is Discord-only by design among the classic channels; push devices get every trigger.", fields: [
           { name: "alert_on_connection_lost", type: "switch", label: "Connection lost", hint: "Which account + broker — Discord + email" },
           { name: "alert_on_connection_restored", type: "switch", label: "Connection restored", hint: "Discord + email" },
           { name: "alert_on_trade_executed", type: "switch", label: "Trade executed", hint: "Which accounts + strategy — Discord only" },
@@ -150,7 +237,7 @@ export const alerts = {
         ], after: h("div", { class: "form-actions", style: "margin-top:12px" }, testBtn, testHint) },
       ],
     });
-    root.append(pageHead("Alerts", "Notify a Discord channel and/or an email address when something happens. " + lead), form.el);
+    root.append(pageHead("Alerts", "Notify a Discord channel, an email address and/or your phone when something happens. " + lead), form.el);
     const unsub = store.subscribe("settings", (s) => { if (!form.isDirty()) form.setValues(s); });
     return () => unsub();
   },

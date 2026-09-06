@@ -19,7 +19,7 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 # Prefixes match whole subtrees; pages match exactly (``/loginx`` is *not* exempt).
 AUTH_EXEMPT_PREFIXES = ("/webhook/", "/static/", "/api/agent/")
 AUTH_EXEMPT_PATHS = frozenset({
-    "/healthz", "/guide", "/favicon.ico",
+    "/healthz", "/guide", "/favicon.ico", "/sw.js",
     "/login", "/logout", "/register", "/setup", "/reset",
 })
 AUTH_EXEMPT = AUTH_EXEMPT_PREFIXES + tuple(sorted(AUTH_EXEMPT_PATHS))  # backwards-compat alias

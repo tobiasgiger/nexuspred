@@ -109,6 +109,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "alert_smtp_port": 587,
     "alert_smtp_username": "",             # e.g. your Gmail address
     "alert_smtp_password": "",             # Gmail: use an App Password, not your login password
+    # Web Push to the installed dashboard app (per-device subscriptions live in
+    # the push_subscriptions table; this is the area-wide master switch).
+    "alert_push_enabled": True,
     "alert_on_connection_lost": True,
     "alert_on_connection_restored": True,
     "alert_on_trade_executed": True,

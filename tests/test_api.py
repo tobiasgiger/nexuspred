@@ -392,7 +392,7 @@ async def test_simulator_endpoints(client):
 
 async def test_alerts_test_without_channels(client):
     r = await client.post("/api/alerts/test")
-    assert r.json()["status"] == "none" and r.json()["channels"] == {"discord": False, "email": False}
+    assert r.json()["status"] == "none" and r.json()["channels"] == {"discord": False, "email": False, "push": False}
 
 
 async def test_flatten_all_endpoint_audits(client):

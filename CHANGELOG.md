@@ -4,6 +4,20 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.16
+- **Push notifications** (`app/push.py`, `static/js/sw.js`, `static/js/push.js`). A third
+  alert channel next to Discord and email: Web Push to every device that enabled it on
+  **Settings → Alerts → Push notifications** — desktop browsers and the iPhone/iPad
+  Home Screen app (iOS 16.4+). One master switch (`alert_push_enabled`) plus the existing
+  per-trigger switches; push devices get every trigger, trade executions included, and a
+  tap opens the relevant page. The bridge generates its own VAPID key pair on first use
+  and stores it encrypted; payloads are end-to-end encrypted by `pywebpush` (new
+  dependency). Registered devices are listed with a per-device test push and remove
+  button; subscriptions that the push service reports as gone (404/410) are pruned
+  automatically. The service worker is served from `/sw.js` (public, `no-cache`) and
+  deliberately never caches pages, so deploys still load fresh. New DB table
+  `push_subscriptions`; new endpoints `/api/push/*`; `[hidden]` now beats `.btn` in CSS.
+
 ## 5.0.0-alpha.15
 - **Preconfigured agent download.** Settings → Execution Agents → *Download
   preconfigured agent* registers the agent and hands you a zip that already contains

@@ -10,6 +10,7 @@ import { renderSidebar, titleFor, firstChild, NAV } from "./components/sidebar.j
 import { renderTopbar } from "./components/topbar.js";
 import { closeDrawer } from "./components/drawer.js";
 import { ROUTES } from "./pages/index.js";
+import { registerWorker } from "./push.js";
 
 const shell = $("#shell");
 const view = $("#view");
@@ -97,6 +98,7 @@ async function boot() {
   render();
 
   connectStream();
+  registerWorker();  // push notifications (no-op where unsupported); never caches pages
   actions.refreshOrders();
   actions.refreshLogs();
   actions.refreshDiscordStatus();

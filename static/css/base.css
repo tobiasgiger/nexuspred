@@ -37,6 +37,8 @@ pre.code code { background: none; border: none; padding: 0; color: inherit; }
 button, input, select, textarea { font-family: inherit; font-size: 13px; color: inherit; }
 
 /* ------------------------------------------------------------------ buttons */
+[hidden] { display: none !important; }
+
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 7px;
   border: 1px solid var(--border-strong); background: var(--bg-card); color: var(--text);

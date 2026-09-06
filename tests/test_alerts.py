@@ -143,11 +143,11 @@ async def test_email_failure_is_logged_not_raised(admin, monkeypatch):
 
 async def test_test_alert_reports_channels(capture):
     discord, email = capture
-    assert await alerts.test_alert() == {"discord": False, "email": False}
+    assert await alerts.test_alert() == {"discord": False, "email": False, "push": False}
     config.save_settings({"alert_discord_enabled": True, "alert_discord_webhook_url": "u",
                           "alert_email_enabled": True, "alert_email_to": "x@y",
                           "alert_smtp_username": "u", "alert_smtp_password": "p"})
-    assert await alerts.test_alert() == {"discord": True, "email": True}
+    assert await alerts.test_alert() == {"discord": True, "email": True, "push": False}
     assert len(discord) == 1 and email[0][0] == "Fluxbridge: test alert"
 
 

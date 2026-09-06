@@ -372,23 +372,32 @@ Token lifecycle:
 
 ## Alerts
 
-**Settings → Alerts** — two channels, each with its own on/off switch:
+**Settings → Alerts** — three channels, each with its own on/off switch:
 
 - **Discord** — a webhook URL (Discord channel → *Edit Channel → Integrations → Webhooks*).
   Optionally prefixes every message with `@everyone`.
 - **Email** — SMTP, defaults to Gmail (`smtp.gmail.com:587`). Use a Gmail **App Password**
   under your Google Account's security settings, not your normal login password (Gmail
   rejects plain passwords for SMTP). Notify address defaults to your own.
+- **Push** — Web Push notifications to your phone or desktop, even when the dashboard is
+  closed. Press **Enable on this device** on the Alerts page (the browser asks once for
+  permission); each device shows up in *Registered devices* with a test and a remove
+  button. **iPhone/iPad:** add the dashboard to the Home Screen first (Share → *Add to
+  Home Screen*, iOS 16.4+) and open it from there — Safari only delivers push to
+  installed apps. The bridge signs pushes with its own VAPID key pair (generated once,
+  stored encrypted); the message text is end-to-end encrypted to the device, so Apple /
+  Google never see it. Devices whose subscription expired are pruned automatically.
 
-Six triggers, each independently toggled:
+Seven triggers, each independently toggled (push devices receive every trigger):
 
 | Trigger | Channels | Detail included |
 |---|---|---|
-| Connection lost | Discord + email | which account, environment (demo/live) and error |
-| Connection restored | Discord + email | which account and environment |
-| Trade executed | Discord only | which webhook/strategy, action, contract, accounts |
-| Signal received but not executed | Discord + email | which webhook and why execution failed |
-| Discord listener offline / back online | Discord + email | after a configurable grace period |
+| Connection lost | Discord + email + push | which account, environment (demo/live) and error |
+| Connection restored | Discord + email + push | which account and environment |
+| Trade executed | Discord + push | which webhook/strategy, action, contract, accounts |
+| Signal received but not executed | Discord + email + push | which webhook and why execution failed |
+| Discord listener offline / back online | Discord + email + push | after a configurable grace period |
+| Contract rollover due | Discord + email + push | which contract and when, once per contract |
 
 Connection lost/restored only fires on the actual transition (never on the first
 observation of a session, and never twice in a row for the same state) — so you get one
@@ -572,6 +581,8 @@ the dashboard **Update** button works.
 | `GET`  | `/api/stream` | Live feed (Server-Sent Events): `event`, `signal`, `order`, `session`, `discord`, `pnl` messages + `ping` heartbeat |
 | `POST` | `/api/flatten-all` | 🆘 Cancel every working order and flatten every position on all accounts (ignores the trading switch) |
 | `POST` | `/api/alerts/test` | Send a test notification on every enabled alert channel |
+| `GET`  | `/api/push/public-key` | VAPID public key for `PushManager.subscribe` · `GET /sw.js` serves the service worker (public) |
+| `POST` | `/api/push/subscribe` | Register this device's push subscription · `DELETE` removes it (`{endpoint}` or `{id}`) · `GET /api/push/subscriptions` lists the area's devices · `POST /api/push/test` sends a test push |
 | `GET`  | `/api/positions` | Live Tradovate positions |
 | `POST` | `/api/connect` | Reload sessions & verify every token account |
 | `GET/POST` | `/api/token-accounts` | List / save logins (tokens, enable flags & default multipliers) |

@@ -1,10 +1,12 @@
 """Outbound notifications for connection and trade events.
 
-Two channels, each independently toggled in Settings:
+Three channels, each independently toggled in Settings:
 
 * **Discord** — a POST to a webhook URL, optionally prefixed with ``@everyone``.
 * **Email** — sent via SMTP (e.g. Gmail with an App Password), connection
   events only (trade executions are Discord-only, per the trigger design).
+* **Push** — Web Push to every device that installed the dashboard (desktop
+  browsers and the iPhone home-screen app); gets every trigger, trades included.
 
 Each of the three triggers (connection lost, connection restored, trade
 executed) has its own on/off switch. A failure sending a notification is
@@ -18,7 +20,18 @@ import smtplib
 from email.mime.text import MIMEText
 from typing import Any
 
-from . import config, http, state
+from . import config, context, db, http, push, state
+
+
+async def _send_push(title: str, message: str, *, url: str = "/") -> None:
+    """Web Push to the area's installed apps (see :mod:`app.push`)."""
+    s = config.load_settings()
+    if not s.get("alert_push_enabled", True) or not push.available():
+        return
+    try:
+        await push.send_current_area(title, push.strip_markdown(message), url=url)
+    except Exception as exc:  # noqa: BLE001 - never let a notification failure escalate
+        state.log_event("warn", f"Push alert failed: {exc}")
 
 
 async def _send_discord(message: str) -> None:
@@ -108,7 +121,8 @@ async def connection_lost(account: str, environment: str, error: str) -> None:
     detail = f" — {error}" if error else ""
     message = f"🔴 **Connection lost** — account `{account}` ({environment}, Tradovate){detail}"
     await asyncio.gather(_send_discord(message),
-                         _send_email(f"Fluxbridge: connection lost ({account})", message))
+                         _send_email(f"Fluxbridge: connection lost ({account})", message),
+                         _send_push(f"Connection lost: {account}", message, url="/#/accounts"))
 
 
 async def connection_restored(account: str, environment: str) -> None:
@@ -117,7 +131,8 @@ async def connection_restored(account: str, environment: str) -> None:
         return
     message = f"🟢 **Connection restored** — account `{account}` ({environment}, Tradovate)"
     await asyncio.gather(_send_discord(message),
-                         _send_email(f"Fluxbridge: connection restored ({account})", message))
+                         _send_email(f"Fluxbridge: connection restored ({account})", message),
+                         _send_push(f"Connection restored: {account}", message, url="/#/accounts"))
 
 
 async def trade_executed(
@@ -131,7 +146,8 @@ async def trade_executed(
         f"⚡ **Trade executed** — strategy `{webhook_name}`: {action.upper()} "
         f"{contract} on {accts}"
     )
-    await _send_discord(message)
+    await asyncio.gather(_send_discord(message),
+                         _send_push(f"Trade executed: {action.upper()} {contract}", message, url="/#/orders"))
 
 
 async def discord_listener_lost(error: str = "") -> None:
@@ -141,7 +157,8 @@ async def discord_listener_lost(error: str = "") -> None:
     detail = f" — {error}" if error else ""
     message = f"🔴 **Discord listener offline** — the signal listener lost its Gateway connection{detail}"
     await asyncio.gather(_send_discord(message),
-                         _send_email("Fluxbridge: Discord listener offline", message))
+                         _send_email("Fluxbridge: Discord listener offline", message),
+                         _send_push("Discord listener offline", message, url="/#/discord"))
 
 
 async def discord_listener_restored(user: str = "") -> None:
@@ -151,7 +168,8 @@ async def discord_listener_restored(user: str = "") -> None:
     who = f" (as `{user}`)" if user else ""
     message = f"🟢 **Discord listener online** — the signal listener reconnected to the Gateway{who}"
     await asyncio.gather(_send_discord(message),
-                         _send_email("Fluxbridge: Discord listener online", message))
+                         _send_email("Fluxbridge: Discord listener online", message),
+                         _send_push("Discord listener online", message, url="/#/discord"))
 
 
 async def webhook_failed(webhook_name: str, reason: str) -> None:
@@ -163,7 +181,8 @@ async def webhook_failed(webhook_name: str, reason: str) -> None:
         f"execution failed: {reason}"
     )
     await asyncio.gather(_send_discord(message),
-                         _send_email(f"Fluxbridge: signal not executed ({webhook_name})", message))
+                         _send_email(f"Fluxbridge: signal not executed ({webhook_name})", message),
+                         _send_push(f"Signal not executed: {webhook_name}", message, url="/#/events"))
 
 
 async def contract_rollover(message: str) -> None:
@@ -172,7 +191,8 @@ async def contract_rollover(message: str) -> None:
     if not s.get("alert_on_rollover", True):
         return
     await asyncio.gather(_send_discord(message),
-                         _send_email("Fluxbridge: contract rollover due", message))
+                         _send_email("Fluxbridge: contract rollover due", message),
+                         _send_push("Contract rollover due", message, url="/#/settings/symbols"))
 
 
 async def test_alert() -> dict[str, Any]:
@@ -181,12 +201,16 @@ async def test_alert() -> dict[str, Any]:
     message = "🔔 **Test alert** — Fluxbridge notifications are configured correctly."
     channels = {"discord": bool(s.get("alert_discord_enabled") and s.get("alert_discord_webhook_url")),
                 "email": bool(s.get("alert_email_enabled") and s.get("alert_email_to")
-                              and s.get("alert_smtp_username") and s.get("alert_smtp_password"))}
+                              and s.get("alert_smtp_username") and s.get("alert_smtp_password")),
+                "push": bool(s.get("alert_push_enabled", True) and push.available()
+                             and db.list_push_subscriptions(context.get_area()))}
     sends = []
     if channels["discord"]:
         sends.append(_send_discord(message))
     if channels["email"]:
         sends.append(_send_email("Fluxbridge: test alert", message))
+    if channels["push"]:
+        sends.append(_send_push("Test alert", message, url="/#/settings/alerts"))
     if sends:
         await asyncio.gather(*sends)
     return channels
