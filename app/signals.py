@@ -35,6 +35,7 @@ credentials, risk, or a configured webhook.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import threading
 from typing import Any
 
@@ -216,7 +217,8 @@ async def process(
     if not simulate and not trusted:
         # passphrase (optional, defence in depth on top of the URL secret)
         if s.get("webhook_passphrase"):
-            if payload.get("passphrase") != s["webhook_passphrase"]:
+            given = str(payload.get("passphrase") or "")
+            if not hmac.compare_digest(given.encode(), str(s["webhook_passphrase"]).encode()):
                 raise SignalError("Invalid passphrase")
 
     if webhook.get("strategy") == "ts_hunter":

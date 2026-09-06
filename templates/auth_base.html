@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="dark light" />
   <title>{% block title %}Fluxbridge{% endblock %}</title>
-  <script>
+  <script nonce="{{ nonce }}">
     (function () {
       try {
         var t = localStorage.getItem("fb_theme");

@@ -2,6 +2,7 @@
 import { api } from "./api.js";
 import { store, can } from "./store.js";
 import { toast } from "./ui.js";
+import { setPublicOrigin } from "./templates.js";
 
 const quiet = async (fn) => { try { return await fn(); } catch (e) { return undefined; } };
 
@@ -24,6 +25,7 @@ export const actions = {
   },
   refreshStatus: () => quiet(async () => {
     const s = await api.get("/api/status");
+    setPublicOrigin(s.public_url);
     store.set("status", s);
     return s;
   }),

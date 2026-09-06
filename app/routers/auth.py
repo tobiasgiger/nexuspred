@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import asyncio
+from urllib.parse import quote
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from .. import auth, config, db, state
-from ..web import set_session_cookie, templates
+from ..web import render, set_session_cookie
+
+_RATE = "Too many attempts — please wait a minute and try again."
 
 router = APIRouter(tags=["auth"])
 
@@ -20,9 +23,8 @@ async def login_page(request: Request, error: str = "") -> HTMLResponse:
         return RedirectResponse("/setup", status_code=302)
     if auth.current_user(request):
         return RedirectResponse("/", status_code=302)
-    msgs = {"bad": "Wrong email or password."}
-    return templates.TemplateResponse(
-        "login.html", {"request": request, "error": msgs.get(error, "")})
+    msgs = {"bad": "Wrong email or password.", "rate": _RATE}
+    return render(request, "login.html", {"error": msgs.get(error, "")})
 
 
 @router.post("/login")
@@ -37,6 +39,7 @@ async def login_submit(request: Request):
 
 
 @router.get("/logout")
+@router.post("/logout")
 async def logout() -> RedirectResponse:
     resp = RedirectResponse("/login", status_code=302)
     resp.delete_cookie(auth.COOKIE, path="/")
@@ -48,9 +51,8 @@ async def setup_page(request: Request, error: str = "") -> HTMLResponse:
     if db.user_count() > 0:
         return RedirectResponse("/login", status_code=302)
     msgs = {"mismatch": "Passwords don't match.", "short": "Password must be at least 8 characters.",
-            "email": "Enter a valid email."}
-    return templates.TemplateResponse(
-        "setup.html", {"request": request, "error": msgs.get(error, "")})
+            "email": "Enter a valid email.", "rate": _RATE}
+    return render(request, "setup.html", {"error": msgs.get(error, "")})
 
 
 @router.post("/setup")
@@ -87,30 +89,32 @@ async def register_page(request: Request, code: str = "", error: str = "") -> HT
     valid = bool(invite and not invite.get("used_by"))
     msgs = {"mismatch": "Passwords don't match.", "short": "Password must be at least 8 characters.",
             "email": "Enter a valid email.", "exists": "An account with that email already exists.",
-            "invite": "This invite is invalid or already used."}
-    return templates.TemplateResponse(
-        "register.html",
-        {"request": request, "code": code, "valid_invite": valid,
-         "invite_email": (invite or {}).get("email", ""), "error": msgs.get(error, "")})
+            "invite": "This invite is invalid or already used.", "rate": _RATE}
+    return render(request, "register.html",
+                  {"code": code, "valid_invite": valid,
+                   "invite_email": (invite or {}).get("email", ""), "error": msgs.get(error, "")})
 
 
 @router.post("/register")
 async def register_submit(request: Request):
     form = await request.form()
     code = str(form.get("code", ""))
+    back = f"/register?code={quote(code, safe='')}&error="
     invite = db.get_invite(code)
     if not invite or invite.get("used_by"):
-        return RedirectResponse(f"/register?code={code}&error=invite", status_code=302)
+        return RedirectResponse(back + "invite", status_code=302)
     email = str(form.get("email", "")).strip().lower()
     pw = str(form.get("password", ""))
     if "@" not in email:
-        return RedirectResponse(f"/register?code={code}&error=email", status_code=302)
+        return RedirectResponse(back + "email", status_code=302)
+    if invite.get("email") and email != invite["email"]:
+        return RedirectResponse(back + "email", status_code=302)  # invite is bound to an address
     if pw != str(form.get("password2", "")):
-        return RedirectResponse(f"/register?code={code}&error=mismatch", status_code=302)
+        return RedirectResponse(back + "mismatch", status_code=302)
     if len(pw) < 8:
-        return RedirectResponse(f"/register?code={code}&error=short", status_code=302)
+        return RedirectResponse(back + "short", status_code=302)
     if db.get_user_by_email(email):
-        return RedirectResponse(f"/register?code={code}&error=exists", status_code=302)
+        return RedirectResponse(back + "exists", status_code=302)
     user = await db.create_user_async(email, pw, is_admin=invite.get("is_admin", False))
     db.consume_invite(code, user["id"])
     area = db.user_primary_area(user["id"])
@@ -125,26 +129,26 @@ async def register_submit(request: Request):
 async def reset_page(request: Request, token: str = "", error: str = "") -> HTMLResponse:
     rec = db.get_password_reset(token) if token else None
     msgs = {"mismatch": "Passwords don't match.", "short": "Password must be at least 8 characters.",
-            "token": "This reset link is invalid or has expired."}
-    return templates.TemplateResponse(
-        "reset.html",
-        {"request": request, "token": token, "valid_token": bool(rec), "error": msgs.get(error, "")})
+            "token": "This reset link is invalid or has expired.", "rate": _RATE}
+    return render(request, "reset.html",
+                  {"token": token, "valid_token": bool(rec), "error": msgs.get(error, "")})
 
 
 @router.post("/reset")
 async def reset_submit(request: Request):
     form = await request.form()
     token = str(form.get("token", ""))
+    back = f"/reset?token={quote(token, safe='')}&error="
     if not db.get_password_reset(token):
-        return RedirectResponse(f"/reset?token={token}&error=token", status_code=302)
+        return RedirectResponse(back + "token", status_code=302)
     pw = str(form.get("password", ""))
     if pw != str(form.get("password2", "")):
-        return RedirectResponse(f"/reset?token={token}&error=mismatch", status_code=302)
+        return RedirectResponse(back + "mismatch", status_code=302)
     if len(pw) < 8:
-        return RedirectResponse(f"/reset?token={token}&error=short", status_code=302)
+        return RedirectResponse(back + "short", status_code=302)
     uid = await db.consume_password_reset_async(token, pw)
     if uid is None:
-        return RedirectResponse(f"/reset?token={token}&error=token", status_code=302)
+        return RedirectResponse(back + "token", status_code=302)
     user = db.get_user(uid)
     if user:
         state.log_event("info", f"Password reset completed for {user['email']}")

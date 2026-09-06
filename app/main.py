@@ -13,10 +13,10 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, config, context, db, health, http, state
+from . import auth, config, context, db, health, http, security, state
 from .discord_signals.routes import router as discord_router
 from .routers import ROUTERS
-from .web import AUTH_EXEMPT, BASE_DIR, wants_html
+from .web import BASE_DIR, is_auth_exempt, wants_html
 
 _loop_tasks: list[asyncio.Task] = []
 
@@ -79,7 +79,7 @@ app.include_router(discord_router)  # Discord signal module (same server + auth)
 async def _auth_middleware(request: Request, call_next):
     """Require a login session; set the request's area context to the user's area."""
     path = request.url.path
-    if path.startswith(AUTH_EXEMPT):
+    if is_auth_exempt(path):
         return await call_next(request)
 
     if db.user_count() == 0:  # first run: force admin setup
@@ -101,3 +101,9 @@ async def _auth_middleware(request: Request, call_next):
         return await call_next(request)
     finally:
         context.reset_area(tok)
+
+
+# Outermost first: body cap → CSRF/rate-limit/headers → auth. (Starlette runs
+# ``@app.middleware`` decorators innermost-last, so this one wraps the auth one.)
+app.middleware("http")(security.security_middleware)
+app.add_middleware(security.BodyLimitMiddleware)

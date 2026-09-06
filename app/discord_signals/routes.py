@@ -21,12 +21,15 @@ import asyncio
 import json
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from .. import config, context, state
+from .. import config, context, security, state
+from ..web import require_feature
 from . import hub, listener, pipeline
 from .parser import embed_from_dict
+
+FEATURE = "discord_signals"
 
 router = APIRouter(prefix="/api/discord", tags=["discord"])
 
@@ -90,8 +93,24 @@ def _merge_channels(incoming: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return cleaned
 
 
+async def _validate_target_urls(channels: list[dict[str, Any]]) -> None:
+    """Custom target URLs are POSTed by the bridge itself — refuse anything that
+    would make it call into loopback / private networks (SSRF)."""
+    seen: set[str] = set()
+    for c in channels:
+        for t in c.get("targets") or []:
+            url = t.get("url") or ""
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            problem = await asyncio.to_thread(security.check_outbound_url, url)
+            if problem:
+                raise HTTPException(status_code=400, detail=f"Target '{t.get('label') or url}': {problem}")
+
+
 @router.post("/config")
 async def save_config(request: Request) -> dict[str, Any]:
+    require_feature(request, FEATURE)
     body = await request.json()
     updates: dict[str, Any] = {}
     if "discord_enabled" in body:
@@ -105,6 +124,7 @@ async def save_config(request: Request) -> dict[str, Any]:
             updates["discord_user_token"] = str(tok or "").strip()
     if "discord_channels" in body:
         updates["discord_channels"] = _merge_channels(body["discord_channels"])
+        await _validate_target_urls(updates["discord_channels"])
 
     config.save_settings(updates)
     state.log_event("info", "[discord] configuration updated")
@@ -176,6 +196,7 @@ async def test_signal(request: Request) -> dict[str, Any]:
     ``force`` bypasses the channel enabled-check so you can test without a live
     Discord connection. Respects the dry-run switch, exactly like a real event.
     """
+    require_feature(request, FEATURE)
     body = await request.json()
     channel_id = str(body.get("channel_id", "")).strip()
     if not channel_id:

@@ -1,7 +1,9 @@
 """Dashboard authentication: local user accounts (email + password), invite-only.
 
-Login state is a small **HMAC-signed, HTTP-only cookie** carrying the user id and
-an expiry — no server-side session store, no external dependency. User records,
+Login state is a small **HMAC-signed, HTTP-only cookie** carrying the user id,
+an expiry and a fingerprint of the user's current password hash — no
+server-side session store, no external dependency. The fingerprint means a
+password change or reset invalidates every other session of that user. User records,
 password hashing and invites live in :mod:`app.db`; this module handles the
 session cookie and request → user resolution.
 """
@@ -50,12 +52,14 @@ def _sign(body: str) -> str:
 
 
 def make_session(user_id: int) -> str:
-    body = _b64e(json.dumps({"uid": int(user_id), "exp": int(time.time()) + SESSION_TTL}).encode())
+    body = _b64e(json.dumps({"uid": int(user_id), "exp": int(time.time()) + SESSION_TTL,
+                             "pv": db.password_version(int(user_id))}).encode())
     return f"{body}.{_sign(body)}"
 
 
 def read_session(cookie: Optional[str]) -> Optional[int]:
-    """Return the user id from a valid, unexpired session cookie, else None."""
+    """Return the user id from a valid, unexpired session cookie whose password
+    fingerprint still matches the account, else None."""
     if not cookie or "." not in cookie:
         return None
     body, _, sig = cookie.partition(".")
@@ -65,7 +69,11 @@ def read_session(cookie: Optional[str]) -> Optional[int]:
         payload = json.loads(_b64d(body))
         if int(payload.get("exp", 0)) < time.time():
             return None
-        return int(payload["uid"])
+        uid = int(payload["uid"])
+        pv = str(payload.get("pv", ""))
+        if not pv or not hmac.compare_digest(pv, db.password_version(uid)):
+            return None
+        return uid
     except Exception:  # noqa: BLE001 - any malformed cookie is simply "not logged in"
         return None
 

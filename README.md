@@ -108,9 +108,11 @@ includes a `render.yaml` blueprint.
 4. Deploy → you get `https://YOUR-SERVICE.onrender.com`. The production bridge runs on
    the custom domain **`https://bridge.hurenzone.ch`** (Render → service → *Settings →
    Custom Domains*, plus a CNAME at the DNS provider; Render issues the TLS certificate).
-   Each strategy's TradingView webhook is
+   Set `NEXUSPRED_PUBLIC_URL=https://bridge.hurenzone.ch` (already in `render.yaml`) so
+   the dashboard shows every webhook URL on the custom domain and emailed invite /
+   reset links use it too. Each strategy's TradingView webhook is
    `https://bridge.hurenzone.ch/webhook/YOUR_TOKEN` (copy it from its card in the
-   **Webhooks** tab — the dashboard always shows the URL for the host you opened it on).
+   **Webhooks** tab).
 5. Updates deploy automatically on `git push` (the in-app Update button is disabled on
    managed hosts).
 
@@ -124,6 +126,31 @@ includes a `render.yaml` blueprint.
 > invite users (see [Users, areas & login](#users-areas--login-multi-tenant)). The
 > `/webhook/<token>` and `/healthz` paths stay open (`GET /healthz` is an unauthenticated
 > liveness probe).
+
+### Security hardening (built in)
+
+- **Sessions**: HMAC-signed, `HttpOnly`, `Secure` (behind HTTPS), `SameSite=Lax` cookie
+  bound to the account's password hash — a password change or reset logs every other
+  session out. PBKDF2-SHA256 (200k rounds) password hashing.
+- **CSRF**: state-changing requests whose `Origin` / `Sec-Fetch-Site` show another site
+  are rejected (the TradingView ingress is exempt — it carries no cookie anyway).
+- **Brute force**: per-IP rate limits on `/login`, `/setup`, `/register`, `/reset` and
+  the password-change API (with a global per-IP ceiling), 256 KB request-body cap.
+- **Headers**: strict Content-Security-Policy with a per-request script nonce,
+  `frame-ancestors 'none'`, `X-Frame-Options`, `X-Content-Type-Options`,
+  `Referrer-Policy`, `Permissions-Policy`, HSTS behind HTTPS, `Cache-Control: no-store`
+  on API and auth responses.
+- **SSRF**: the Discord alert webhook URL and custom Discord-signal target URLs are
+  checked on save — `http(s)` only, no credentials, and the host must not resolve to a
+  loopback / private / link-local address.
+- **Least privilege**: the generic settings endpoint cannot write webhooks, token
+  accounts or the Discord listener config (each has its own validating endpoint); the
+  self-updater (`git reset` + restart of the whole process) is admin-only; the Discord
+  routes require the admin-granted *Discord Signals* entitlement; an invite bound to an
+  email can only be redeemed by that address.
+- **Secrets** (Tradovate tokens, Discord user token, SMTP password) are masked in every
+  API response and never logged. They are stored in the SQLite DB on the persistent
+  disk, so protect that disk like a password store.
 
 1. Go to **Settings → Tradovate Accounts** → add one login per Tradovate account with its
    own access token (start in **Demo**), save, then **Connect & Verify** — the trade

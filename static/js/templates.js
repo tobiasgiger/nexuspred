@@ -119,6 +119,13 @@ export const BOOKMARKLETS = {
     "javascript:%28function%28%29%7Bfunction%20g%28k%29%7Btry%7Breturn%20localStorage.getItem%28k%29%7C%7CsessionStorage.getItem%28k%29%7Dcatch%28e%29%7Breturn%20null%7D%7Dfunction%20u%28x%29%7Breturn%20x%3Fx.replace%28%2F%5E%22%2B%7C%22%2B%24%2Fg%2C%27%27%29%3Ax%7Dvar%20t%3Du%28g%28%27token%27%29%29%2Cc%3Du%28g%28%27checkToken%27%29%29%3Bif%28navigator.clipboard%26%26t%29navigator.clipboard.writeText%28t%29%3Bwindow.prompt%28%27Tradovate%20token%20%28copied%29%3A%27%2Ct%7C%7C%27%28not%20found%29%27%29%3Bwindow.prompt%28%27Tradovate%20checkToken%3A%27%2Cc%7C%7C%27%28not%20found%29%27%29%3B%7D%29%28%29%3B",
 };
 
+// The canonical origin webhook URLs are shown on: NEXUSPRED_PUBLIC_URL from
+// /api/status when the server pins one (custom domain), else the page's own origin.
+let publicOrigin = "";
+export function setPublicOrigin(origin) {
+  publicOrigin = String(origin || "").replace(/\/+$/, "");
+}
+
 export function webhookUrl(token) {
-  return `${window.location.origin}/webhook/${token || "your-token"}`;
+  return `${publicOrigin || window.location.origin}/webhook/${token || "your-token"}`;
 }

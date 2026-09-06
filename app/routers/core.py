@@ -6,12 +6,12 @@ import asyncio
 import json
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 
-from .. import alerts, config, context, db, signals, state, tradovate
+from .. import alerts, config, context, db, security, signals, state, tradovate
 from ..tradovate import TradovateError
-from ..web import BASE_DIR, templates
+from ..web import BASE_DIR, render
 from .accounts import trade_accounts_overview
 
 router = APIRouter(tags=["core"])
@@ -19,10 +19,7 @@ router = APIRouter(tags=["core"])
 
 @router.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse(
-        "shell.html",
-        {"request": request, "version": config.get_version()},
-    )
+    return render(request, "shell.html", {"version": config.get_version()})
 
 
 @router.get("/favicon.ico")
@@ -58,6 +55,7 @@ async def api_status() -> dict[str, Any]:
         "trade_accounts": trade_accounts_overview(),
         "active_trades": signals.active_trades(),
         "trading_enabled": config.load_settings().get("trading_enabled", False),
+        "public_url": config.PUBLIC_URL,
     }
 
 
@@ -76,11 +74,22 @@ async def api_get_settings(request: Request) -> dict[str, Any]:
 @router.post("/api/settings")
 async def api_save_settings(request: Request) -> dict[str, Any]:
     updates = await request.json()
+    if not isinstance(updates, dict):
+        raise HTTPException(status_code=400, detail="Settings must be a JSON object")
     # Drop masked secret fields so we don't overwrite stored secrets with "********".
     for field in config.SECRET_FIELDS:
         if updates.get(field) == "********":
             updates.pop(field, None)
-    updates.pop("token_accounts", None)  # managed via /api/token-accounts
+    # Webhooks, token accounts and the Discord listener have their own validating
+    # endpoints; the generic form must not be able to write them.
+    for field in config.SETTINGS_PROTECTED_KEYS:
+        updates.pop(field, None)
+    url = str(updates.get("alert_discord_webhook_url") or "").strip()
+    if url:
+        problem = await asyncio.to_thread(security.check_outbound_url, url)
+        if problem:
+            raise HTTPException(status_code=400, detail=f"Discord webhook URL: {problem}")
+        updates["alert_discord_webhook_url"] = url
     config.save_settings(updates)
     state.log_event("info", "Settings updated")
     return config.public_settings()

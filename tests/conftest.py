@@ -24,7 +24,7 @@ os.environ.setdefault("PORT", "9000")
 import httpx  # noqa: E402
 import pytest  # noqa: E402
 
-from app import auth, config, context, db, http, signals, state, tradovate  # noqa: E402
+from app import auth, config, context, db, http, security, signals, state, tradovate  # noqa: E402
 from app.discord_signals import hub, listener  # noqa: E402
 from app.main import app  # noqa: E402
 
@@ -60,6 +60,7 @@ def _reset_runtime() -> None:
     hub._areas.clear()
     listener._managers.clear()
     signals.sim_client.reset()
+    security.reset_limits()
 
 
 @pytest.fixture(autouse=True)
@@ -67,6 +68,8 @@ def fresh_env(monkeypatch):
     _reset_runtime()
     # Never let a test spin up a real Discord supervisor task.
     monkeypatch.setattr(listener.ListenerManager, "start", lambda self: None)
+    # The SSRF guard resolves DNS; tests run offline (test_security covers it).
+    monkeypatch.setattr(security, "check_outbound_url", lambda url: None)
     yield
     _reset_runtime()
 

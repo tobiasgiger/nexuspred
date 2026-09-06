@@ -23,3 +23,4 @@ env/
 # Generated launcher (install.bat) and local Claude Code tooling
 start.bat
 .claude/
+.venv2/

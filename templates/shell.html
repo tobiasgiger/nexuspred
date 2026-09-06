@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="color-scheme" content="dark light" />
   <title>Fluxbridge</title>
-  <script>
+  <script nonce="{{ nonce }}">
     // Resolve the theme before first paint (no flash): explicit choice, else OS.
     (function () {
       try {
@@ -34,7 +34,7 @@
   </div>
   <div id="drawerRoot"></div>
   <div class="toasts" id="toasts" aria-live="polite"></div>
-  <script>window.__FB_VERSION__ = "{{ version }}";</script>
+  <script nonce="{{ nonce }}">window.__FB_VERSION__ = "{{ version }}";</script>
   <script type="module" src="/static/js/app.js?v={{ version }}"></script>
 </body>
 </html>

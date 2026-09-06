@@ -27,6 +27,11 @@ VERSION_FILE = ROOT_DIR / "VERSION"
 GITHUB_OWNER = "tobiasgiger"
 GITHUB_REPO = "nexuspred"
 GITHUB_BRANCH = os.environ.get("NEXUSPRED_BRANCH", "main")
+# Canonical public origin (e.g. "https://bridge.example.com"). When set, the
+# dashboard shows webhook URLs on this host whichever hostname it was opened on,
+# and emailed invite / reset links are built on it instead of the request's
+# Host header. Trailing slashes are ignored.
+PUBLIC_URL = (os.environ.get("NEXUSPRED_PUBLIC_URL") or "").strip().rstrip("/")
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     # --- Tradovate connection -------------------------------------------------
@@ -346,6 +351,14 @@ def new_webhook(
         "accounts": [],
     }
 
+
+# Keys the generic ``POST /api/settings`` may write. Everything else has a
+# dedicated, validating endpoint (webhooks, token accounts, Discord listener)
+# or is internal (migration flags, the legacy webhook secret).
+SETTINGS_PROTECTED_KEYS = frozenset({
+    "token_accounts", "webhooks", "webhooks_migrated", "webhook_secret",
+    "discord_enabled", "discord_user_token", "discord_dry_run", "discord_channels",
+})
 
 # Fields that must never be returned to the browser in plain text.
 SECRET_FIELDS = {

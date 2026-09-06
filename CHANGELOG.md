@@ -4,6 +4,45 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.4
+Security hardening release (no functional changes to signals or trading).
+- **Session cookies are bound to the password hash**: changing or resetting a
+  password invalidates every other session of that user. Existing sessions from
+  earlier versions are rejected once — everyone signs in again after this deploy.
+- **CSRF protection**: state-changing requests with a foreign `Origin` /
+  `Sec-Fetch-Site: cross-site` are rejected (403). The TradingView ingress is exempt.
+- **Rate limits** on `/login`, `/setup`, `/register`, `/reset` and
+  `POST /api/account/password` (per client IP, plus a global per-IP ceiling); the auth
+  pages show a "too many attempts" message. **Request bodies are capped at 256 KB.**
+- **Security headers** on every response: Content-Security-Policy with a per-request
+  nonce for the two inline scripts (no `unsafe-inline` for scripts), `frame-ancestors
+  'none'` + `X-Frame-Options: DENY`, `X-Content-Type-Options`, `Referrer-Policy`,
+  `Permissions-Policy`, `Cross-Origin-Opener-Policy`, HSTS behind HTTPS and
+  `Cache-Control: no-store` on API/auth responses.
+- **SSRF guard** for URLs the bridge POSTs to (Discord alert webhook, custom
+  Discord-signal targets): `http(s)` only, no embedded credentials, host must not resolve
+  to loopback / private / link-local ranges. Validated on save with a clear error.
+- **Privilege fixes**: `POST /api/update/apply` (git reset + restart of the whole
+  process) is now admin-only — any invited user could trigger it before. `POST
+  /api/settings` can no longer write `webhooks`, `webhook_secret`, `token_accounts` or
+  the `discord_*` keys (each has its own validating endpoint) — a user could previously
+  plant arbitrary webhook tokens or an unmasked Discord token through it. `POST
+  /api/discord/config` and `/test` require the *Discord Signals* entitlement (the
+  listener already did, the config/test routes didn't). An invite created for a
+  specific email can only be redeemed with that email.
+- **Smaller fixes**: auth-exempt paths match exactly (`/loginx` is no longer exempt);
+  invite codes / reset tokens are URL-encoded in redirects; the webhook passphrase is
+  compared in constant time; `POST /logout` is accepted alongside `GET`.
+- **`NEXUSPRED_PUBLIC_URL`** (new, set to `https://bridge.hurenzone.ch` in
+  `render.yaml`): the dashboard shows webhook URLs on this origin whichever hostname it
+  was opened on (`/api/status` → `public_url`), and emailed invite / reset links are built
+  on it instead of the request's `Host` header.
+- **Dependencies** bumped to CVE-fixed releases: FastAPI 0.115.12 / Starlette 0.46
+  (CVE-2024-47874 multipart DoS), python-multipart 0.0.20 (CVE-2024-53981), Jinja2 3.1.6
+  (CVE-2024-56201, CVE-2024-56326, CVE-2025-27516), httpx 0.28.1, pydantic 2.10.6,
+  uvicorn 0.34.3.
+- Tests: 32 new (`tests/test_security.py`), 197 total.
+
 ## 5.0.0-alpha.3
 - **Marketplace: share a webhook with other users.** An admin publishes a webhook
   (Webhooks → Sharing tab: title, description, visibility *everyone* / *selected

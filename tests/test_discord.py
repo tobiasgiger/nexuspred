@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app import config, context, state
+from app import config, context, db, state
 from app.discord_signals import hub, listener, pipeline
 from app.discord_signals.parser import EmbedField, EmbedLike, embed_from_dict, parse_embed, to_float
 from app.discord_signals.routes import _merge_channels
@@ -190,6 +190,7 @@ def test_merge_channels_restores_masked_secrets(admin):
 
 
 async def test_discord_config_routes(client):
+    db.set_area_feature(1, "discord_signals", True)  # routes are gated on the entitlement
     r = await client.post("/api/discord/config", json={
         "discord_enabled": True, "discord_dry_run": True, "discord_user_token": " tok ",
         "discord_channels": [{"id": "1", "label": "c", "targets": [{"url": "https://u", "secret": "s"}]}]})

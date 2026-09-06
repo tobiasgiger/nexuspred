@@ -102,6 +102,7 @@ def _connect() -> sqlite3.Connection:
 # Invalidated by the only writers that can change them (create/delete user).
 _user_count: Optional[int] = None
 _users: dict[int, dict[str, Any]] = {}
+_pw_versions: dict[int, str] = {}  # user id -> fingerprint of the password hash
 _primary_area: dict[int, Optional[int]] = {}
 _area_ids: Optional[tuple[int, list[int]]] = None  # (areas_generation, ids)
 
@@ -112,6 +113,7 @@ def reset_caches() -> None:
     _area_ids = None
     _users.clear()
     _primary_area.clear()
+    _pw_versions.clear()
     _subs_changed()
 
 
@@ -337,6 +339,24 @@ def set_password(user_id: int, new_password: str) -> None:
     with _connect() as c:
         c.execute("UPDATE users SET password_hash=? WHERE id=?",
                   (hash_password(new_password), user_id))
+    _pw_versions.pop(user_id, None)
+
+
+def password_version(user_id: int) -> str:
+    """A short, stable fingerprint of the user's current password hash — baked
+    into session cookies so changing the password logs every other session
+    out. Empty for an unknown user (which never matches a cookie). Cached."""
+    cached = _pw_versions.get(user_id)
+    if cached is not None:
+        return cached
+    init()
+    with _connect() as c:
+        row = c.execute("SELECT password_hash FROM users WHERE id=?", (user_id,)).fetchone()
+    if not row:
+        return ""
+    version = hashlib.sha256(str(row["password_hash"]).encode()).hexdigest()[:16]
+    _pw_versions[user_id] = version
+    return version
 
 
 # Async wrappers: PBKDF2 (200k rounds) takes ~100 ms of CPU; run it in a
@@ -774,4 +794,5 @@ def consume_password_reset(token: str, new_password: str) -> Optional[int]:
         c.execute("UPDATE users SET password_hash=? WHERE id=?",
                   (hash_password(new_password), rec["user_id"]))
         c.execute("UPDATE password_resets SET used_at=? WHERE token=?", (_now(), token))
+    _pw_versions.pop(rec["user_id"], None)
     return rec["user_id"]

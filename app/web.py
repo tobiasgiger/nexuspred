@@ -6,20 +6,35 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException, Request
-from fastapi.responses import Response
+from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 
-from . import auth
+from . import auth, config
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 # Paths reachable without a login session: the webhook (TradingView can't send
 # auth), static assets, health check, guide/favicon, and the auth pages.
-AUTH_EXEMPT = (
-    "/webhook/", "/static/", "/healthz", "/guide", "/favicon.ico",
+# Prefixes match whole subtrees; pages match exactly (``/loginx`` is *not* exempt).
+AUTH_EXEMPT_PREFIXES = ("/webhook/", "/static/")
+AUTH_EXEMPT_PATHS = frozenset({
+    "/healthz", "/guide", "/favicon.ico",
     "/login", "/logout", "/register", "/setup", "/reset",
-)
+})
+AUTH_EXEMPT = AUTH_EXEMPT_PREFIXES + tuple(sorted(AUTH_EXEMPT_PATHS))  # backwards-compat alias
+
+
+def is_auth_exempt(path: str) -> bool:
+    return path in AUTH_EXEMPT_PATHS or path.startswith(AUTH_EXEMPT_PREFIXES)
+
+
+def render(request: Request, name: str, context: dict[str, Any] | None = None) -> HTMLResponse:
+    """Render a template with the request and its CSP nonce in scope."""
+    ctx = {"nonce": getattr(request.state, "csp_nonce", "")}
+    if context:
+        ctx.update(context)
+    return templates.TemplateResponse(request, name, ctx)
 
 
 def secure(request: Request) -> bool:
@@ -37,9 +52,24 @@ def set_session_cookie(resp: Response, request: Request, user_id: int) -> None:
 
 
 def base_url(request: Request) -> str:
+    """The origin to build absolute links (invites, password resets) on.
+
+    ``NEXUSPRED_PUBLIC_URL`` pins it (recommended on any public host: a forged
+    ``Host`` header can then never end up in an emailed link); otherwise the
+    request's own scheme + host are used."""
+    if config.PUBLIC_URL:
+        return config.PUBLIC_URL
     proto = request.headers.get("x-forwarded-proto") or request.url.scheme
     host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
     return f"{proto}://{host}"
+
+
+def require_feature(request: Request, feature: str) -> None:
+    """403 unless the caller's area has been granted ``feature`` by an admin."""
+    from . import db
+    area = getattr(request.state, "area_id", None)
+    if area is None or not db.get_area_features(area).get(feature):
+        raise HTTPException(status_code=403, detail=f"Feature '{feature}' is not enabled for your account")
 
 
 def require_admin(request: Request) -> dict[str, Any]:
