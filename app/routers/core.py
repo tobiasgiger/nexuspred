@@ -115,6 +115,22 @@ async def api_save_settings(request: Request) -> dict[str, Any]:
         if problem:
             raise HTTPException(status_code=400, detail=f"Discord webhook URL: {problem}")
         updates["alert_discord_webhook_url"] = url
+    if "alert_smtp_host" in updates or "alert_smtp_port" in updates:
+        current = config.load_settings()
+        host = str(updates.get("alert_smtp_host") or current.get("alert_smtp_host") or "").strip()
+        port = updates.get("alert_smtp_port", current.get("alert_smtp_port") or 587)
+        try:
+            port = int(port)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="SMTP port must be a number")
+        if not (1 <= port <= 65535):
+            raise HTTPException(status_code=400, detail="SMTP port must be between 1 and 65535")
+        if host:
+            problem = await asyncio.to_thread(security.check_outbound_url, f"https://{host}:{port}/")
+            if problem:
+                raise HTTPException(status_code=400, detail=f"SMTP host: {problem}")
+        updates["alert_smtp_host"] = host
+        updates["alert_smtp_port"] = port
     config.save_settings(updates)
     state.log_event("info", "Settings updated")
     return config.public_settings()

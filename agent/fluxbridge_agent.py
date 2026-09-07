@@ -36,7 +36,12 @@ import urllib.parse
 import urllib.request
 from datetime import datetime
 
-VERSION = "1.1.1"
+VERSION = "1.2.0"
+
+# The only hosts this agent will ever talk to on the bridge's behalf. Even a
+# compromised bridge (or a stolen bridge session) cannot turn this VPS into a
+# general-purpose proxy: anything else is refused before a socket is opened.
+ALLOWED_HOST_SUFFIXES = (".tradovateapi.com", ".tradovate.com")
 
 # Windows consoles often run cp1252; never let a non-ASCII character crash the agent.
 for _stream in (sys.stdout, sys.stderr):
@@ -99,9 +104,33 @@ def bridge_call(cfg: dict, method: str, path: str, body=None, timeout: float = 4
         return json.loads(text) if text else {}
 
 
+def allowed_url(url: str) -> bool:
+    """HTTPS to a Tradovate host only (no private addresses, no other services)."""
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        return False
+    host = (parts.hostname or "").lower()
+    return parts.scheme == "https" and bool(host) and host.endswith(ALLOWED_HOST_SUFFIXES)
+
+
+class _SameHostRedirects(urllib.request.HTTPRedirectHandler):
+    """Follow redirects only while they stay on an allowed host."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not allowed_url(newurl):
+            raise urllib.error.HTTPError(newurl, code, "redirect to a non-Tradovate host refused", headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_opener = urllib.request.build_opener(_SameHostRedirects)
+
+
 def run_job(job: dict) -> dict:
     """Execute one relayed request against Tradovate; return the result record."""
-    url = job["url"]
+    url = str(job.get("url") or "")
+    if not allowed_url(url):
+        return {"status_code": 0, "text": "", "error": "refused: not a Tradovate HTTPS URL"}
     params = job.get("params")
     if params:
         sep = "&" if "?" in url else "?"
@@ -116,7 +145,7 @@ def run_job(job: dict) -> dict:
     req.add_header("User-Agent", f"fluxbridge-agent/{VERSION}")
     timeout = float(job.get("timeout") or 20.0)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with _opener.open(req, timeout=timeout) as resp:
             return {"status_code": resp.status, "text": resp.read().decode("utf-8", "replace")}
     except urllib.error.HTTPError as exc:  # 4xx/5xx still carry the broker's answer
         return {"status_code": exc.code, "text": exc.read().decode("utf-8", "replace")}
@@ -157,8 +186,9 @@ def main() -> int:
         cfg["bridge"] = args.bridge
     if not cfg.get("bridge"):
         cfg["bridge"] = prompt("Bridge URL", "https://")
-    if not cfg["bridge"].startswith("http"):
-        log("The bridge URL must start with https://")
+    bridge_host = (urllib.parse.urlsplit(cfg["bridge"]).hostname or "").lower()
+    if not cfg["bridge"].startswith("https://") and bridge_host not in ("localhost", "127.0.0.1", "::1"):
+        log("The bridge URL must start with https:// (plain http would send the agent token in the clear)")
         return 2
     if args.code or not cfg.get("token"):
         code = args.code or prompt("Pairing code")

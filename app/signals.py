@@ -163,11 +163,12 @@ def forward_to_subscribers(payload: dict[str, Any], webhook: dict[str, Any],
         return 0
     aid = publisher_area if publisher_area is not None else context.get_area()
     subs = db.active_subscriptions(aid, webhook.get("id", ""))
+    shared = {k: v for k, v in payload.items() if not (isinstance(k, str) and "passphrase" in k.lower())}
     for sub in subs:
         view = marketplace.subscription_view(webhook, sub, aid)
         with context.use_area(sub["area_id"]):
-            state.log_signal(dict(payload), result="received", webhook=view.get("name", ""))
-            _spawn(process_background(dict(payload), view, trusted=True))
+            state.log_signal(dict(shared), result="received", webhook=view.get("name", ""))
+            _spawn(process_background(dict(shared), view, trusted=True))
     if subs:
         state.log_event("info", f"[{webhook.get('name', '?')}] forwarded to {len(subs)} subscriber(s)")
     return len(subs)

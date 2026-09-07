@@ -551,8 +551,14 @@ def delete_user(user_id: int) -> None:
             c.execute("DELETE FROM areas WHERE id=?", (aid,))
             # Their subscriptions, and everyone's subscriptions to their webhooks.
             c.execute("DELETE FROM subscriptions WHERE area_id=? OR publisher_area_id=?", (aid, aid))
+            # Their execution agents (tokens stop working) and push devices.
+            c.execute("DELETE FROM agents WHERE area_id=?", (aid,))
+            c.execute("DELETE FROM agent_pairings WHERE area_id=?", (aid,))
+            c.execute("DELETE FROM push_subscriptions WHERE area_id=?", (aid,))
+        c.execute("DELETE FROM push_subscriptions WHERE user_id=?", (user_id,))
         c.execute("DELETE FROM users WHERE id=?", (user_id,))
     _areas_generation += 1
+    _agents_by_hash.clear()
     reset_caches()
 
 
@@ -1285,13 +1291,17 @@ def get_agent_by_token(token: str) -> Optional[dict[str, Any]]:
     h = _agent_hash(token)
     cached = _agents_by_hash.get(h)
     if cached is not None:
-        return dict(cached) if cached else None
+        return dict(cached)
     init()
     with _connect() as c:
         r = c.execute("SELECT * FROM agents WHERE token_hash=?", (h,)).fetchone()
-    agent = _row_to_agent(r) if r else None
-    _agents_by_hash[h] = agent or {}
-    return dict(agent) if agent else None
+    if not r:
+        return None  # misses are never cached: unauthenticated guesses must not grow memory
+    agent = _row_to_agent(r)
+    if len(_agents_by_hash) > 256:
+        _agents_by_hash.clear()
+    _agents_by_hash[h] = agent
+    return dict(agent)
 
 
 def get_agent(area_id: int, agent_id: int) -> Optional[dict[str, Any]]:

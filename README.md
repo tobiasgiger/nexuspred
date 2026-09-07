@@ -172,15 +172,31 @@ placed through the simulator are not journaled (they never reach Tradovate).
   session out. PBKDF2-SHA256 (200k rounds) password hashing.
 - **CSRF**: state-changing requests whose `Origin` / `Sec-Fetch-Site` show another site
   are rejected (the TradingView ingress is exempt — it carries no cookie anyway).
-- **Brute force**: per-IP rate limits on `/login`, `/setup`, `/register`, `/reset` and
-  the password-change API (with a global per-IP ceiling), 256 KB request-body cap.
+- **Brute force**: per-IP rate limits on `/login`, `/setup`, `/register`, `/reset`,
+  the password-change API and agent pairing (with a global per-IP ceiling), plus
+  address-independent brakes — 20 failed logins per account in 10 minutes and 300 per
+  minute server-wide — so rotating or spoofing IPs buys an attacker nothing. The client
+  address is taken from the hop the *trusted* proxy appended to `X-Forwarded-For`
+  (`NEXUSPRED_PROXY_HOPS`, default 1 = Render / one nginx; 0 = no proxy, ignore the
+  header; 2 = Cloudflare in front of nginx). 256 KB request-body cap.
 - **Headers**: strict Content-Security-Policy with a per-request script nonce,
   `frame-ancestors 'none'`, `X-Frame-Options`, `X-Content-Type-Options`,
   `Referrer-Policy`, `Permissions-Policy`, HSTS behind HTTPS, `Cache-Control: no-store`
   on API and auth responses.
-- **SSRF**: the Discord alert webhook URL and custom Discord-signal target URLs are
-  checked on save — `http(s)` only, no credentials, and the host must not resolve to a
-  loopback / private / link-local address.
+- **SSRF**: the Discord alert webhook URL, custom Discord-signal target URLs, the SMTP
+  host and every push-notification endpoint are checked on save — `http(s)` only, no
+  credentials, and the host must not resolve to a loopback / private / link-local
+  address. SMTP uses verified TLS (`starttls` with the system trust store).
+- **Execution agents**: the agent only ever opens HTTPS connections to `*.tradovateapi.com`
+  / `*.tradovate.com` (redirects elsewhere are refused) and the bridge refuses to relay
+  anything else, so neither a bug nor a compromised bridge can turn a VPS into a proxy;
+  an agent can only be assigned to logins of the workspace it is paired with; agent
+  tokens are stored hashed, unknown tokens are never cached, and deleting a user revokes
+  their agents. The bundled Windows `.exe` is verified against the SHA-256 published on
+  the same release and the build carries a GitHub provenance attestation.
+- **Signal logs** never store the webhook passphrase (or any `secret` / `token` /
+  `password` field of the payload): it is masked before the signal is logged, streamed,
+  persisted or forwarded to marketplace subscribers.
 - **Least privilege**: the generic settings endpoint cannot write webhooks, token
   accounts or the Discord listener config (each has its own validating endpoint); the
   self-updater (`git reset` + restart of the whole process) is admin-only; the Discord

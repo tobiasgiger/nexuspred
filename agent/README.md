@@ -34,6 +34,14 @@ scheduled task ("At startup", run whether user is logged on or not) or wrap it w
 
 Linux: `./start-agent.sh` (same flow), or run `python3 fluxbridge_agent.py` under systemd.
 
+## What the agent will (not) do
+
+The agent only opens **HTTPS connections to Tradovate hosts** (`*.tradovateapi.com`,
+`*.tradovate.com`); any other target — including redirects — is refused before a socket
+is opened. So even if the bridge were compromised, this VPS could not be used as a
+general-purpose proxy. The bridge URL itself must be `https://` (plain http would send
+the agent token in the clear); `localhost` is the only exception, for testing.
+
 ## What goes through the agent
 
 Everything the assigned login does with Tradovate: order placement, modification and

@@ -4,12 +4,14 @@ session invalidation on password change, settings-key whitelist, admin-only
 self-update, Discord feature gate and the outbound-URL (SSRF) guard."""
 from __future__ import annotations
 
+import secrets
 import socket
 
 import httpx
 import pytest
 
-from app import auth, config, db, security
+from app import auth, config, context, db, security
+from tests.helpers import settle
 from app.security import check_outbound_url as real_check_outbound_url  # conftest stubs the module attr
 from app.main import app
 from tests.conftest import login_as
@@ -303,3 +305,104 @@ async def test_audit_api_kinds(client, admin):
     assert len((await client.get("/api/audit?kind=all")).json()) == 2
     users = (await client.get("/api/users")).json()["users"]
     assert "last_login_at" in users[0]
+
+
+# ---------------------------------------------- proxy-aware client IP + login brakes
+async def test_client_ip_uses_the_proxy_appended_hop(anon_client, admin):
+    """A caller cannot pick its own rate-limit bucket by sending X-Forwarded-For:
+    the trusted proxy appends the real address as the *last* hop."""
+    spoof = {"x-forwarded-for": "203.0.113.99, 198.51.100.1"}   # "203.0.113.99" was written by the client
+    for _ in range(10):
+        await anon_client.post("/login", data={"email": "a@b.c", "password": "x"}, headers=spoof)
+    r = await anon_client.post("/login", data={"email": "a@b.c", "password": "x"},
+                               headers={"x-forwarded-for": "203.0.113.1, 198.51.100.1"})
+    assert r.headers["location"] == "/login?error=rate"    # same real address → same bucket
+    rows = db.list_audit(5, logins=True)
+    assert rows[0]["target"] == "198.51.100.1"
+
+
+async def test_failed_logins_are_capped_per_account_regardless_of_ip(anon_client, admin):
+    from app import security
+    for i in range(20):
+        r = await anon_client.post("/login", data={"email": "admin@example.com", "password": "wrong"},
+                                   headers={"x-forwarded-for": f"198.51.100.{i + 1}"})
+        assert r.headers["location"] == "/login?error=bad"
+    # 21st failure from yet another address: blocked even with the right password
+    r = await anon_client.post("/login", data={"email": "Admin@Example.com", "password": "password123"},
+                               headers={"x-forwarded-for": "198.51.100.200"})
+    assert r.headers["location"] == "/login?error=rate" and r.headers["retry-after"] == "600"
+    assert db.list_audit(1, logins=True)[0]["action"] == "login_blocked"
+    # other accounts are unaffected; successes never count against the account
+    security.reset_limits()
+    for _ in range(5):
+        r = await anon_client.post("/login", data={"email": "admin@example.com", "password": "password123"},
+                                   headers={"x-forwarded-for": "198.51.100.201"})
+        assert r.headers["location"] == "/"
+    assert security.login_allowed("admin@example.com")
+
+
+def test_global_login_brake(admin):
+    from app import security
+    for _ in range(300):
+        security.login_failed(f"user{secrets.token_hex(2)}@example.com")
+    assert not security.login_allowed("someone-else@example.com")
+
+
+def test_proxy_hops_zero_ignores_forwarded_for(monkeypatch):
+    from app import security
+    monkeypatch.setattr(security, "PROXY_HOPS", 0)
+    scope = {"type": "http", "headers": [(b"x-forwarded-for", b"203.0.113.5")], "client": ("10.0.0.9", 1234)}
+    from starlette.requests import Request as _R
+    assert security.client_ip(_R(scope)) == "10.0.0.9"
+    monkeypatch.setattr(security, "PROXY_HOPS", 2)
+    scope["headers"] = [(b"x-forwarded-for", b"1.1.1.1, 2.2.2.2, 3.3.3.3")]
+    assert security.client_ip(_R(scope)) == "2.2.2.2"
+    scope["headers"] = [(b"x-forwarded-for", b"2.2.2.2")]      # fewer hops than trusted proxies
+    assert security.client_ip(_R(scope)) == "2.2.2.2"
+
+
+# ------------------------------------------------ passphrase never leaves the ingress
+async def test_webhook_passphrase_is_redacted_from_logs_and_history(client, webhook_factory, admin):
+    from app import config, history, state
+    config.save_settings({"webhook_passphrase": "s3cret"})
+    wh = webhook_factory(name="P")
+    entry = state.log_signal({"action": "buy", "symbol": "MNQ", "passphrase": "s3cret", "meta": {"api_secret": "k", "note": "x"}},
+                             result="received", webhook="P")
+    assert entry["payload"]["passphrase"] == "********" and entry["payload"]["meta"]["api_secret"] == "********"
+    assert entry["payload"]["meta"]["note"] == "x" and entry["payload"]["action"] == "buy"
+    state.log_event("error", "Signal error", payload={"passphrase": "s3cret", "action": "buy"})
+    assert state.recent_events()[0]["payload"]["passphrase"] == "********"
+    r = await client.get("/api/signals")
+    assert "s3cret" not in r.text
+    r = await client.get("/api/history/signals?q=s3cret")
+    assert "s3cret" not in r.text
+    assert wh  # the fixture created it
+
+
+async def test_forwarded_marketplace_signals_drop_the_passphrase(monkeypatch, admin, webhook_factory):
+    from app import marketplace, signals, state
+    wh = webhook_factory(name="Pub")
+    seen: list[dict] = []
+
+    async def fake_process(payload, webhook, *, trusted=False):
+        seen.append(payload)
+        return {"status": "ok"}
+    monkeypatch.setattr(signals, "process", fake_process)
+    monkeypatch.setattr(marketplace, "sharing_of", lambda w: {"enabled": True})
+    monkeypatch.setattr(marketplace, "subscription_view", lambda w, s, a: {**w, "name": "Sub view"})
+    monkeypatch.setattr(db, "active_subscriptions", lambda aid, wid: [{"area_id": context.get_area()}])
+    n = signals.forward_to_subscribers({"action": "buy", "symbol": "MNQ", "passphrase": "s3cret"}, wh)
+    await settle()
+    assert n == 1 and seen and "passphrase" not in seen[0] and seen[0]["action"] == "buy"
+
+
+# --------------------------------------------------------- SMTP target validation
+async def test_smtp_host_is_validated_like_any_outbound_target(client, monkeypatch):
+    from app import security
+    monkeypatch.setattr(security, "check_outbound_url", lambda url: "URL points at an internal address" if "10.0.0" in url else None)
+    r = await client.post("/api/settings", json={"alert_smtp_host": "10.0.0.5", "alert_smtp_port": 6379})
+    assert r.status_code == 400 and "SMTP host" in r.json()["detail"]
+    r = await client.post("/api/settings", json={"alert_smtp_host": "smtp.gmail.com", "alert_smtp_port": "abc"})
+    assert r.status_code == 400 and "port" in r.json()["detail"]
+    r = await client.post("/api/settings", json={"alert_smtp_host": "smtp.gmail.com", "alert_smtp_port": 587})
+    assert r.status_code == 200 and r.json()["alert_smtp_host"] == "smtp.gmail.com" and r.json()["alert_smtp_port"] == 587

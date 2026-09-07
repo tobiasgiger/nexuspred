@@ -28,6 +28,11 @@ from typing import Any, Optional
 
 from . import db
 
+# Hosts an agent may be asked to call. The agent enforces the same list on its
+# side; here it stops a bug (or a compromised bridge process) from turning the
+# VPS into a general-purpose proxy.
+ALLOWED_HOST_SUFFIXES = (".tradovateapi.com", ".tradovate.com")
+
 DISPATCH_TIMEOUT_S = 12.0     # an agent must have polled within this to be "online"
 ONLINE_WINDOW_S = 45.0        # last poll newer than this → online (long-poll is 25 s)
 RESULT_TIMEOUT_EXTRA_S = 10.0  # on top of the job's own HTTP timeout
@@ -35,6 +40,17 @@ RESULT_TIMEOUT_EXTRA_S = 10.0  # on top of the job's own HTTP timeout
 
 class AgentOffline(Exception):
     pass
+
+
+def allowed_url(url: str) -> bool:
+    """HTTPS to a Tradovate host only."""
+    from urllib.parse import urlsplit
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return False
+    host = (parts.hostname or "").lower()
+    return parts.scheme == "https" and bool(host) and host.endswith(ALLOWED_HOST_SUFFIXES)
 
 
 class _Job:
@@ -84,8 +100,13 @@ def reset() -> None:
 # ------------------------------------------------------------- bridge side
 async def request(agent_id: int, *, method: str, url: str, headers: dict[str, str],
                   json_body: Any = None, params: Optional[dict[str, Any]] = None,
-                  timeout: float = 20.0) -> tuple[int, str]:
-    """Run one HTTP request through an agent. Returns ``(status_code, text)``."""
+                  timeout: float = 20.0, area_id: Optional[int] = None) -> tuple[int, str]:
+    """Run one HTTP request through an agent. Returns ``(status_code, text)``.
+    With ``area_id`` the agent must be paired with that workspace."""
+    if not allowed_url(url):
+        raise ValueError(f"refusing to relay a request to {url!r}: not a Tradovate HTTPS endpoint")
+    if area_id is not None and not db.get_agent(area_id, agent_id):
+        raise AgentOffline(f"execution agent #{agent_id} is not paired with this workspace")
     if not is_online(agent_id):
         raise AgentOffline(f"execution agent #{agent_id} is offline (no poll in the last {int(ONLINE_WINDOW_S)} s)")
     loop = asyncio.get_running_loop()

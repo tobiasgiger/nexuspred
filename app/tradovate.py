@@ -14,7 +14,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from . import alerts, config, http, state
+from . import alerts, config, context, http, state
 
 LIVE_BASE = "https://live.tradovateapi.com/v1"
 DEMO_BASE = "https://demo.tradovateapi.com/v1"
@@ -185,7 +185,8 @@ class TradovateSession:
                 status, text = await relay.request(
                     int(self.agent_id), method=method, url=url, headers=headers,
                     json_body=kwargs.get("json"), params=kwargs.get("params"),
-                    timeout=float(kwargs.get("timeout") or 20.0))
+                    timeout=float(kwargs.get("timeout") or 20.0),
+                    area_id=self.area_id if self.area_id is not None else context.get_area())
             except relay.AgentOffline as exc:
                 raise TradovateError(f"[{self.name}] {exc}") from exc
             if status >= 400:

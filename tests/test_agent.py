@@ -183,6 +183,7 @@ def test_agent_script_runs_jobs():
     import importlib.util, pathlib
     spec = importlib.util.spec_from_file_location("fluxbridge_agent", pathlib.Path("agent/fluxbridge_agent.py"))
     mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+    mod.allowed_url = lambda url: True   # the allowlist is covered by its own test; here a local stub plays Tradovate
     srv = HTTPServer(("127.0.0.1", 0), _Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{srv.server_port}"
@@ -228,3 +229,102 @@ async def test_preconfigured_bundle(client, monkeypatch):
     r = await client.post("/api/agents/bundle", json={"name": "plain"})
     assert r.headers["X-Agent-Exe"] == "0" and "fluxbridge-agent-plain/fluxbridge_agent.py" in zipfile.ZipFile(io.BytesIO(r.content)).namelist()
     assert any(a["action"] == "agent_bundle" for a in db.list_audit(10))
+
+
+# ------------------------------------------------------------ hardening
+async def test_relay_refuses_non_tradovate_urls(client, anon_client):
+    paired = await _pair(anon_client, client)
+    relay.touch(paired["agent_id"])
+    for bad in ("https://169.254.169.254/latest/meta-data", "http://demo.tradovateapi.com/v1/x",
+                "https://demo.tradovateapi.com.evil.io/v1/x", "https://tradovateapi.com/v1/x"):
+        with pytest.raises(ValueError):
+            await relay.request(paired["agent_id"], method="GET", url=bad, headers={})
+    assert relay.allowed_url("https://live.tradovateapi.com/v1/order/placeorder")
+    assert relay.allowed_url("https://rpt-demo.tradovateapi.com/v1/reports/requestreport")
+
+
+def test_agent_script_refuses_non_tradovate_urls():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("fluxbridge_agent", "agent/fluxbridge_agent.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    for bad in ("https://169.254.169.254/latest/meta-data", "http://demo.tradovateapi.com/v1/x",
+                "https://demo.tradovateapi.com.evil.io/v1/x", "ftp://demo.tradovateapi.com/", ""):
+        r = mod.run_job({"url": bad, "method": "GET"})
+        assert r["status_code"] == 0 and r["error"].startswith("refused"), bad
+    assert mod.allowed_url("https://demo.tradovateapi.com/v1/auth/renewaccesstoken")
+
+
+async def test_unknown_agent_tokens_are_not_cached(anon_client, admin):
+    before = len(db._agents_by_hash)
+    for i in range(50):
+        r = await anon_client.get("/api/agent/jobs?wait=0", headers={"Authorization": f"Bearer fba_{'x' * 20}{i}"})
+        assert r.status_code == 401
+    assert len(db._agents_by_hash) == before
+
+
+async def test_bundle_rejects_exe_with_wrong_checksum(client, monkeypatch):
+    from app.routers import agent as agent_router
+    import hashlib
+
+    class Resp:
+        def __init__(self, status, content=b"", text=""):
+            self.status_code, self.content, self.text = status, content, text
+
+    exe = b"MZ real exe"
+    answers = {agent_router.AGENT_EXE_URL: Resp(200, exe),
+               agent_router.AGENT_EXE_URL + ".sha256": Resp(200, text="deadbeef  fluxbridge-agent.exe")}
+
+    class FakeClient:
+        async def get(self, url, **kw):
+            return answers[url]
+
+    monkeypatch.setattr(agent_router.http, "client", lambda name="outbound": FakeClient())
+    agent_router._exe_cache = None
+    assert await agent_router.fetch_agent_exe() is None                 # checksum mismatch → not bundled
+    answers[agent_router.AGENT_EXE_URL + ".sha256"] = Resp(200, text=hashlib.sha256(exe).hexdigest() + "  fluxbridge-agent.exe\n")
+    agent_router._exe_cache = None
+    assert await agent_router.fetch_agent_exe() == exe                 # matching checksum → bundled
+    answers[agent_router.AGENT_EXE_URL + ".sha256"] = Resp(404)
+    agent_router._exe_cache = None
+    assert await agent_router.fetch_agent_exe() == exe                 # no checksum published (older release) → accepted
+    agent_router._exe_cache = None
+
+
+async def test_agent_id_must_belong_to_the_callers_area(client, anon_client):
+    """A user of another workspace must not be able to route their logins through
+    someone else's execution agent (their Tradovate tokens would land on that VPS)."""
+    from app import auth
+    paired = await _pair(anon_client, client)                       # admin's agent
+    victim_agent = paired["agent_id"]
+    u2 = db.create_user("other@example.com", "password123")
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver",
+                                 cookies={auth.COOKIE: auth.make_session(u2["id"])}) as c2:
+        r = await c2.post("/api/token-accounts", json=[{"name": "L1", "environment": "demo", "enabled": True,
+                                                        "access_token": "tok", "agent_id": victim_agent}])
+        assert r.status_code == 400 and "not paired with this workspace" in r.json()["detail"]
+        # 0 / missing is always fine
+        r = await c2.post("/api/token-accounts", json=[{"name": "L1", "environment": "demo", "enabled": True, "access_token": "tok"}])
+        assert r.status_code == 200 and r.json()[0]["agent_id"] == 0
+    # the owner may assign it
+    r = await client.post("/api/token-accounts", json=[{"name": "L1", "environment": "demo", "enabled": True,
+                                                        "access_token": "tok", "agent_id": victim_agent}])
+    assert r.status_code == 200 and r.json()[0]["agent_id"] == victim_agent
+    # defence in depth: the relay itself refuses a foreign area
+    relay.touch(victim_agent)
+    with pytest.raises(relay.AgentOffline, match="not paired with this workspace"):
+        await relay.request(victim_agent, method="GET", url="https://demo.tradovateapi.com/v1/x", headers={},
+                            area_id=db.user_primary_area(u2["id"]))
+
+
+async def test_deleting_a_user_revokes_their_agents(client, anon_client, admin):
+    from app import auth
+    u2 = db.create_user("owner2@example.com", "password123", is_admin=True)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver",
+                                 cookies={auth.COOKIE: auth.make_session(u2["id"])}) as c2:
+        paired = await _pair(anon_client, c2, name="VPS-2")
+    async with _agent_client(paired["token"]) as ac:
+        assert (await ac.get("/api/agent/jobs?wait=0")).status_code == 200
+    db.delete_user(u2["id"])
+    async with _agent_client(paired["token"]) as ac:
+        assert (await ac.get("/api/agent/jobs?wait=0")).status_code == 401

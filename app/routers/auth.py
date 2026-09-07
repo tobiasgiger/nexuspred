@@ -7,7 +7,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from .. import auth, config, db, state
+from .. import auth, config, db, security, state
 from ..security import client_ip
 from ..web import render, set_session_cookie
 
@@ -39,8 +39,12 @@ async def login_page(request: Request, error: str = "") -> HTMLResponse:
 async def login_submit(request: Request):
     form = await request.form()
     email = str(form.get("email", "")).strip().lower()
+    if not security.login_allowed(email):
+        db.log_action(None, email[:200], "login_blocked", client_ip(request), "too many failed logins for this account")
+        return RedirectResponse("/login?error=rate", status_code=302, headers={"Retry-After": "600"})
     user = await db.authenticate_async(email, str(form.get("password", "")))
     if not user:
+        security.login_failed(email)
         db.log_action(None, email[:200], "login_failed", client_ip(request), "wrong email or password")
         return RedirectResponse("/login?error=bad", status_code=302)
     _signed_in(request, user, "password")

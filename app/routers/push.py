@@ -1,13 +1,16 @@
 """Web Push: the service worker, VAPID public key, per-device subscriptions and a test push."""
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
-from .. import config, context, db, push
+from .. import config, context, db, push, security
 from ..web import BASE_DIR
+
+MAX_DEVICES_PER_AREA = 25
 
 router = APIRouter(tags=["push"])
 
@@ -41,6 +44,15 @@ async def api_push_subscribe(request: Request) -> dict[str, Any]:
     keys = sub.get("keys") or {}
     if not endpoint.startswith("https://") or not keys.get("p256dh") or not keys.get("auth"):
         raise HTTPException(status_code=400, detail="A push subscription with endpoint and keys is required")
+    if len(endpoint) > 2048 or len(str(keys["p256dh"])) > 200 or len(str(keys["auth"])) > 100:
+        raise HTTPException(status_code=400, detail="Push subscription is malformed")
+    # The bridge will POST to this URL later — never let it be an internal address.
+    problem = await asyncio.to_thread(security.check_outbound_url, endpoint)
+    if problem:
+        raise HTTPException(status_code=400, detail=f"Push endpoint rejected: {problem}")
+    existing = db.list_push_subscriptions(context.get_area())
+    if len(existing) >= MAX_DEVICES_PER_AREA and not any(s["endpoint"] == endpoint for s in existing):
+        raise HTTPException(status_code=400, detail=f"At most {MAX_DEVICES_PER_AREA} push devices per workspace — remove one first")
     user = request.state.user
     rec = db.upsert_push_subscription(context.get_area(), user["id"], endpoint, str(keys["p256dh"]), str(keys["auth"]),
                                       device=str((body or {}).get("device") or "")[:120])

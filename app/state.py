@@ -185,9 +185,27 @@ def rollover_warnings(area_id: int | None = None) -> list[dict[str, Any]]:
 
 
 # ------------------------------------------------------------- rolling logs
+_SECRET_PAYLOAD_KEYS = ("passphrase", "secret", "password", "token")
+
+
+def redact_payload(payload: Any) -> Any:
+    """A copy of a signal payload with credential-like fields masked. Signal logs
+    are persisted, streamed to every browser of the area and forwarded to
+    marketplace subscribers — none of those may learn the webhook passphrase."""
+    if not isinstance(payload, dict):
+        return payload
+    out = {}
+    for k, v in payload.items():
+        if isinstance(k, str) and any(s in k.lower() for s in _SECRET_PAYLOAD_KEYS) and v not in (None, ""):
+            out[k] = "********"
+        else:
+            out[k] = redact_payload(v) if isinstance(v, dict) else v
+    return out
+
+
 def log_signal(payload: dict[str, Any], result: str = "received", webhook: str = "") -> dict[str, Any]:
     from . import history
-    entry = {"ts": _now(), "payload": payload, "result": result, "webhook": webhook or ""}
+    entry = {"ts": _now(), "payload": redact_payload(payload), "result": result, "webhook": webhook or ""}
     aid = context.get_area()
     st = _st_for(aid)
     with _lock:
@@ -219,6 +237,8 @@ def hydrate(area_id: int, *, signals: list[dict[str, Any]], orders: list[dict[st
 
 
 def log_event(level: str, message: str, **extra: Any) -> None:
+    if "payload" in extra:
+        extra["payload"] = redact_payload(extra["payload"])
     entry = {"ts": _now(), "level": level, "message": message, **extra}
     st = _st()
     with _lock:

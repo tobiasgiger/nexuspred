@@ -185,3 +185,21 @@ def test_real_webpush_call_shape(admin, monkeypatch):
     assert seen["vapid_claims"]["sub"].startswith("mailto:") and seen["ttl"] == 600
     from py_vapid import Vapid
     assert isinstance(seen["vapid_private_key"], Vapid)
+
+
+async def test_subscribe_rejects_internal_endpoints_and_caps_devices(client, monkeypatch):
+    from app import security
+    from app.routers import push as push_router
+    monkeypatch.setattr(security, "check_outbound_url", lambda url: "URL points at an internal address" if "10.0.0" in url else None)
+    r = await client.post("/api/push/subscribe", json={"subscription": {"endpoint": "https://10.0.0.5/push", "keys": SUB["keys"]}})
+    assert r.status_code == 400 and "internal" in r.json()["detail"]
+    monkeypatch.setattr(push_router, "MAX_DEVICES_PER_AREA", 2)
+    for i in range(2):
+        assert (await client.post("/api/push/subscribe", json={"subscription": {"endpoint": f"https://push.example/{i}", "keys": SUB["keys"]}})).status_code == 200
+    r = await client.post("/api/push/subscribe", json={"subscription": {"endpoint": "https://push.example/3", "keys": SUB["keys"]}})
+    assert r.status_code == 400 and "At most 2" in r.json()["detail"]
+    # re-registering an existing endpoint is still fine at the cap
+    assert (await client.post("/api/push/subscribe", json={"subscription": {"endpoint": "https://push.example/1", "keys": SUB["keys"]}})).status_code == 200
+    # oversized keys are rejected
+    r = await client.post("/api/push/subscribe", json={"subscription": {"endpoint": "https://push.example/4", "keys": {"p256dh": "x" * 300, "auth": "a"}}})
+    assert r.status_code == 400

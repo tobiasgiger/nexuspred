@@ -8,6 +8,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write      # build provenance attestation (SLSA)
+  attestations: write
 
 jobs:
   build:
@@ -23,6 +25,12 @@ jobs:
           python -m pip install -q pyinstaller
           pyinstaller --onefile --console --name fluxbridge-agent --distpath dist agent/fluxbridge_agent.py
           dist\fluxbridge-agent.exe --help
+      - name: Checksum
+        shell: pwsh
+        run: |
+          $h = (Get-FileHash dist/fluxbridge-agent.exe -Algorithm SHA256).Hash.ToLower()
+          "$h  fluxbridge-agent.exe" | Out-File -Encoding ascii -NoNewline dist/fluxbridge-agent.exe.sha256
+          Get-Content dist/fluxbridge-agent.exe.sha256
       - name: Publish to the rolling "agent-latest" release
         uses: softprops/action-gh-release@v2
         with:
@@ -30,4 +38,11 @@ jobs:
           name: Fluxbridge execution agent (latest build)
           body: "Windows build of agent/fluxbridge_agent.py. The bridge bundles this file into the preconfigured download under Settings → Execution Agents."
           prerelease: true
-          files: dist/fluxbridge-agent.exe
+          files: |
+            dist/fluxbridge-agent.exe
+            dist/fluxbridge-agent.exe.sha256
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        continue-on-error: true   # the release is already published; provenance is extra assurance
+        with:
+          subject-path: dist/fluxbridge-agent.exe

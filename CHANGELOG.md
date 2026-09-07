@@ -4,6 +4,36 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.17
+- **Security review round 2** (findings from a fresh assessment incl. the execution
+  agents and push channel; all fixed):
+  - *Rate-limit bypass via `X-Forwarded-For`* (confirmed against the live host): the
+    limiter keyed on the first, client-written hop. The client address is now the hop
+    the trusted proxy appended (`NEXUSPRED_PROXY_HOPS`, default 1), and two
+    address-independent brakes were added — 20 failed logins per account / 10 min and
+    300 failures per minute server-wide (`login_blocked` audit rows).
+  - *Cross-workspace agent hijack*: a user could set another tenant's `agent_id` on their
+    logins and trade (with their Tradovate tokens) through that tenant's VPS. Agent ids
+    are now validated against the caller's workspace on save and again in the relay.
+  - *Agent as an open proxy*: the agent executed any URL the bridge handed it. Agent
+    **v1.2.0** only calls `https://*.tradovateapi.com` / `*.tradovate.com` (redirects
+    elsewhere refused) and the bridge enforces the same list; the bridge URL must be
+    `https://`.
+  - *Webhook passphrase in signal logs*: the raw payload (incl. `passphrase`) was
+    persisted, streamed and forwarded to marketplace subscribers. Credential-like payload
+    fields are masked everywhere; forwarded copies drop the passphrase.
+  - *Push endpoint SSRF*: `/api/push/subscribe` accepted any `https://` URL the bridge
+    would later POST to. Endpoints pass the SSRF guard, keys are length-checked, at most
+    25 devices per workspace, and subscribe/test are rate-limited.
+  - *SMTP host* is validated like other outbound targets (no internal addresses, port
+    1–65535) and `starttls` now verifies the server certificate.
+  - *Memory growth from unknown agent tokens*: failed token lookups were cached forever;
+    misses are no longer cached and the cache is bounded.
+  - *Agent .exe supply chain*: the release now carries `fluxbridge-agent.exe.sha256` and a
+    GitHub build-provenance attestation; the bridge refuses to bundle an .exe whose hash
+    does not match.
+  - Deleting a user now revokes their agents, pairing codes and push devices.
+
 ## 5.0.0-alpha.16
 - **Push notifications** (`app/push.py`, `static/js/sw.js`, `static/js/push.js`). A third
   alert channel next to Discord and email: Web Push to every device that enabled it on

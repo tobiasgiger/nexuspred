@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 
-from .. import config, state, tradovate
+from .. import config, context, db, state, tradovate
 
 router = APIRouter(prefix="/api", tags=["accounts"])
 
@@ -62,7 +62,7 @@ async def api_save_token_accounts(request: Request) -> list[dict[str, Any]]:
             "account_spec": a.get("account_spec") or prev.get("account_spec", ""),
             "account_id": a.get("account_id") or prev.get("account_id", 0),
             "token_expires": prev.get("token_expires", ""),
-            "agent_id": int(a.get("agent_id") or 0),
+            "agent_id": _own_agent(a.get("agent_id")),
             "accounts": prev.get("accounts") or [],
         })
     config.save_settings({"token_accounts": cleaned})
@@ -70,6 +70,21 @@ async def api_save_token_accounts(request: Request) -> list[dict[str, Any]]:
     enabled = sum(1 for a in cleaned if a["enabled"])
     state.log_event("info", f"Token accounts updated — {enabled}/{len(cleaned)} enabled")
     return config.public_settings().get("token_accounts", [])
+
+
+def _own_agent(value: Any) -> int:
+    """An execution agent id is only accepted when the agent is paired with *this*
+    workspace — otherwise a user could route their orders (and Tradovate tokens)
+    through another tenant's VPS."""
+    try:
+        agent_id = int(value or 0)
+    except (TypeError, ValueError):
+        agent_id = 0
+    if agent_id <= 0:
+        return 0
+    if not db.get_agent(context.get_area(), agent_id):
+        raise HTTPException(status_code=400, detail=f"Execution agent #{agent_id} is not paired with this workspace")
+    return agent_id
 
 
 # =============================================================== Trade accounts

@@ -2,6 +2,7 @@
 admin endpoints the dashboard uses (list / pairing codes / revoke / download)."""
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import re
@@ -25,15 +26,25 @@ EXE_CACHE_S = 3600.0
 
 
 async def fetch_agent_exe() -> bytes | None:
-    """The latest agent .exe (cached for an hour); None when unavailable."""
+    """The latest agent .exe (cached for an hour); None when unavailable or
+    when it does not match the SHA-256 published next to it."""
     global _exe_cache
     if _exe_cache and time.monotonic() - _exe_cache[0] < EXE_CACHE_S:
         return _exe_cache[1]
     try:
-        resp = await http.client("outbound").get(AGENT_EXE_URL, follow_redirects=True, timeout=60.0)
-        if resp.status_code == 200 and resp.content[:2] == b"MZ":
-            _exe_cache = (time.monotonic(), resp.content)
-            return resp.content
+        client = http.client("outbound")
+        resp = await client.get(AGENT_EXE_URL, follow_redirects=True, timeout=60.0)
+        if resp.status_code != 200 or resp.content[:2] != b"MZ":
+            return None
+        sums = await client.get(AGENT_EXE_URL + ".sha256", follow_redirects=True, timeout=30.0)
+        if sums.status_code == 200:
+            expected = sums.text.strip().split()[0].lower() if sums.text.strip() else ""
+            if expected != hashlib.sha256(resp.content).hexdigest():
+                from .. import state
+                state.log_event("error", "Agent .exe on the GitHub release does not match its published SHA-256 — not bundling it")
+                return None
+        _exe_cache = (time.monotonic(), resp.content)
+        return resp.content
     except Exception:  # noqa: BLE001 - the Python files still work without the exe
         pass
     return None

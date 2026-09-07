@@ -15,6 +15,7 @@ Everything is in-memory and single-process, matching the rest of the runtime
 from __future__ import annotations
 
 import ipaddress
+import os
 import secrets
 import socket
 import threading
@@ -41,15 +42,25 @@ def body_limit_for(path: str, default: int) -> int:
     return default
 
 # --------------------------------------------------------------- client IP
+# How many trusted reverse proxies sit in front of the app. Each one *appends*
+# the address it saw to ``X-Forwarded-For``, so the real client is the entry
+# ``PROXY_HOPS`` from the right; anything further left was written by the
+# client itself and is untrusted. Render / a single nginx = 1 (default),
+# Cloudflare in front of nginx = 2, no proxy at all = 0 (ignore the header).
+PROXY_HOPS = max(0, int(os.environ.get("NEXUSPRED_PROXY_HOPS", "1") or 1))
+
+
 def client_ip(request: Request) -> str:
-    """Best-effort client address. Behind Render/nginx the socket peer is the
-    proxy, so the first ``X-Forwarded-For`` hop is used when present. A forged
-    header only lets a caller bucket itself differently, never bypass a limit."""
-    xff = request.headers.get("x-forwarded-for", "")
+    """The client address as seen by the *trusted* proxy (see ``PROXY_HOPS``).
+
+    Taking the first ``X-Forwarded-For`` hop would let any caller pick its own
+    bucket for the rate limiter and its own address in the audit log — the
+    proxy appends, it does not overwrite."""
+    xff = request.headers.get("x-forwarded-for", "") if PROXY_HOPS else ""
     if xff:
-        first = xff.split(",")[0].strip()
-        if first:
-            return first
+        hops = [h.strip() for h in xff.split(",") if h.strip()]
+        if hops:
+            return hops[-PROXY_HOPS] if len(hops) >= PROXY_HOPS else hops[0]
     return request.client.host if request.client else "unknown"
 
 
@@ -81,6 +92,17 @@ class RateLimiter:
                     self._hits.pop(k, None)
             return True
 
+    def peek(self, key: str) -> bool:
+        """True while ``key`` is still under the limit (does not record a hit)."""
+        now = time.monotonic()
+        with self._lock:
+            q = self._hits.get(key)
+            if not q:
+                return True
+            while q and q[0] <= now - self.window:
+                q.popleft()
+            return len(q) < self.limit
+
     def reset(self) -> None:
         with self._lock:
             self._hits.clear()
@@ -96,10 +118,28 @@ _LIMITS: dict[str, RateLimiter] = {
     "/reset": RateLimiter(10, 60.0),
     "/api/account/password": RateLimiter(5, 60.0),
     "/api/agent/pair": RateLimiter(10, 60.0),
+    "/api/push/subscribe": RateLimiter(20, 60.0),
+    "/api/push/test": RateLimiter(10, 60.0),
 }
 # Global ceiling per IP across all credential endpoints (an attacker rotating
 # between them still hits this).
 _GLOBAL = RateLimiter(30, 60.0)
+
+# Per-account and server-wide caps on *failed* logins — independent of the
+# client address, so a distributed or address-spoofing attacker gains nothing
+# from rotating IPs. 20 wrong passwords in 10 minutes locks the address out
+# briefly; 300 failures a minute across all accounts trips the global brake.
+LOGIN_FAILS_PER_EMAIL = RateLimiter(20, 600.0)
+LOGIN_FAILS_TOTAL = RateLimiter(300, 60.0)
+
+
+def login_allowed(email: str) -> bool:
+    return LOGIN_FAILS_PER_EMAIL.peek(email.lower()) and LOGIN_FAILS_TOTAL.peek("*")
+
+
+def login_failed(email: str) -> None:
+    LOGIN_FAILS_PER_EMAIL.hit(email.lower())
+    LOGIN_FAILS_TOTAL.hit("*")
 
 # Auth form pages redirect back to themselves with ``?error=rate`` so the user
 # sees a message instead of a bare 429.
@@ -110,6 +150,8 @@ def reset_limits() -> None:
     for rl in _LIMITS.values():
         rl.reset()
     _GLOBAL.reset()
+    LOGIN_FAILS_PER_EMAIL.reset()
+    LOGIN_FAILS_TOTAL.reset()
 
 
 def _rate_limited(request: Request) -> Response | None:

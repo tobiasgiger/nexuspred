@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import smtplib
+import ssl
 from email.mime.text import MIMEText
 from typing import Any
 
@@ -62,7 +63,7 @@ def _send_email_sync(subject: str, body: str) -> None:
     host = s.get("alert_smtp_host") or "smtp.gmail.com"
     port = int(s.get("alert_smtp_port") or 587)
     with smtplib.SMTP(host, port, timeout=15) as server:
-        server.starttls()
+        server.starttls(context=ssl.create_default_context())  # verified TLS: credentials never go to an impostor
         server.login(username, password)
         server.send_message(msg)
 
@@ -93,7 +94,7 @@ def _send_to_sync(to_addr: str, subject: str, body: str) -> None:
     host = s.get("alert_smtp_host") or "smtp.gmail.com"
     port = int(s.get("alert_smtp_port") or 587)
     with smtplib.SMTP(host, port, timeout=15) as server:
-        server.starttls()
+        server.starttls(context=ssl.create_default_context())  # verified TLS: credentials never go to an impostor
         server.login(username, password)
         server.send_message(msg)
 
