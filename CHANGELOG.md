@@ -33,6 +33,10 @@ shows the **Update** button when a newer version is available.
     GitHub build-provenance attestation; the bridge refuses to bundle an .exe whose hash
     does not match.
   - Deleting a user now revokes their agents, pairing codes and push devices.
+- Dependencies: floors raised to what CI already runs (cryptography 50.0.1, packaging 26.3,
+  discord.py-self 2.1.0, pytest 9.1.1, pytest-asyncio 1.4.0) and the GitHub Actions bumped to
+  their current majors (checkout 7, setup-python 7, setup-node 7, upload-artifact 7) —
+  consolidates the nine open Dependabot PRs into one change.
 
 ## 5.0.0-alpha.16
 - **Push notifications** (`app/push.py`, `static/js/sw.js`, `static/js/push.js`). A third

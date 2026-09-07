@@ -4,13 +4,13 @@ httpx==0.28.1
 pydantic==2.13.5
 jinja2==3.1.6
 python-multipart==0.0.32
-packaging>=23.2
+packaging>=26.3
 tzdata>=2024.1                # zoneinfo database on Windows (journal schedule / buckets)
-cryptography>=44.0.0        # Fernet: secrets encrypted at rest (app/crypto.py)
+cryptography>=50.0.1       # Fernet: secrets encrypted at rest (app/crypto.py)
 # Web Push (VAPID) notifications to the installed dashboard app.
 pywebpush>=2.0.0
 # Optional: `pip install h2` enables HTTP/2 for the pooled Tradovate client
 # (app/http.py detects it; without it the pool uses HTTP/1.1 keep-alive).
 # Discord signal listener (self-bot). Imports as `discord`; the module imports
 # it lazily, so the bridge still boots if this fails to install.
-discord.py-self>=2.0.0
+discord.py-self>=2.1.0
