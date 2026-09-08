@@ -59,9 +59,47 @@ def _trade_key(webhook_id: str, root: str) -> str:
     return f"{webhook_id}:{root}"
 
 
-async def _cancel_working(ex: Any, tag: str, errors: list[str] | None = None) -> int:
-    """Cancel every working order on one account with all cancels in flight at
-    once. Returns how many were cancelled. Tradovate rejections are collected
+async def _orders_for_contract(ex: Any, orders: list[dict[str, Any]], contract: str,
+                               tag: str) -> list[dict[str, Any]]:
+    """The subset of ``orders`` that belongs to ``contract``.
+
+    A close for one symbol must not strip the protective stops / targets of
+    positions in other symbols on the same account. Tradovate orders carry a
+    numeric ``contractId``; the simulator's carry the contract ``symbol``. When
+    neither can be matched the order is left alone (and reported), because
+    cancelling it could unprotect an unrelated position."""
+    try:
+        cid = int(await ex.contract_id(contract))
+    except (TradovateError, AttributeError, TypeError, ValueError):
+        cid = 0
+    mine: list[dict[str, Any]] = []
+    identifiable = 0
+    for o in orders:
+        name = str(o.get("symbol") or o.get("contract") or "")
+        oid = o.get("contractId")
+        has_id = isinstance(oid, int) and oid > 0
+        if name or has_id:
+            identifiable += 1
+        if (name and name == contract) or (cid and has_id and oid == cid):
+            mine.append(o)
+    if orders and not identifiable:
+        # Nothing about these orders says which contract they belong to (no
+        # contractId, no symbol): keep the old account-wide behaviour rather
+        # than leave this contract's stops working after the liquidation.
+        state.log_event("warn", f"{tag}Working orders on {ex.name} carry no contract — cancelling all of them")
+        return list(orders)
+    if len(mine) < identifiable:
+        state.log_event("info", f"{tag}Keeping {identifiable - len(mine)} working order(s) on {ex.name} "
+                                f"that belong to other contracts than {contract}")
+    return mine
+
+
+async def _cancel_working(ex: Any, tag: str, errors: list[str] | None = None,
+                          contract: str | None = None) -> int:
+    """Cancel working orders on one account with all cancels in flight at once.
+    With ``contract`` only that contract's orders are cancelled (a symbol-scoped
+    close); without it every working order goes, as the SOS flatten-all needs.
+    Returns how many were cancelled. Tradovate rejections are collected
     (``errors``) or logged per order; anything else propagates, as in v4."""
     try:
         orders = await ex.working_orders()
@@ -71,6 +109,8 @@ async def _cancel_working(ex: Any, tag: str, errors: list[str] | None = None) ->
         else:
             state.log_event("warn", f"{tag}Could not list working orders for {ex.name}: {exc}")
         return 0
+    if contract:
+        orders = await _orders_for_contract(ex, orders, contract, tag)
     ids = [o.get("id") for o in orders if o.get("id") is not None]
     results = await asyncio.gather(*(ex.cancel_order(oid) for oid in ids), return_exceptions=True)
     cancelled = 0

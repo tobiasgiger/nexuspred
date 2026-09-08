@@ -24,6 +24,7 @@ class FakeExecutor:
         working: list[dict[str, Any]] | None = None,
         fail_place: bool = False,
         place_delay: float = 0.0,
+        contract_ids: dict[str, int] | None = None,
     ) -> None:
         self.name = name
         self.qty_multiplier = qty_multiplier
@@ -33,6 +34,7 @@ class FakeExecutor:
         self.working = list(working or [])
         self.fail_place = fail_place
         self.place_delay = place_delay
+        self.contract_ids = dict(contract_ids or {})
 
     # -- helpers ---------------------------------------------------------
     def of(self, kind: str) -> list[dict[str, Any]]:
@@ -64,6 +66,13 @@ class FakeExecutor:
 
     async def working_orders(self) -> list[dict[str, Any]]:
         return list(self.working)
+
+    async def contract_id(self, symbol: str) -> int:
+        """Stable fake id per contract name (mirrors Tradovate's numeric ids)."""
+        self.calls.append(("contract_id", {"symbol": symbol}))
+        if symbol in self.contract_ids:
+            return self.contract_ids[symbol]
+        raise TradovateError(f"Cannot resolve contract id for {symbol}")
 
     async def liquidate_position(self, symbol: str) -> dict[str, Any]:
         self.calls.append(("liquidate", {"symbol": symbol}))

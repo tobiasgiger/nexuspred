@@ -120,6 +120,7 @@ class TradovateSession:
         self._token_expires = _parse_iso(entry.get("token_expires")) or _decode_jwt_exp(self._token)
         self._lock = asyncio.Lock()
         self._contract_cache: dict[str, tuple[str, datetime]] = {}
+        self._contract_id_cache: dict[str, tuple[int, datetime]] = {}
         self.fingerprint = _fingerprint(entry)
         if self._token_expires:
             state.set_session_status(self.name, token_expires=self._token_expires.isoformat())
@@ -442,6 +443,19 @@ class TradovateSession:
         return [o for o in orders
                 if o.get("ordStatus") in active and o.get("accountId") == aid]
 
+    async def contract_id(self, symbol: str) -> int:
+        """Tradovate's numeric contract id for a contract name (cached 1 h).
+        Used to cancel only the orders that belong to one contract."""
+        cached = self._contract_id_cache.get(symbol)
+        if cached and datetime.now(timezone.utc) - cached[1] < timedelta(hours=1):
+            return cached[0]
+        found = await self._request("GET", "/contract/find", params={"name": symbol})
+        cid = int((found or {}).get("id") or 0)
+        if not cid:
+            raise TradovateError(f"Cannot resolve contract id for {symbol}")
+        self._contract_id_cache[symbol] = (cid, datetime.now(timezone.utc))
+        return cid
+
     async def liquidate_position(self, symbol: str, *, account_id: int | None = None,
                                  account_name: str | None = None) -> dict[str, Any]:
         aid = account_id or self.account_id
@@ -514,6 +528,9 @@ class AccountExecutor:
 
     async def working_orders(self) -> list[dict[str, Any]]:
         return await self.session.working_orders(account_id=self.id)
+
+    async def contract_id(self, symbol: str) -> int:
+        return await self.session.contract_id(symbol)
 
     async def liquidate_position(self, symbol: str) -> dict[str, Any]:
         return await self.session.liquidate_position(

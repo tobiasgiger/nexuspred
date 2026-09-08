@@ -25,7 +25,7 @@ access control, and a built-in GitHub auto-updater.
   - `sl` → protective **stop** order covering the whole position.
   - `move_sl` → moves the protective stop (e.g. to break-even).
   - `trail_active` → acknowledged (the strategy keeps sending `move_sl` updates).
-  - `close_all` → cancels working orders and **flattens the whole position**.
+  - `close_all` → cancels that contract's working orders and **flattens the whole position** (stops/targets of other symbols on the same account are left alone).
 - **Trade simulator** that runs full scenarios (winning trade, losing trade, manual
   close…) through the *real* signal logic with an in-memory executor — no credentials,
   no broker calls. Run a whole scenario or step through it.
@@ -238,7 +238,9 @@ Just `action`, `symbol` and (optionally) `qty` — no TP/SL:
 {"action":"buy","symbol":"MNQ1!","qty":2}
 ```
 
-Omit `qty` to use the webhook's configured default. `close_all` flattens the position:
+Omit `qty` to use the webhook's configured default. `close_all` flattens the position and
+cancels only that contract's working orders, so positions in other symbols on the same
+account keep their stops (the SOS **Flatten all** button remains account-wide):
 
 ```json
 {"action":"close_all","symbol":"MNQ1!"}
@@ -314,7 +316,7 @@ routes to.
 | Strategy | Signal `action` | Order(s) placed | Type | Qty |
 |---|---|---|---|---|
 | `simple` | `buy` / `sell` | single entry | Market (or Limit if `entry`/`price` given) | payload `qty` (or webhook default) × account multiplier |
-| `simple` | `close_all` | cancel working orders + flatten | Market | full position |
+| `simple` | `close_all` | cancel *this contract's* working orders + flatten | Market | full position |
 | `bracket` | `buy` / `sell` | entry | Market | webhook `default_qty` × account multiplier |
 | `bracket` | `buy` / `sell` | tp1, tp2, tp3 (if present) | Limit | webhook `tp_qty` each × account multiplier |
 | `bracket` | `buy` / `sell` | sl | Stop | full position |
@@ -510,7 +512,8 @@ An admin can **publish** one of their webhooks; other users find it on the
   mapping, their alert channels and their logs. Subscribers never see the publisher's
   URL, token or accounts; the publisher never sees the subscribers' accounts. A failure
   on one side never affects the other. Subscribers' own webhook passphrase is not
-  applied (the publisher's webhook already authenticated the alert).
+  applied — the publisher's passphrase is verified **before** anything is forwarded, so a
+  signal that fails it reaches no subscriber at all.
 - **Test signals** stay in the publisher's area unless *Also forward to marketplace
   subscribers* is switched on (confirmation required).
 - Unpublishing pauses subscriptions; deleting the webhook removes them. Publish,

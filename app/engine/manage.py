@@ -12,7 +12,8 @@ from .common import _cancel_working, _lock, _trade_key
 async def handle_close_all(root, target, executors, active_map, tag, webhook):
     async def close_account(ex) -> int:
         contract = await ex.resolve_contract(target)
-        cancelled = await _cancel_working(ex, tag)
+        # Only this contract's working orders — other symbols keep their stops.
+        cancelled = await _cancel_working(ex, tag, contract=contract)
         await ex.liquidate_position(contract)
         return cancelled
 

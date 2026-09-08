@@ -140,12 +140,35 @@ def _spawn(coro: Any) -> asyncio.Task:
     return task
 
 
+def passphrase_ok(payload: dict[str, Any], settings: dict[str, Any] | None = None) -> bool:
+    """Whether the signal carries the area's webhook passphrase (True when none
+    is configured). Checked at the ingress *before* anything is executed or
+    forwarded — a wrong passphrase must not reach marketplace subscribers,
+    whose executions skip the check (``trusted=True``)."""
+    s = settings if settings is not None else config.load_settings()
+    want = str(s.get("webhook_passphrase") or "")
+    if not want:
+        return True
+    given = str(payload.get("passphrase") or "")
+    return hmac.compare_digest(given.encode(), want.encode())
+
+
 def accept(payload: dict[str, Any], webhook: dict[str, Any], *, forward: bool = True) -> None:
     """Acknowledge a signal for an enabled webhook and execute it in the
     background (the caller's area context is inherited by the task). Shared by
     the TradingView ingress and the in-process Discord dispatch. A published
-    webhook's signal is also forwarded to its marketplace subscribers."""
-    state.log_signal(payload, result="received", webhook=webhook.get("name", ""))
+    webhook's signal is also forwarded to its marketplace subscribers.
+
+    The passphrase is verified here, before either happens: subscribers execute
+    with ``trusted=True``, so a fan-out ahead of the check would let anyone who
+    merely knows the URL trade on every subscriber's accounts."""
+    name = webhook.get("name", "")
+    state.log_signal(payload, result="received", webhook=name)
+    if not passphrase_ok(payload):
+        state.log_event("error", "Signal rejected: invalid passphrase", payload=payload)
+        state.log_signal(payload, result="error: Invalid passphrase", webhook=name)
+        _spawn(alerts.webhook_failed(name or "?", "Invalid passphrase"))
+        return
     _spawn(process_background(payload, webhook))
     if forward:
         forward_to_subscribers(payload, webhook)
@@ -216,11 +239,10 @@ async def process(
         webhook = _synthetic_bracket_webhook(s)
 
     if not simulate and not trusted:
-        # passphrase (optional, defence in depth on top of the URL secret)
-        if s.get("webhook_passphrase"):
-            given = str(payload.get("passphrase") or "")
-            if not hmac.compare_digest(given.encode(), str(s["webhook_passphrase"]).encode()):
-                raise SignalError("Invalid passphrase")
+        # Defence in depth on top of the URL secret. The ingress (accept) already
+        # checked this before forwarding; direct callers land here.
+        if not passphrase_ok(payload, s):
+            raise SignalError("Invalid passphrase")
 
     if webhook.get("strategy") == "ts_hunter":
         return await _process_ts_hunter(payload, webhook, active_map, simulate)

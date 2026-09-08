@@ -4,6 +4,23 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.30
+- **Passphrase is verified before the marketplace fan-out** (`app/signals.py`). The
+  publisher's signal was forwarded to subscribers *in parallel* with the publisher's own
+  execution, and subscribers run with `trusted=True` (they cannot know the passphrase) —
+  so anyone who merely knew the webhook URL could trade on every subscriber's accounts
+  while the publisher's own execution failed. `accept()` now checks first: a wrong or
+  missing passphrase executes nothing anywhere, logs the rejection and fires the
+  "signal not executed" alert. `process()` keeps its own check for direct callers.
+- **`close_all` only cancels its own contract's orders** (`app/engine/{common,manage,ts_hunter}.py`).
+  A close for one symbol cancelled *every* working order on the account, stripping the
+  stops and targets of positions in other symbols and leaving them unprotected. Orders are
+  now matched to the contract by Tradovate's numeric `contractId` (new `contract_id()`
+  lookup, cached) or by contract name; orders of other contracts are kept and the count is
+  logged. If orders carry no contract information at all the old account-wide behaviour
+  stands, so the closed contract's stops can never re-fill. The SOS **Flatten all** stays
+  account-wide by design.
+
 ## 5.0.0-alpha.29
 - **Privacy mode** (eye icon in the top bar next to the theme toggle, also in the user
   menu): masks account names everywhere they are shown — first six characters, the rest

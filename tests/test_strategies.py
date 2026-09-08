@@ -13,9 +13,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from app import config, context, signals
+from app import config, context, signals, state
 from app.signals import SignalError
-from tests.helpers import FakeExecutor
+from tests.helpers import FakeExecutor, settle
 
 FIXTURES = Path(__file__).parent / "fixtures"
 TS_LIFECYCLE = json.loads((FIXTURES / "ts_hunter_lifecycle.json").read_text(encoding="utf-8"))
@@ -614,3 +614,93 @@ async def test_simulate_without_webhook_uses_synthetic_bracket(admin):
     assert r2["status"] == "ok" and r2["new_sl"] == 100.0
     signals.reset_simulation()
     assert active(simulate=True) == {}
+
+
+# ------------------------------------------- close_all: nur der eigene Kontrakt
+async def test_close_all_cancels_only_its_own_contract(live):
+    """A close for one symbol must not strip the stops of other symbols on the
+    same account (they would be left open and unprotected)."""
+    a = FakeExecutor("A", contract_ids={"MNQU6": 111, "ESU6": 222}, working=[
+        {"id": 1, "contractId": 111},          # MNQ stop  → must be cancelled
+        {"id": 2, "contractId": 111},          # MNQ target → must be cancelled
+        {"id": 3, "contractId": 222},          # ES stop   → must survive
+    ])
+    live.use(a)
+    w = wh(id="wh_scope")
+    await signals.process({"action": "buy", "symbol": "MNQ1!", "qty": 1}, w)
+    r = await signals.process({"action": "close_all", "symbol": "MNQ1!"}, w)
+    assert r["cancelled"] == 2
+    assert [c["order_id"] for c in a.of("cancel")] == [1, 2]      # the ES stop is untouched
+    assert a.of("liquidate") == [{"symbol": "MNQU6"}]
+
+
+async def test_close_all_matches_orders_by_symbol_too(live):
+    """The simulator (and any broker that names the contract) matches by name."""
+    a = FakeExecutor("A", working=[{"id": 7, "symbol": "MNQU6"}, {"id": 8, "symbol": "ESU6"}])
+    live.use(a)
+    w = wh(id="wh_sym")
+    await signals.process({"action": "buy", "symbol": "MNQ1!", "qty": 1}, w)
+    r = await signals.process({"action": "close_all", "symbol": "MNQ1!"}, w)
+    assert r["cancelled"] == 1 and [c["order_id"] for c in a.of("cancel")] == [7]
+
+
+async def test_close_all_without_contract_info_still_cancels_all(live):
+    """No contractId and no symbol on the orders → keep the old account-wide
+    behaviour, so this contract's stops can't re-fill after the liquidation."""
+    a = FakeExecutor("A", working=[{"id": 5}, {"id": 6}])
+    live.use(a)
+    w = wh(id="wh_blind")
+    await signals.process({"action": "buy", "symbol": "MNQ1!", "qty": 1}, w)
+    r = await signals.process({"action": "close_all", "symbol": "MNQ1!"}, w)
+    assert r["cancelled"] == 2 and [c["order_id"] for c in a.of("cancel")] == [5, 6]
+
+
+async def test_cancel_working_without_contract_is_account_wide():
+    """No contract argument (the SOS flatten-all path) → every order goes."""
+    from app.engine.common import _cancel_working
+    a = FakeExecutor("A", contract_ids={"MNQU6": 111}, working=[
+        {"id": 1, "contractId": 111}, {"id": 2, "contractId": 222}])
+    assert await _cancel_working(a, "") == 2
+    assert sorted(c["order_id"] for c in a.of("cancel")) == [1, 2]
+
+
+# --------------------------------- Passphrase greift vor dem Marketplace-Fan-out
+async def test_wrong_passphrase_reaches_no_subscriber(live, monkeypatch):
+    """Knowing only the URL must not trade on subscribers' accounts: the check
+    runs at the ingress, before the fan-out (subscribers execute trusted)."""
+    config.save_settings({"webhook_passphrase": "pp"})
+    forwarded: list[dict] = []
+    monkeypatch.setattr(signals, "forward_to_subscribers",
+                        lambda payload, webhook, publisher_area=None: forwarded.append(payload) or 0)
+    executed: list[dict] = []
+
+    async def spy(payload, webhook, *, trusted=False):
+        executed.append(payload)
+        return {"status": "ok"}
+    monkeypatch.setattr(signals, "process", spy)
+
+    signals.accept({"action": "buy", "symbol": "MNQ1!"}, wh())          # no passphrase
+    await settle()
+    assert forwarded == [] and executed == []
+    signals.accept({"action": "buy", "symbol": "MNQ1!", "passphrase": "wrong"}, wh())
+    await settle()
+    assert forwarded == [] and executed == []
+    assert any("invalid passphrase" in e["message"].lower() for e in state.recent_events())
+    assert any(s["result"].startswith("error: Invalid passphrase") for s in state.recent_signals())
+
+    signals.accept({"action": "buy", "symbol": "MNQ1!", "passphrase": "pp"}, wh())
+    await settle()
+    assert len(forwarded) == 1 and len(executed) == 1                    # correct one goes through
+
+
+async def test_no_passphrase_configured_forwards_as_before(live, monkeypatch):
+    forwarded: list[dict] = []
+    monkeypatch.setattr(signals, "forward_to_subscribers",
+                        lambda payload, webhook, publisher_area=None: forwarded.append(payload) or 0)
+
+    async def spy(payload, webhook, *, trusted=False):
+        return {"status": "ok"}
+    monkeypatch.setattr(signals, "process", spy)
+    signals.accept({"action": "buy", "symbol": "MNQ1!"}, wh())
+    await settle()
+    assert len(forwarded) == 1

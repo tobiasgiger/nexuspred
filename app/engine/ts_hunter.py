@@ -193,7 +193,7 @@ async def handle_full_close(payload, trade_id, target, executors, active_map, ta
         targets = [(ex, target) for ex in executors]
 
     async def close_account(ex, contract) -> int:
-        cancelled = await _cancel_working(ex, tag)
+        cancelled = await _cancel_working(ex, tag, contract=contract)
         await ex.liquidate_position(contract)
         return cancelled
 
