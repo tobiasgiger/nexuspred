@@ -121,4 +121,16 @@
 .pnl-acct { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pnl-cell { display: flex; flex-direction: column; gap: 1px; font-variant-numeric: tabular-nums; }
 .pnl-cell .k { color: var(--text-dim); font-size: 10.5px; text-transform: uppercase; letter-spacing: .4px; }
-@media (max-width: 720px) { .pnl-row { grid-template-columns: 1fr 1fr; } .pnl-acct { grid-column: 1 / -1; } }
+.pnl-row.idle { opacity: .55; }
+.pnl-row.idle:hover { opacity: 1; }
+.pnl-head { background: transparent; border-color: transparent; padding: 0 10px; }
+.pnl-sort { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; color: var(--text-dim); font-size: 10.5px; text-transform: uppercase; letter-spacing: .4px; font-weight: 600; padding: 2px 0; }
+.pnl-sort:hover, .pnl-sort.active { color: var(--text); }
+.pnl-sort .arrow { font-size: 9px; min-width: 9px; }
+.pnl-sort:focus-visible { outline: 2px solid var(--accent); border-radius: 3px; }
+.pnl-toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--text-dim); cursor: pointer; user-select: none; }
+.pnl-toggle input { accent-color: var(--accent); }
+.pnl-cell.flash { animation: pnl-flash 1.2s ease-out; border-radius: 4px; }
+@keyframes pnl-flash { 0% { background: color-mix(in srgb, var(--accent) 28%, transparent); } 100% { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { .pnl-cell.flash { animation: none; } }
+@media (max-width: 720px) { .pnl-row { grid-template-columns: 1fr 1fr; } .pnl-acct { grid-column: 1 / -1; } .pnl-head { display: none; } }

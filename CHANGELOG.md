@@ -4,6 +4,14 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.28
+- **Sortable, live Today's P&L card.** Column headers (Account, Realised, Open, Week,
+  Balance) sort the per-account rows, click again to flip; the default order puts the
+  accounts that traded today on top (largest movement first) and idle ones last. A
+  **Hide idle** toggle removes accounts with no realised, open or weekly P&L; the sub-line
+  counts active vs idle. Values that changed since the last poll flash briefly, idle rows
+  are dimmed. Sort and toggle are remembered per browser.
+
 ## 5.0.0-alpha.27
 - **Fix duplicate journal trades.** The Performance-report import stored round trips under
   the same key family (``pair:``) as the live fill-pair import, and the cross-source dedup

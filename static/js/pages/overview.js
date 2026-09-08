@@ -106,26 +106,88 @@ export default {
     const pnlStamp = h("span", { class: "muted", style: "font-size:11px" }, "");
     const pnlTone = (v) => (Number(v) > 0 ? "pos" : Number(v) < 0 ? "neg" : "");
     const money = (v) => h("span", { class: `pnl ${pnlTone(v)}` }, fmtSigned(v, 2));
-    function paintPnl(p) {
+
+    // Sort + idle filter, remembered per browser. "activity" = accounts that did
+    // something today first (largest realised / open movement on top), idle last.
+    const PNL_COLS = [["spec", "Account"], ["realized", "Realised"], ["open", "Open"], ["week", "Week"], ["cash", "Balance"]];
+    let pnlSort = { key: "activity", dir: "desc" };
+    let hideIdle = false;
+    try {
+      pnlSort = JSON.parse(localStorage.getItem("np_pnl_sort") || "null") || pnlSort;
+      hideIdle = localStorage.getItem("np_pnl_hide_idle") === "1";
+    } catch (e) { /* ignore */ }
+    const isIdle = (a) => !Number(a.realized) && !Number(a.open) && !Number(a.week);
+    const activity = (a) => Math.abs(Number(a.realized) || 0) + Math.abs(Number(a.open) || 0);
+    function sortAccounts(list) {
+      const { key, dir } = pnlSort;
+      const sgn = dir === "asc" ? 1 : -1;
+      return [...list].sort((a, b) => {
+        if (key === "activity") {
+          const ia = isIdle(a), ib = isIdle(b);
+          if (ia !== ib) return ia ? 1 : -1;                       // idle always last
+          return (activity(b) - activity(a)) * (dir === "asc" ? -1 : 1) || String(a.spec).localeCompare(String(b.spec));
+        }
+        if (key === "spec") return String(a.spec || a.account_id).localeCompare(String(b.spec || b.account_id)) * sgn;
+        return ((Number(a[key]) || 0) - (Number(b[key]) || 0)) * sgn || String(a.spec).localeCompare(String(b.spec));
+      });
+    }
+    let lastPnl = null;
+    let prevValues = new Map();   // account_id → {realized, open, week, cash} for change flashes
+    const hideIdleBox = h("input", { type: "checkbox", checked: hideIdle, onChange: (e) => {
+      hideIdle = e.target.checked;
+      try { localStorage.setItem("np_pnl_hide_idle", hideIdle ? "1" : "0"); } catch (err) { /* ignore */ }
+      if (lastPnl) paintPnl(lastPnl, true);
+    } });
+    const pnlHead = h("div", { class: "pnl-row pnl-head" });
+    function paintHead() {
+      clear(pnlHead);
+      for (const [key, label] of PNL_COLS) {
+        const active = pnlSort.key === key;
+        pnlHead.append(h("button", { type: "button", class: `pnl-sort${active ? " active" : ""}`, title: `Sort by ${label.toLowerCase()}`, onClick: () => {
+          pnlSort = active ? { key, dir: pnlSort.dir === "desc" ? "asc" : "desc" } : { key, dir: key === "spec" ? "asc" : "desc" };
+          try { localStorage.setItem("np_pnl_sort", JSON.stringify(pnlSort)); } catch (err) { /* ignore */ }
+          if (lastPnl) paintPnl(lastPnl, true);
+        } }, label, h("span", { class: "arrow" }, active ? (pnlSort.dir === "asc" ? "▲" : "▼") : "")));
+      }
+    }
+    function cell(k, node, changed) {
+      return h("span", { class: `pnl-cell${changed ? " flash" : ""}` }, h("span", { class: "k" }, k), node);
+    }
+    function paintPnl(p, keepPrev = false) {
       if (!p || !p.ts) return;
+      lastPnl = p;
       pnlHero.textContent = fmtSigned(p.total, 2);
       pnlHero.className = "journal-hero " + pnlTone(p.total);
+      const accounts = p.accounts || [];
+      const idle = accounts.filter(isIdle).length;
       clear(pnlSub);
-      pnlSub.append("Today · realised ", money(p.realized), " · open ", money(p.open), " · week ", money(p.week));
+      pnlSub.append("Today · realised ", money(p.realized), " · open ", money(p.open), " · week ", money(p.week),
+        ` · ${accounts.length - idle} active`, idle ? ` · ${idle} idle` : "");
       if (p.error) pnlSub.append(h("span", { class: "neg" }, ` · ${p.error}`));
+      paintHead();
       clear(pnlRows);
-      for (const a of p.accounts || []) {
-        pnlRows.append(h("div", { class: "pnl-row" },
-          h("span", { class: "pnl-acct" }, a.spec || String(a.account_id), a.environment === "live" ? [" ", tag("live", "accent")] : null),
-          h("span", { class: "pnl-cell" }, h("span", { class: "k" }, "realised"), money(a.realized)),
-          h("span", { class: "pnl-cell" }, h("span", { class: "k" }, "open"), money(a.open)),
-          h("span", { class: "pnl-cell" }, h("span", { class: "k" }, "week"), money(a.week)),
-          h("span", { class: "pnl-cell" }, h("span", { class: "k" }, "balance"), h("span", null, fmtMoney(a.cash, 2)))));
+      if (accounts.length) pnlRows.append(pnlHead);
+      const next = new Map();
+      for (const a of sortAccounts(accounts)) {
+        const id = a.account_id;
+        const was = keepPrev ? null : prevValues.get(id);
+        next.set(id, { realized: a.realized, open: a.open, week: a.week, cash: a.cash });
+        const ch = (k) => !!was && Number(was[k]) !== Number(a[k]);
+        if (hideIdle && isIdle(a)) continue;
+        pnlRows.append(h("div", { class: `pnl-row${isIdle(a) ? " idle" : ""}` },
+          h("span", { class: "pnl-acct" }, a.spec || String(id), a.environment === "live" ? [" ", tag("live", "accent")] : null),
+          cell("realised", money(a.realized), ch("realized")),
+          cell("open", money(a.open), ch("open")),
+          cell("week", money(a.week), ch("week")),
+          cell("balance", h("span", null, fmtMoney(a.cash, 2)), ch("cash"))));
       }
-      if (!(p.accounts || []).length) pnlRows.append(h("div", { class: "muted" }, "No connected trade account — connect a login under Settings → Tradovate Accounts."));
+      if (!keepPrev) prevValues = next;
+      if (!accounts.length) pnlRows.append(h("div", { class: "muted" }, "No connected trade account — connect a login under Settings → Tradovate Accounts."));
+      else if (hideIdle && idle === accounts.length) pnlRows.append(h("div", { class: "muted" }, "All accounts are idle today — untick “Hide idle” to see them."));
       pnlStamp.textContent = `updated ${fmtTime(p.ts)}`;
     }
     const pnlCard = card({ title: "Today's P&L", actions: [pnlStamp,
+      h("label", { class: "pnl-toggle", title: "Hide accounts with no realised, open or weekly P&L today" }, hideIdleBox, " Hide idle"),
       h("button", { class: "btn btn-ghost btn-sm", title: "Refresh now", onClick: async () => { try { paintPnl(await api.get("/api/pnl?refresh=1")); } catch (e) { toast(e.message, "error"); } } }, icon("refresh"))] },
       pnlHero, pnlSub, pnlRows);
     pnlCard.classList.add("pnl-card");
