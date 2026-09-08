@@ -234,7 +234,7 @@ function pushPanel() {
     try { const r = await api.post("/api/push/test"); toast(`Test push: ${r.sent} sent, ${r.failed} failed, ${r.gone} removed`, r.sent ? "success" : "error"); load(); }
     catch (e) { toast(e.message, "error"); }
   });
-  const diagOut = h("pre", { hidden: true, style: "white-space:pre-wrap;word-break:break-word;font-size:.78em;background:var(--code-bg,#eee);padding:10px;border-radius:6px;margin-top:10px;max-height:50vh;overflow:auto" });
+  const diagOut = h("pre", { hidden: true, style: "white-space:pre-wrap;word-break:break-word;font-size:.78em;background:rgba(127,127,127,.14);color:inherit;padding:10px 12px;border-radius:8px;margin-top:10px;max-height:50vh;overflow:auto" });
   const diagBtn = h("button", { type: "button", class: "btn btn-ghost", onClick: async () => {
     diagOut.hidden = false; diagOut.textContent = "Running…";
     try {

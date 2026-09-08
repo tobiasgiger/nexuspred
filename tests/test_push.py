@@ -266,3 +266,28 @@ async def test_diagnose_reports_identity_and_does_not_prune(client, sent):
 
 async def test_diag_requires_admin(anon_client, admin):
     assert (await anon_client.post("/api/push/diag")).status_code == 401
+
+
+def test_vapid_sub_is_never_localhost(admin, monkeypatch):
+    from app import config, db
+    monkeypatch.setattr(config, "PUBLIC_URL", "")
+    db.meta_set("push_origin_host", "")
+    push.reset()
+    assert push._claims()["sub"] == "mailto:admin@fluxbridge.app"     # neutral fallback, never localhost
+    db.meta_set("push_origin_host", "bridge.hurenzone.ch")
+    push.reset()
+    assert push._claims()["sub"] == "mailto:admin@bridge.hurenzone.ch"
+    monkeypatch.setattr(config, "PUBLIC_URL", "https://my.example.com")
+    push.reset()
+    assert push._claims()["sub"] == "mailto:admin@my.example.com"     # PUBLIC_URL wins
+
+
+async def test_subscribe_learns_the_dashboard_host(client, admin):
+    from app import db
+    db.meta_set("push_origin_host", "")
+    r = await client.post("/api/push/subscribe", json={"subscription": SUB, "device": "iPhone"},
+                          headers={"host": "bridge.hurenzone.ch"})
+    assert r.status_code == 200
+    assert db.meta_get("push_origin_host") == "bridge.hurenzone.ch"
+    push.reset()
+    assert "localhost" not in push._claims()["sub"] and push._claims()["sub"].endswith("bridge.hurenzone.ch")

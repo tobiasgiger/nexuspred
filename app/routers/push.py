@@ -53,6 +53,13 @@ async def api_push_subscribe(request: Request) -> dict[str, Any]:
     existing = db.list_push_subscriptions(context.get_area())
     if len(existing) >= MAX_DEVICES_PER_AREA and not any(s["endpoint"] == endpoint for s in existing):
         raise HTTPException(status_code=400, detail=f"At most {MAX_DEVICES_PER_AREA} push devices per workspace — remove one first")
+    # Remember the host the dashboard is served on, so the VAPID contact used
+    # when signing pushes is a real domain (Apple rejects localhost).
+    host = security.request_host(request)
+    if host and "." in host and host.split(":")[0] not in ("localhost", "127.0.0.1"):
+        if db.meta_get("push_origin_host") != host:
+            db.meta_set("push_origin_host", host)
+        push.reset()  # re-sign future pushes with the corrected sub
     user = request.state.user
     rec = db.upsert_push_subscription(context.get_area(), user["id"], endpoint, str(keys["p256dh"]), str(keys["auth"]),
                                       device=str((body or {}).get("device") or "")[:120])

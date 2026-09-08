@@ -112,14 +112,23 @@ def reset() -> None:
     _public_b64 = ""
 
 
+def _sub_host() -> str:
+    """The domain used in the VAPID ``sub`` contact. Apple validates it, so it
+    must be a real host — never ``localhost``. Order: ``NEXUSPRED_PUBLIC_URL``,
+    then the host the dashboard was last opened on (learned in the subscribe
+    endpoint), then a neutral fallback."""
+    for src in (config.PUBLIC_URL, db.meta_get("push_origin_host") or ""):
+        host = (src or "").split("//", 1)[-1].split("/", 1)[0].split(":", 1)[0].strip().lower()
+        if host and host not in ("localhost", "127.0.0.1", "::1") and "." in host:
+            return host
+    return "fluxbridge.app"
+
+
 def _claims() -> dict[str, Any]:
-    """VAPID JWT claims. ``exp`` is set explicitly to 12 h: py_vapid's default is
-    exactly 24 h, which is Apple's hard maximum — with any clock skew Apple's push
-    service answers 403 BadJwtToken and every iPhone device "fails"."""
+    """VAPID JWT claims. ``exp`` is 12 h (Apple caps it at 24 h and rejects on
+    any skew); ``sub`` is a real contact host (Apple 403s on an invalid one)."""
     import time
-    origin = config.PUBLIC_URL or "https://localhost"
-    host = origin.split("//", 1)[-1].split("/", 1)[0] or "localhost"
-    return {"sub": f"mailto:admin@{host}", "exp": int(time.time()) + 12 * 3600}
+    return {"sub": f"mailto:admin@{_sub_host()}", "exp": int(time.time()) + 12 * 3600}
 
 
 def _send_one(sub: dict[str, Any], payload: dict[str, Any]) -> tuple[bool, int, str]:

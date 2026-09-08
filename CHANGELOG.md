@@ -4,6 +4,13 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.26
+- **Fix likely iPhone push cause: VAPID contact was ``mailto:admin@localhost``.** Apple
+  validates the ``sub`` contact and rejects an invalid host with 403 BadJwtToken. The
+  contact now uses ``NEXUSPRED_PUBLIC_URL`` or the real host the dashboard is opened on
+  (learned when a device subscribes), never ``localhost``.
+- Diagnostics box is readable in dark mode (was white-on-white).
+
 ## 5.0.0-alpha.25
 - Fix: the Alerts page failed to render in alpha.24 (Diagnose button referenced before it was declared).
 
