@@ -4,6 +4,9 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.25
+- Fix: the Alerts page failed to render in alpha.24 (Diagnose button referenced before it was declared).
+
 ## 5.0.0-alpha.24
 - **Push diagnostics button** (Settings → Alerts → Diagnose, admin). Shows the server's VAPID key fingerprint, crypto source and whether the stored key decrypts under the current key, then does a live, non-pruning send to every device and prints the raw push-service answer per device — so an Apple 403/410 is visible verbatim instead of only a counter.
 

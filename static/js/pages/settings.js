@@ -166,7 +166,6 @@ function pushPanel() {
   const enableBtn = h("button", { type: "button", class: "btn btn-primary", disabled: true }, icon("bell"), "Enable on this device");
   const disableBtn = h("button", { type: "button", class: "btn btn-ghost", hidden: true }, "Disable on this device");
   const testAllBtn = h("button", { type: "button", class: "btn btn-secondary", hidden: true }, icon("send"), "Test push");
-  const actionsRow = h("div", { class: "form-actions", style: "margin-top:12px" }, enableBtn, disableBtn, testAllBtn, diagBtn);
   const table = dataTable({ empty: "No device registered yet.", compact: true, columns: [
     { label: "Device", render: (d) => [h("strong", null, d.device || "Device"), " ", h("span", { class: "muted" }, d.endpoint_host || "")] },
     { label: "Added", render: (d) => fmtDateTime(d.created_at) },
@@ -245,6 +244,7 @@ function pushPanel() {
       diagOut.textContent = lines.join("\n");
     } catch (e) { diagOut.textContent = e.message; }
   } }, icon("search"), "Diagnose");
+  const actionsRow = h("div", { class: "form-actions", style: "margin-top:12px" }, enableBtn, disableBtn, testAllBtn, diagBtn);
   const el = h("div", null, status, actionsRow, diagOut,
     h("h3", { style: "margin:18px 0 6px" }, "Registered devices"),
     h("p", { class: "hint" }, "Every device that enabled push for this workspace. On iPhone/iPad open the Home Screen app to enable it; Safari tabs can't receive push."),
