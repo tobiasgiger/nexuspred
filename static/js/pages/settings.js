@@ -171,7 +171,7 @@ function pushPanel() {
     { label: "Device", render: (d) => [h("strong", null, d.device || "Device"), " ", h("span", { class: "muted" }, d.endpoint_host || "")] },
     { label: "Added", render: (d) => fmtDateTime(d.created_at) },
     { label: "Last push", render: (d) => d.last_used_at ? fmtDateTime(d.last_used_at) : "—" },
-    { label: "Status", render: (d) => d.failures ? tag(`failing (${d.failures})`, "error") : tag("ok", "ok") },
+    { label: "Status", render: (d) => d.failures ? [tag(`failing (${d.failures})`, "error"), d.last_error ? h("div", { class: "muted", style: "font-size:.8em;margin-top:4px;max-width:260px;word-break:break-word" }, d.last_error) : null] : tag("ok", "ok") },
     { label: "", render: (d) => h("div", { class: "inline-actions" },
       h("button", { type: "button", class: "btn btn-ghost btn-sm", title: "Send a test push to this device", onClick: async () => {
         try { const r = await api.post("/api/push/test", { id: d.id }); toast(r.sent ? "Test push sent" : `Not delivered: ${r.gone ? "device unsubscribed" : "push service rejected it"}`, r.sent ? "success" : "error"); load(); }

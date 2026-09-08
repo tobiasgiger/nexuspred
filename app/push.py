@@ -21,7 +21,7 @@ from typing import Any, Optional
 
 from cryptography.hazmat.primitives import serialization
 
-from . import config, context, crypto, db
+from . import config, context, crypto, db, state
 
 log = logging.getLogger(__name__)
 
@@ -78,9 +78,14 @@ def reset() -> None:
     _public_b64 = ""
 
 
-def _claims() -> dict[str, str]:
+def _claims() -> dict[str, Any]:
+    """VAPID JWT claims. ``exp`` is set explicitly to 12 h: py_vapid's default is
+    exactly 24 h, which is Apple's hard maximum — with any clock skew Apple's push
+    service answers 403 BadJwtToken and every iPhone device "fails"."""
+    import time
     origin = config.PUBLIC_URL or "https://localhost"
-    return {"sub": f"mailto:admin@{origin.split('//', 1)[-1].split('/', 1)[0] or 'localhost'}"}
+    host = origin.split("//", 1)[-1].split("/", 1)[0] or "localhost"
+    return {"sub": f"mailto:admin@{host}", "exp": int(time.time()) + 12 * 3600}
 
 
 def _send_one(sub: dict[str, Any], payload: dict[str, Any]) -> tuple[bool, int, str]:
@@ -93,8 +98,10 @@ def _send_one(sub: dict[str, Any], payload: dict[str, Any]) -> tuple[bool, int, 
         status = getattr(resp, "status_code", 201)
         return status < 300, status, "" if status < 300 else getattr(resp, "text", "")[:200]
     except WebPushException as exc:
-        status = getattr(getattr(exc, "response", None), "status_code", 0) or 0
-        return False, status, str(exc)[:200]
+        resp = getattr(exc, "response", None)
+        status = getattr(resp, "status_code", 0) or 0
+        body = (getattr(resp, "text", "") or "").strip().replace("\n", " ")
+        return False, status, f"{status or 'error'}: {body or str(exc)}"[:200]
     except Exception as exc:  # noqa: BLE001
         return False, 0, f"{type(exc).__name__}: {exc}"[:200]
 
@@ -115,6 +122,11 @@ def _deliver_sync(area_id: int, payload: dict[str, Any], only_ids: Optional[list
         else:
             failed += 1
             db.touch_push_subscription(sub["id"], ok=False, error=err)
+            try:
+                with context.use_area(area_id):
+                    state.log_event("warn", f"Push to '{sub.get('device') or sub['id']}' failed: {err}")
+            except Exception:  # noqa: BLE001
+                pass
     return {"sent": sent, "gone": gone, "failed": failed, "devices": len(subs)}
 
 

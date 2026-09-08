@@ -4,6 +4,13 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.20
+- **Push diagnostics.** A failed push now records the push service's actual HTTP status
+  and body (Apple / FCM), shows it under the device on Settings → Alerts, and logs it to
+  the event log — so an iPhone that "fails" says *why* (e.g. 403 BadJwtToken, 410 gone)
+  instead of a bare counter. The VAPID token expiry is pinned to 12 h explicitly (Apple
+  rejects anything over 24 h with any clock skew).
+
 ## 5.0.0-alpha.19
 - **Alert accounts** (Settings → Alerts → Accounts, `alert_accounts`): choose which trade
   accounts may raise account-level alerts — position opened / added / closed / reduced,

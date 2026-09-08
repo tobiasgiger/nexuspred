@@ -183,6 +183,8 @@ def test_real_webpush_call_shape(admin, monkeypatch):
     assert seen["subscription_info"] == {"endpoint": SUB["endpoint"], "keys": {"p256dh": "k", "auth": "a"}}
     assert json.loads(seen["data"])["title"] == "t"
     assert seen["vapid_claims"]["sub"].startswith("mailto:") and seen["ttl"] == 600
+    import time
+    assert 11 * 3600 < seen["vapid_claims"]["exp"] - time.time() <= 12 * 3600   # Apple caps VAPID JWTs at 24 h
     from py_vapid import Vapid
     assert isinstance(seen["vapid_private_key"], Vapid)
 
