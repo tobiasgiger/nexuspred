@@ -351,7 +351,8 @@ async def import_session(area_id: int, session: Any, *, today: Optional[date] = 
                     qty=m["qty"], buy_price=m["buy_price"], sell_price=m["sell_price"],
                     account=acct, symbol=sym, value_per_point=vpp, fees=fees, source="fifo"))
     trades = [t for t in trades if t["qty"] > 0]
-    trades_new = sum(db.upsert_journal_trade(area_id, t) for t in trades)
+    trades_new = sum(db.upsert_journal_trade(area_id, t) for t in trades
+                     if not db.find_similar_journal_trade(area_id, t))
 
     # Past sessions from the cash-balance log (incremental; see module docstring).
     hist = {"history_pairs": 0, "history_new": 0, "history_snapshots": 0, "history_error": ""}
@@ -666,7 +667,8 @@ async def _history_from_cash_log(area_id: int, r: _Reader, accounts_by_id: dict[
             if t["qty"] > 0:
                 trades.append(t)
                 done.append(pid)
-        out["history_new"] = sum(db.upsert_journal_trade(area_id, t) for t in trades)
+        out["history_new"] = sum(db.upsert_journal_trade(area_id, t) for t in trades
+                                 if not db.find_similar_journal_trade(area_id, t))
         db.journal_mark_seen(area_id, "fillpair", done)
 
     # --- daily equity from the running balance -----------------------------

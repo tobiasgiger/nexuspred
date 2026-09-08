@@ -409,7 +409,7 @@ async def test_history_from_performance_report(admin, monkeypatch):
     hist = [t for t in db.list_journal_trades(1) if t["source"] == "report"]
     assert [(t["exit_ts"][:10], t["symbol"], t["side"], t["gross_pnl"], t["fees"], t["net_pnl"]) for t in hist] == [
         ("2026-07-10", "MNQU6", "long", 20.0, 2.0, 18.0), ("2026-08-15", "MESU6", "short", -100.0, 4.0, -104.0)]
-    assert hist[0]["pair_id"] == "pair:7001:7002" and hist[0]["value_per_point"] == 2.0
+    assert hist[0]["pair_id"] == "rpt:7001:7002" and hist[0]["value_per_point"] == 2.0
     with context.use_area(1):
         assert config.load_settings()["journal_report_cursor"] == {"DEMO11": today.isoformat()}
     import json as _json
@@ -480,3 +480,58 @@ async def test_report_window_shrinks_on_too_long_range(admin, monkeypatch):
     seen.clear()
     await journal.import_area(1)
     assert seen and max(seen) <= 7
+
+
+# ------------------------------------------------ duplicates across import sources
+def _dup_trade(pair_id, source, *, note="", price=(20000.0, 20010.0), exit_ts="2026-09-08T10:38:51+00:00"):
+    return {"pair_id": pair_id, "source": source, "account_id": 7, "account_spec": "APEX1", "account_name": "L1",
+            "environment": "demo", "contract_id": 1, "symbol": "MGCZ6", "root": "MGC", "side": "short", "qty": 4,
+            "entry_price": price[0], "exit_price": price[1], "entry_ts": "2026-09-08T10:30:00+00:00", "exit_ts": exit_ts,
+            "entry_fill_id": 0, "exit_fill_id": 0, "points": 3.0, "value_per_point": 10.0, "gross_pnl": 120.0,
+            "fees": 5.36, "net_pnl": 114.64}
+
+
+def test_report_and_csv_trades_use_their_own_key_family(admin):
+    from app import journal_csv
+    from zoneinfo import ZoneInfo
+    acct = {"id": 7, "spec": "APEX1", "name": "L1", "environment": "demo"}
+    csv_text = "symbol,qty,buyPrice,sellPrice,boughtTimestamp,soldTimestamp,buyFillId,sellFillId,pnl\nMGCZ6,4,4442.6,4439.6,09/08/2026 12:30:00,09/08/2026 12:38:51,111,222,$120.00\n"
+    rpt = journal_csv.parse(csv_text, zone=ZoneInfo("UTC"), account=acct, source="report")["trades"][0]
+    csv = journal_csv.parse(csv_text, zone=ZoneInfo("UTC"), account=acct, source="csv")["trades"][0]
+    assert rpt["pair_id"] == "rpt:111:222" and csv["pair_id"] == "csv:111:222"
+    # the same round trip from the live fill-pair import is recognised as the same trade
+    assert db.upsert_journal_trade(1, rpt) == 1
+    live = {**rpt, "pair_id": "pair:111:222", "source": "history"}
+    assert db.find_similar_journal_trade(1, live) is not None
+
+
+def test_dedupe_collapses_cross_source_duplicates_and_keeps_notes(admin):
+    # the pair the user saw twice: fill-pair import + Performance report
+    assert db.upsert_journal_trade(1, _dup_trade("pair:1:2", "history")) == 1
+    assert db.upsert_journal_trade(1, _dup_trade("rpt:900:901", "report")) == 1
+    rid = [t for t in db.list_journal_trades(1) if t["source"] == "report"][0]["id"]
+    db.update_journal_trade_note(1, rid, "scalp after CPI", ["news"])
+    # a legit split fill: same source + family, different key → must survive
+    assert db.upsert_journal_trade(1, _dup_trade("pair:3:4", "history")) == 1
+    # a different trade one minute later → untouched
+    assert db.upsert_journal_trade(1, _dup_trade("rpt:905:906", "report", exit_ts="2026-09-08T10:39:51+00:00")) == 1
+    # same broker fills reported with a 2 h clock offset by the report → still the same trade
+    assert db.upsert_journal_trade(1, {**_dup_trade("pair:50:51", "history", exit_ts="2026-09-08T12:00:00+00:00"), "entry_fill_id": 50, "exit_fill_id": 51}) == 1
+    assert db.upsert_journal_trade(1, {**_dup_trade("rpt:50:51", "report", exit_ts="2026-09-08T14:00:00+00:00"), "entry_fill_id": 50, "exit_fill_id": 51}) == 1
+    removed = db.dedupe_journal_trades(1)
+    assert removed == 2
+    left = db.list_journal_trades(1)
+    assert len(left) == 4 and not any(t["pair_id"] == "rpt:50:51" for t in left)
+    keep = [t for t in left if t["exit_ts"] == "2026-09-08T10:38:51+00:00"]
+    assert sorted(t["pair_id"] for t in keep) == ["pair:1:2", "pair:3:4"]      # history survives, split fill kept
+    survivor = [t for t in keep if t["pair_id"] == "pair:1:2"][0]
+    assert survivor["note"] == "scalp after CPI" and survivor["tags"] == ["news"]  # note carried over
+    assert db.dedupe_journal_trades(1) == 0                                   # idempotent
+
+
+async def test_dedupe_endpoint_and_startup_one_shot(client, admin, monkeypatch):
+    db.upsert_journal_trade(1, _dup_trade("pair:1:2", "history"))
+    db.upsert_journal_trade(1, _dup_trade("rpt:9:8", "report"))
+    r = await client.post("/api/journal/dedupe")
+    assert r.status_code == 200 and r.json() == {"removed": 1}
+    assert (await client.post("/api/journal/dedupe")).json() == {"removed": 0}

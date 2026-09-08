@@ -155,7 +155,11 @@ def parse(text: str, *, zone: ZoneInfo, account: dict[str, Any], fee_per_side: f
                     vpp = round(derived, 6)
             buy = {"id": bid, "timestamp": bts, "qty": qty, "contractId": 0}
             sell = {"id": sid, "timestamp": sts, "qty": qty, "contractId": 0}
-            t = journal.build_trade(pair_id=f"pair:{bid}:{sid}", buy=buy, sell=sell, qty=qty, buy_price=buy_price,
+            # Own key family per origin: the live fill-pair import uses ``pair:``, and
+            # the cross-family dedup (db.find_similar_journal_trade) is what stops the
+            # same round trip from being stored twice when it arrives from both.
+            family = "rpt" if source == "report" else "csv"
+            t = journal.build_trade(pair_id=f"{family}:{bid}:{sid}", buy=buy, sell=sell, qty=qty, buy_price=buy_price,
                                     sell_price=sell_price, account=account, symbol=symbol, value_per_point=vpp,
                                     fees=_fees_dict([bid, sid], fee_per_side, qty), source=source)
             if pnl is not None:

@@ -30,6 +30,17 @@ async def _startup() -> None:
                 config.invalidate(aid)
     except Exception as exc:  # noqa: BLE001 - never let a migration block startup
         state.log_event("warn", f"alert-email backfill failed: {exc}")
+    # One-shot: collapse journal trades that alpha.18–26 imported twice (report + fill pairs).
+    try:
+        if not db.meta_get("journal_dedupe_v1"):
+            for aid in db.all_area_ids():
+                n = db.dedupe_journal_trades(aid)
+                if n:
+                    with context.use_area(aid):
+                        state.log_event("info", f"Journal: removed {n} duplicate trade(s) stored by earlier imports")
+            db.meta_set("journal_dedupe_v1", "done")
+    except Exception as exc:  # noqa: BLE001
+        state.log_event("warn", f"journal dedupe failed: {exc}")
     # Encrypt secrets written by earlier versions (idempotent, one pass).
     try:
         try:

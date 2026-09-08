@@ -1,6 +1,6 @@
 /* Trading journal: imported Tradovate trades with P&L reporting per day / week /
    month, equity curve, calendar, breakdowns, notes & tags, import on demand. */
-import { h, card, tag, fmtDateTime, fmtNum, pageHead, clear, toast } from "../ui.js";
+import { h, card, tag, fmtDateTime, fmtNum, pageHead, clear, toast, confirmDialog } from "../ui.js";
 import { icon } from "../icons.js";
 import { api } from "../api.js";
 import { dataTable } from "../components/table.js";
@@ -45,6 +45,11 @@ export default {
       h("option", { value: "" }, "Long + short"), h("option", { value: "long" }, "Long only"), h("option", { value: "short" }, "Short only"));
     const importBtn = h("button", { type: "button", class: "btn btn-primary", onClick: importNow }, icon("download"), "Import now");
     const csvBtn = h("button", { type: "button", class: "btn", onClick: () => openCsvImport() }, icon("inbox"), "Import CSV");
+    const dedupeBtn = h("button", { type: "button", class: "btn btn-ghost", title: "Remove trades stored twice by different imports", onClick: async () => {
+      if (!(await confirmDialog({ title: "Remove duplicate trades?", body: "Trades with the same account, symbol, side, size, prices and exit time that were imported by more than one source are collapsed into one. Notes and tags are kept.", confirmText: "Remove duplicates" }))) return;
+      try { const r = await api.post("/api/journal/dedupe"); toast(r.removed ? `Removed ${r.removed} duplicate trade(s)` : "No duplicates found", "success"); await load(); }
+      catch (e) { toast(e.message, "error"); }
+    } }, icon("trash"), "Remove duplicates");
     const importInfo = h("span", { class: "muted", style: "font-size:12px" }, "");
     const exportLink = h("a", { class: "btn btn-ghost btn-sm", href: "#", onClick: (e) => { e.preventDefault(); window.open(`/api/journal/export.csv?${qs()}`, "_blank"); } }, icon("external"), "CSV");
 
@@ -299,7 +304,7 @@ export default {
 
     root.append(
       pageHead("Journal", "Executed trades imported from Tradovate with realised P&L, fees and notes. Reporting per day, week and month; every chart has a table view.", [
-        exportLink, csvBtn, importBtn,
+        exportLink, dedupeBtn, csvBtn, importBtn,
       ]),
       h("div", { class: "journal-toolbar" }, rangeSel, periodSel, accountSel, symbolSel, sideSel, h("span", { class: "spacer" }), importInfo),
       card({ title: "Net result" }, hero, heroSub),

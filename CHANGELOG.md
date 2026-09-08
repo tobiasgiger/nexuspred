@@ -4,6 +4,16 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.27
+- **Fix duplicate journal trades.** The Performance-report import stored round trips under
+  the same key family (``pair:``) as the live fill-pair import, and the cross-source dedup
+  deliberately skips same-family keys — so a trade that arrived from both showed up twice.
+  Report trades are now keyed ``rpt:``, CSV uploads ``csv:``; every import path checks for
+  the same round trip under another source first (matching broker fill ids, or the same
+  account / symbol / side / size / prices with the exit within 5 s). Existing duplicates are
+  collapsed once at startup (the row from the most authoritative source survives, notes and
+  tags are carried over); **Journal → Remove duplicates** runs the same cleanup on demand.
+
 ## 5.0.0-alpha.26
 - **Fix likely iPhone push cause: VAPID contact was ``mailto:admin@localhost``.** Apple
   validates the ``sub`` contact and rejects an invalid host with 403 BadJwtToken. The

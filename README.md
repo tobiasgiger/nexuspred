@@ -429,6 +429,11 @@ poll that feeds the Overview's live P&L, `pnl_poll_seconds`), so they fire even 
 trade was not placed by the bridge. Positions already open when the bridge starts are
 taken as the baseline and not announced.
 
+Trades that reach the journal from more than one source (live fill pairs, the daily
+Performance report, a CSV upload) are stored once: the importer recognises the same round
+trip by its broker fill ids or by account / symbol / side / size / prices and exit time.
+**Journal → Remove duplicates** collapses anything older imports stored twice, keeping notes.
+
 Connection lost/restored only fires on the actual transition (never on the first
 observation of a session, and never twice in a row for the same state) — so you get one
 alert when it drops and one when it comes back, not a repeat every health check. A failed

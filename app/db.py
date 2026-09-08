@@ -1092,7 +1092,18 @@ def find_similar_journal_trade(area_id: int, t: dict[str, Any], tolerance_s: int
     lo = (exit_dt - timedelta(seconds=tolerance_s)).isoformat()
     hi = (exit_dt + timedelta(seconds=tolerance_s)).isoformat()
     family = str(t.get("pair_id", "")).split(":", 1)[0] + ":"
+    efid, xfid = int(t.get("entry_fill_id") or 0), int(t.get("exit_fill_id") or 0)
     with _connect() as c:
+        if efid and xfid:
+            # Same broker fill ids under another key family (e.g. the Performance
+            # report vs the live fill pairs) → the same round trip, whatever the
+            # report's timestamps say.
+            r = c.execute(
+                "SELECT id FROM journal_trades WHERE area_id=? AND account_id=? AND entry_fill_id=? AND exit_fill_id=? "
+                "AND substr(pair_id, 1, instr(pair_id, ':')) <> ? LIMIT 1",
+                (area_id, t.get("account_id", 0), efid, xfid, family)).fetchone()
+            if r:
+                return int(r["id"])
         r = c.execute(
             "SELECT id FROM journal_trades WHERE area_id=? AND account_id=? AND symbol=? AND side=? AND qty=? "
             "AND ABS(entry_price-?)<1e-6 AND ABS(exit_price-?)<1e-6 AND exit_ts BETWEEN ? AND ? "
@@ -1100,6 +1111,73 @@ def find_similar_journal_trade(area_id: int, t: dict[str, Any], tolerance_s: int
             (area_id, t.get("account_id", 0), t.get("symbol", ""), t.get("side", ""), t.get("qty", 0),
              float(t.get("entry_price") or 0), float(t.get("exit_price") or 0), lo, hi, family)).fetchone()
     return int(r["id"]) if r else None
+
+
+_SOURCE_RANK = {"history": 0, "fillpair": 1, "report": 2, "csv": 3, "fifo": 4}
+
+
+def dedupe_journal_trades(area_id: int, tolerance_s: int = 5) -> int:
+    """Collapse round trips stored more than once because they arrived from
+    different imports (live fill pairs, the Performance report, a CSV upload):
+    same account, symbol, side, qty, entry/exit price and an exit within
+    ``tolerance_s`` seconds, under a *different source or key family*. Two rows
+    from the same source and family with different keys are genuine split fills
+    and are left alone. Keeps the row from the most authoritative source (the
+    book's fill pairs first), carries over a note / tags the survivor lacks, and
+    returns how many rows were deleted."""
+    init()
+    with _connect() as c:
+        rows = [dict(r) for r in c.execute(
+            "SELECT id, pair_id, source, account_id, symbol, side, qty, entry_price, exit_price, exit_ts, note, tags, "
+            "entry_fill_id, exit_fill_id FROM journal_trades WHERE area_id=? ORDER BY exit_ts, id", (area_id,)).fetchall()]
+    def fam(r): return str(r["pair_id"]).split(":", 1)[0]
+    # pass 1: identical broker fill ids under different sources / families
+    by_fills: dict[tuple[int, int, int], list[dict[str, Any]]] = {}
+    for r in rows:
+        if r["entry_fill_id"] and r["exit_fill_id"]:
+            by_fills.setdefault((r["account_id"], r["entry_fill_id"], r["exit_fill_id"]), []).append(r)
+    fill_groups = [g for g in by_fills.values() if len(g) > 1 and len({(m["source"], fam(m)) for m in g}) > 1]
+    grouped_ids = {m["id"] for g in fill_groups for m in g}
+    rows = [r for r in rows if r["id"] not in grouped_ids]
+    def ts(r):
+        try:
+            return datetime.fromisoformat(str(r["exit_ts"]).replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return None
+    def same_trip(a, b):
+        return (a["account_id"] == b["account_id"] and a["symbol"] == b["symbol"] and a["side"] == b["side"]
+                and a["qty"] == b["qty"] and abs(float(a["entry_price"]) - float(b["entry_price"])) < 1e-6
+                and abs(float(a["exit_price"]) - float(b["exit_price"])) < 1e-6
+                and (a["source"] != b["source"] or fam(a) != fam(b)))
+    groups: list[list[dict[str, Any]]] = []
+    for r in rows:
+        t = ts(r)
+        placed = False
+        if t is not None:
+            for g in reversed(groups):
+                gt = ts(g[0])
+                if gt is None or t - gt > tolerance_s:
+                    break
+                if all(same_trip(r, m) for m in g):
+                    g.append(r); placed = True
+                    break
+        if not placed:
+            groups.append([r])
+    removed = 0
+    with _connect() as c:
+        for g in fill_groups + groups:
+            if len(g) < 2:
+                continue
+            g.sort(key=lambda r: (_SOURCE_RANK.get(r["source"], 9), r["id"]))
+            keep, drop = g[0], g[1:]
+            note = keep["note"] or next((d["note"] for d in drop if d["note"]), "")
+            tags = keep["tags"] or next((d["tags"] for d in drop if d["tags"]), "")
+            if (note, tags) != (keep["note"], keep["tags"]):
+                c.execute("UPDATE journal_trades SET note=?, tags=? WHERE id=?", (note, tags, keep["id"]))
+            c.execute(f"DELETE FROM journal_trades WHERE area_id=? AND id IN ({','.join('?' * len(drop))})",
+                      (area_id, *[d["id"] for d in drop]))
+            removed += len(drop)
+    return removed
 
 
 def _trade_row(r: sqlite3.Row) -> dict[str, Any]:

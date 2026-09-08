@@ -40,7 +40,7 @@ def test_parse_performance_export():
     assert out["format"] == "performance" and out["rows"] == 4 and len(out["skipped"]) == 1
     t1, t2, t3 = out["trades"]
     assert (t1["side"], t1["qty"], t1["gross_pnl"], t1["fees"], t1["net_pnl"]) == ("long", 2, 40.0, 3.68, 36.32)
-    assert t1["pair_id"] == "pair:1:2" and t1["exit_ts"] == "2026-09-01T13:45:00+00:00" and t1["source"] == "csv"
+    assert t1["pair_id"] == "csv:1:2" and t1["exit_ts"] == "2026-09-01T13:45:00+00:00" and t1["source"] == "csv"
     assert t1["value_per_point"] == 2.0  # derived from the export's pnl
     assert (t2["side"], t2["gross_pnl"], t2["entry_price"], t2["exit_price"]) == ("short", -60.0, 20100.0, 20130.0)
     assert t3["root"] == "MGC" and t3["value_per_point"] == 10.0 and t3["account_spec"] == "DEMO11"

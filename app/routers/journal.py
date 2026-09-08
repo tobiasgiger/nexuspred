@@ -112,6 +112,16 @@ async def api_trade_note(trade_id: int, request: Request) -> dict[str, Any]:
     return db.get_journal_trade(context.get_area(), trade_id) or {}
 
 
+@router.post("/dedupe")
+async def api_dedupe() -> dict[str, Any]:
+    """Remove round trips stored twice (e.g. report + fill-pair import)."""
+    removed = db.dedupe_journal_trades(context.get_area())
+    if removed:
+        from .. import state
+        state.log_event("info", f"Journal: removed {removed} duplicate trade(s)")
+    return {"removed": removed}
+
+
 @router.post("/import")
 async def api_import(request: Request) -> dict[str, Any]:
     """Import fills / trades from every enabled Tradovate login now."""
