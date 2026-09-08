@@ -404,7 +404,7 @@ Token lifecycle:
   stored encrypted); the message text is end-to-end encrypted to the device, so Apple /
   Google never see it. Devices whose subscription expired are pruned automatically.
 
-Seven triggers, each independently toggled (push devices receive every trigger):
+Eleven triggers, each independently toggled (push devices receive every trigger):
 
 | Trigger | Channels | Detail included |
 |---|---|---|
@@ -414,6 +414,15 @@ Seven triggers, each independently toggled (push devices receive every trigger):
 | Signal received but not executed | Discord + email + push | which webhook and why execution failed |
 | Discord listener offline / back online | Discord + email + push | after a configurable grace period |
 | Contract rollover due | Discord + email + push | which contract and when, once per contract |
+| Position opened / added | Discord + push | seen on the broker side (stop/target fills and manual trades included): account, symbol, direction, size, price |
+| Position closed / reduced | Discord + push | account, symbol, direction, size, **realised P&L** (the broker's figure for that close) and how long it was open |
+| Execution agent offline / back online | Discord + email + push | a paired VPS agent stopped or resumed polling |
+| Daily summary | all channels | once a day at a configurable local time: realised P&L per account, trades closed, wins / losses |
+
+Position alerts come from polling the broker's position list every few seconds (the same
+poll that feeds the Overview's live P&L, `pnl_poll_seconds`), so they fire even when the
+trade was not placed by the bridge. Positions already open when the bridge starts are
+taken as the baseline and not announced.
 
 Connection lost/restored only fires on the actual transition (never on the first
 observation of a session, and never twice in a row for the same state) — so you get one

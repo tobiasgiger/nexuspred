@@ -24,7 +24,7 @@ os.environ.setdefault("PORT", "9000")
 import httpx  # noqa: E402
 import pytest  # noqa: E402
 
-from app import auth, config, context, crypto, db, history, http, push, relay, security, signals, state, tradovate  # noqa: E402
+from app import auth, config, context, crypto, db, history, http, push, relay, security, signals, state, tradovate, watch  # noqa: E402
 from app.discord_signals import hub, listener  # noqa: E402
 from app.main import app  # noqa: E402
 
@@ -65,6 +65,7 @@ def _reset_runtime() -> None:
     history.stop()
     relay.reset()
     push.reset()
+    watch.reset()
 
 
 @pytest.fixture(autouse=True)

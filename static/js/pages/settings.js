@@ -224,14 +224,20 @@ export const alerts = {
         { title: "Push notifications", hint: "Notifications on your phone or desktop, even when the dashboard is closed. Works in Chrome/Edge/Firefox and on iPhone/iPad (iOS 16.4+) once the dashboard is added to the Home Screen.", fields: [
           { name: "alert_push_enabled", type: "switch", label: "Push alerts enabled", hint: "Master switch for every registered device" },
         ], after: pushPanel() },
-        { title: "Triggers", hint: "Each trigger has its own switch. Trade executed is Discord-only by design among the classic channels; push devices get every trigger.", fields: [
+        { title: "Triggers", hint: "Each trigger has its own switch. Position opened / closed come from the broker's own position list (polled every few seconds, see Live P&L refresh) and therefore also catch stop and target fills and manual trades.", fields: [
           { name: "alert_on_connection_lost", type: "switch", label: "Connection lost", hint: "Which account + broker — Discord + email" },
           { name: "alert_on_connection_restored", type: "switch", label: "Connection restored", hint: "Discord + email" },
-          { name: "alert_on_trade_executed", type: "switch", label: "Trade executed", hint: "Which accounts + strategy — Discord only" },
+          { name: "alert_on_trade_executed", type: "switch", label: "Signal executed", hint: "A webhook / Discord signal was sent to the broker: strategy, action, contract, accounts — Discord + push" },
+          { name: "alert_on_trade_opened", type: "switch", label: "Position opened", hint: "Seen on the broker side, so manual entries count too: account, symbol, direction, size, price — Discord + push" },
+          { name: "alert_on_trade_closed", type: "switch", label: "Position closed", hint: "Including stop / target fills: account, symbol, direction, size, realised P&L, duration — Discord + push. Partial closes are reported as 'reduced'." },
+          { name: "alert_on_agent_lost", type: "switch", label: "Execution agent went offline", hint: "A paired VPS agent stopped polling — Discord + email + push" },
+          { name: "alert_on_agent_restored", type: "switch", label: "Execution agent came back online", hint: "Discord + email + push" },
+          { name: "alert_daily_summary", type: "switch", label: "Daily summary", hint: "Once a day: realised P&L per account, trades closed, wins / losses — all channels" },
+          { name: "daily_summary_time", type: "text", label: "Daily summary time (HH:MM)", placeholder: "22:05", width: "160px", hint: "Local time in the journal timezone (Settings → General → Trading journal)." },
           { name: "alert_on_webhook_failed", type: "switch", label: "Signal received but not executed", hint: "Webhook failure — Discord + email" },
           { name: "alert_on_discord_lost", type: "switch", label: "Discord listener went offline", hint: "Discord + email" },
           { name: "alert_on_discord_restored", type: "switch", label: "Discord listener came back online", hint: "Discord + email" },
-          { name: "alert_on_rollover", type: "switch", label: "Contract rollover due", hint: "A dated contract in the symbol map is near or past its roll date — Discord + email, once per contract" },
+          { name: "alert_on_rollover", type: "switch", label: "Contract rollover due", hint: "A dated contract in the symbol map is near or past its roll date — Discord + email + push, once per contract" },
           { name: "rollover_warn_days", type: "number", label: "Rollover warning lead time (days)", min: 0, max: 60, placeholder: "10", width: "200px", hint: "Warn this many days before the estimated expiry / first-notice date." },
           { name: "discord_health_grace", type: "number", label: "Discord health grace period (seconds)", min: 15, step: 5, placeholder: "90", width: "200px", hint: "How long the listener may be down before an outage alert fires (avoids alerting on transient reconnects)." },
         ], after: h("div", { class: "form-actions", style: "margin-top:12px" }, testBtn, testHint) },

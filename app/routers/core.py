@@ -101,6 +101,12 @@ async def api_save_settings(request: Request) -> dict[str, Any]:
         if len(parts) != 2 or not all(x.isdigit() for x in parts) or not (0 <= int(parts[0]) < 24 and 0 <= int(parts[1]) < 60):
             raise HTTPException(status_code=400, detail="Journal import time must be HH:MM")
         updates["journal_import_time"] = f"{int(parts[0]):02d}:{int(parts[1]):02d}"
+    if "daily_summary_time" in updates:
+        raw = str(updates.get("daily_summary_time") or "22:05").strip()
+        parts = raw.split(":")
+        if len(parts) != 2 or not all(x.isdigit() for x in parts) or not (0 <= int(parts[0]) < 24 and 0 <= int(parts[1]) < 60):
+            raise HTTPException(status_code=400, detail="Daily summary time must be HH:MM")
+        updates["daily_summary_time"] = f"{int(parts[0]):02d}:{int(parts[1]):02d}"
     if "journal_timezone" in updates:
         from zoneinfo import ZoneInfo
         name = str(updates.get("journal_timezone") or "Europe/Zurich").strip()

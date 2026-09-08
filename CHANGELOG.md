@@ -4,6 +4,20 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.18
+- **Position alerts from the broker's view** (`app/watch.py`). The live P&L poll now also
+  reads each login's position list and diffs it tick to tick: *Position opened* (account,
+  symbol, direction, size, price), *added*, *reduced* and *closed* — the last two with the
+  account's **realised P&L change** for that close and the time the position was open. Fires
+  for stop / target fills and manual trades too, not just bridge signals; positions already
+  open at startup are the baseline. Discord + push.
+- **Execution agent offline / online alerts** (Discord + email + push) and a **daily summary**
+  at a configurable local time (`daily_summary_time`, default 22:05 in the journal timezone):
+  realised P&L per account, trades closed, wins / losses — on every channel.
+- New switches on Settings → Alerts: position opened, position closed, agent offline, agent
+  online, daily summary (+ time). The P&L poll runs at the fast cadence whenever position
+  alerts are on, not only while a dashboard is open.
+
 ## 5.0.0-alpha.17
 - **Security review round 2** (findings from a fresh assessment incl. the execution
   agents and push channel; all fixed):

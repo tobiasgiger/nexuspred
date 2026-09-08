@@ -151,6 +151,101 @@ async def trade_executed(
                          _send_push(f"Trade executed: {action.upper()} {contract}", message, url="/#/orders"))
 
 
+def _money(v: Any) -> str:
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return "n/a"
+    sign = "+" if x > 0 else ("−" if x < 0 else "")
+    return f"{sign}${abs(x):,.2f}"
+
+
+def _price(v: Any) -> str:
+    return f"{float(v):.4f}".rstrip("0").rstrip(".")
+
+
+async def trade_opened(account: str, symbol: str, direction: str, qty: float, price: Any = None) -> None:
+    """A position appeared on the broker side (bridge signal, manual or otherwise)."""
+    s = config.load_settings()
+    if not s.get("alert_on_trade_opened", True):
+        return
+    q = f"{qty:g}"
+    at = f" @ {_price(price)}" if isinstance(price, (int, float)) and price else ""
+    message = f"🟢 **Opened** {direction} {q} × {symbol}{at} · `{account}`"
+    await asyncio.gather(_send_discord(message),
+                         _send_push(f"Opened {direction} {symbol} · {account}", f"{q} contract{'s' if qty != 1 else ''}{at}", url="/#/"))
+
+
+async def position_added(account: str, symbol: str, direction: str, added: float, total: float) -> None:
+    s = config.load_settings()
+    if not s.get("alert_on_trade_opened", True):
+        return
+    message = f"➕ **Added** {added:g} × {symbol} → {direction} {total:g} · `{account}`"
+    await asyncio.gather(_send_discord(message),
+                         _send_push(f"Added {added:g} {symbol} · {account}", f"Now {direction} {total:g}", url="/#/"))
+
+
+async def trade_closed(account: str, symbol: str, direction: str, qty: float, pnl: Any, duration: str = "",
+                       *, remaining: float = 0) -> None:
+    """A position (or part of it) was closed; ``pnl`` is the account's realised
+    change between two polls, i.e. the broker's own figure for the close."""
+    s = config.load_settings()
+    if not s.get("alert_on_trade_closed", True):
+        return
+    pnl_txt = _money(pnl) if pnl is not None else "P&L n/a"
+    tail = f" ({duration})" if duration else ""
+    if remaining:
+        icon = "🟡"
+        head = f"**Reduced** {direction} {symbol} by {qty:g} → {remaining:g} left"
+        title = f"Reduced {direction} {symbol} · {account}"
+    else:
+        icon = "✅" if (isinstance(pnl, (int, float)) and pnl >= 0) else ("❌" if isinstance(pnl, (int, float)) else "⚪")
+        head = f"**Closed** {direction} {qty:g} × {symbol}"
+        title = f"Closed {direction} {symbol} · {account}"
+    message = f"{icon} {head} · `{account}` · **{pnl_txt}**{tail}"
+    await asyncio.gather(_send_discord(message),
+                         _send_push(title, f"{pnl_txt}{tail} · {qty:g} contract{'s' if qty != 1 else ''}", url="/#/journal"))
+
+
+async def agent_lost(name: str, last_ip: str = "") -> None:
+    s = config.load_settings()
+    if not s.get("alert_on_agent_lost", True):
+        return
+    where = f" (last seen from {last_ip})" if last_ip else ""
+    message = (f"🔴 **Execution agent offline** — `{name}` stopped polling{where}. "
+               f"Logins assigned to it cannot trade until it is back.")
+    await asyncio.gather(_send_discord(message),
+                         _send_email(f"Fluxbridge: execution agent offline ({name})", message),
+                         _send_push(f"Agent offline: {name}", message, url="/#/settings/agents"))
+
+
+async def agent_restored(name: str) -> None:
+    s = config.load_settings()
+    if not s.get("alert_on_agent_restored", True):
+        return
+    message = f"🟢 **Execution agent online** — `{name}` is polling again"
+    await asyncio.gather(_send_discord(message),
+                         _send_email(f"Fluxbridge: execution agent online ({name})", message),
+                         _send_push(f"Agent online: {name}", message, url="/#/settings/agents"))
+
+
+async def daily_summary(pnl: dict[str, Any], closes: list[dict[str, Any]], day: str) -> None:
+    """End-of-day recap: realised P&L per account plus the day's closed trades."""
+    s = config.load_settings()
+    if not s.get("alert_daily_summary", True):
+        return
+    accounts = pnl.get("accounts") or []
+    per = ", ".join(f"{a.get('spec') or a.get('account_id')} {_money(a.get('realized'))}" for a in accounts) or "no accounts polled"
+    wins = sum(1 for c in closes if isinstance(c.get("pnl"), (int, float)) and c["pnl"] > 0)
+    losses = sum(1 for c in closes if isinstance(c.get("pnl"), (int, float)) and c["pnl"] < 0)
+    trades = f"{len(closes)} trade{'s' if len(closes) != 1 else ''} closed" + (f" ({wins} win, {losses} loss)" if closes else "")
+    total = _money(pnl.get("realized", 0))
+    message = f"📊 **Daily summary {day}** — realised **{total}** ({per}) · {trades} · open {_money(pnl.get('open', 0))}"
+    await asyncio.gather(_send_discord(message),
+                         _send_email(f"Fluxbridge: daily summary {day} ({total})", message),
+                         _send_push(f"Daily P&L {total}", f"{trades} · {per}", url="/#/journal"))
+
+
 async def discord_listener_lost(error: str = "") -> None:
     s = config.load_settings()
     if not s.get("alert_on_discord_lost", True):

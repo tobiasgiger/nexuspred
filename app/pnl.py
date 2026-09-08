@@ -7,9 +7,11 @@ week's realised P&L and the cash balance — and pushes the result to every
 open dashboard over the live stream (``kind: "pnl"``). No market-data feed is
 needed: Tradovate marks the open positions itself.
 
-Cadence is adaptive: the fast interval only while someone is watching (an
-``/api/stream`` subscriber exists for the area), a slow tick otherwise; a
-rate-limit / error answer backs the interval off up to two minutes.
+Cadence is adaptive: the fast interval while someone is watching (an
+``/api/stream`` subscriber exists for the area) or while trade-opened /
+trade-closed alerts are on (they need a timely view of the broker's
+positions, see :mod:`app.watch`), a slow tick otherwise; a rate-limit / error
+answer backs the interval off up to two minutes.
 """
 from __future__ import annotations
 
@@ -17,7 +19,7 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Any
 
-from . import config, context, db, state, tradovate
+from . import config, context, db, state, tradovate, watch
 
 IDLE_INTERVAL_S = 60.0
 MAX_BACKOFF_S = 120.0
@@ -78,6 +80,10 @@ async def refresh_area(area_id: int) -> dict[str, Any]:
         changed = state.set_pnl(summary, area_id)
         if changed:
             state.publish("pnl", summary, area_id)
+        try:
+            await watch.observe_area(area_id, sessions, accounts)
+        except Exception as exc:  # noqa: BLE001 - alerts must never break the P&L feed
+            state.log_event("warn", f"position watch failed: {exc}")
         return summary
 
 
@@ -88,11 +94,15 @@ async def pnl_loop() -> None:
         try:
             for aid in db.all_area_ids():
                 s = config.load_settings(area_id=aid)
+                await watch.tick(aid)   # agent transitions + daily summary (no broker calls)
                 fast = float(s.get("pnl_poll_seconds", 5) or 0)
                 if fast <= 0:
                     continue  # switched off for this area
                 fast = max(2.0, fast)
-                interval = fast if state.subscriber_count(aid) else IDLE_INTERVAL_S
+                # Fast while a dashboard is open — or while trade alerts need a
+                # timely view of the broker's positions.
+                watched = state.subscriber_count(aid) or watch.trade_alerts_enabled(s)
+                interval = fast if watched else IDLE_INTERVAL_S
                 try:
                     summary = await refresh_area(aid)
                     if summary["error"] and not summary["accounts"]:

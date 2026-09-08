@@ -115,6 +115,16 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "alert_on_connection_lost": True,
     "alert_on_connection_restored": True,
     "alert_on_trade_executed": True,
+    # Position watcher (broker-side view, catches stop / target fills and manual
+    # trades too): opened / added, closed / reduced with the realised P&L.
+    "alert_on_trade_opened": True,
+    "alert_on_trade_closed": True,
+    # Execution agents (VPS helpers) going offline / back online.
+    "alert_on_agent_lost": True,
+    "alert_on_agent_restored": True,
+    # One summary per day (local time in journal_timezone) with realised P&L.
+    "alert_daily_summary": True,
+    "daily_summary_time": "22:05",
     # Discord listener health (self-bot Gateway connection).
     "alert_on_discord_lost": True,
     "alert_on_discord_restored": True,

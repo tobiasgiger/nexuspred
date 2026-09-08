@@ -18,6 +18,8 @@ class Sess:
         return True
 
     async def _request(self, method, path, **kw):
+        if path == "/position/list":
+            return []
         self.calls += 1
         assert path == "/cashBalance/getcashbalancesnapshot"
         aid = kw["json"]["accountId"]
@@ -109,4 +111,12 @@ async def test_loop_respects_off_and_watchers(admin, monkeypatch):
         await pnl.pnl_loop()
     except asyncio.CancelledError:
         pass
-    assert sleeps == [pnl.IDLE_INTERVAL_S]                          # nobody watching → idle cadence
+    assert sleeps == [5.0]                                          # nobody watching, but trade alerts need positions
+    with context.use_area(1):
+        config.save_settings({"alert_on_trade_opened": False, "alert_on_trade_closed": False})
+    sleeps.clear()
+    try:
+        await pnl.pnl_loop()
+    except asyncio.CancelledError:
+        pass
+    assert sleeps == [pnl.IDLE_INTERVAL_S]                          # nobody watching, no trade alerts → idle cadence
