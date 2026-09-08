@@ -26,12 +26,16 @@ export async function registerWorker() {
   try { return await navigator.serviceWorker.register("/sw.js", { scope: "/" }); } catch (e) { return null; }
 }
 
-function sameServerKey(sub, appKey) {
+function confirmedSameKey(sub, appKey) {
+  // Only TRUE when we can positively confirm the subscription's server key
+  // matches. iOS Safari does not expose options.applicationServerKey, so there
+  // it returns false and enablePush() recreates the subscription — the only way
+  // to be sure a stale key (from a rotated VAPID key) is replaced.
   const stored = sub.options && sub.options.applicationServerKey;
-  if (!stored) return true;   // unknown → don't force a needless re-subscribe
-  const a = new Uint8Array(stored), b = appKey;
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  if (!stored) return false;
+  const a = new Uint8Array(stored);
+  if (a.length !== appKey.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== appKey[i]) return false;
   return true;
 }
 
@@ -60,9 +64,11 @@ export async function enablePush() {
   const { public_key } = await api.get("/api/push/public-key");
   const appKey = b64ToBytes(public_key);
   let sub = await reg.pushManager.getSubscription();
-  // A subscription bound to a different server key (the bridge rotated its VAPID
-  // key) is rejected by Apple/FCM forever — drop it and subscribe afresh.
-  if (sub && !sameServerKey(sub, appKey)) { try { await sub.unsubscribe(); } catch (e) { /* ignore */ } sub = null; }
+  // Reuse the existing subscription only when we can prove it uses the current
+  // server key; otherwise drop it and subscribe afresh. On iOS the key is never
+  // exposed, so enabling always creates a subscription bound to today's key —
+  // which is what recovers a device stuck on a rotated key.
+  if (sub && !confirmedSameKey(sub, appKey)) { try { await sub.unsubscribe(); } catch (e) { /* ignore */ } sub = null; }
   if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appKey });
   const json = sub.toJSON();
   return api.post("/api/push/subscribe", { subscription: json, device: deviceName() });

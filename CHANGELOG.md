@@ -4,6 +4,14 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.22
+- **Fix the iPhone re-enable loop.** iOS Safari never exposes a subscription's
+  ``applicationServerKey``, so the previous "same key?" check could not tell a stale
+  subscription (bound to a rotated VAPID key) from a good one and reused it — enabling
+  then failed and the server pruned the device, over and over. Enabling now recreates the
+  browser subscription whenever the key cannot be positively confirmed, so on iOS it
+  always subscribes under today's key. Enable once more per device to recover.
+
 ## 5.0.0-alpha.21
 - **Fix iPhone push (403 BadJwtToken).** The VAPID keypair is stored encrypted in the
   meta table but was not covered by the startup re-encryption pass, so a change to the
