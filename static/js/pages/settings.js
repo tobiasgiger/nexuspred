@@ -166,7 +166,7 @@ function pushPanel() {
   const enableBtn = h("button", { type: "button", class: "btn btn-primary", disabled: true }, icon("bell"), "Enable on this device");
   const disableBtn = h("button", { type: "button", class: "btn btn-ghost", hidden: true }, "Disable on this device");
   const testAllBtn = h("button", { type: "button", class: "btn btn-secondary", hidden: true }, icon("send"), "Test push");
-  const actionsRow = h("div", { class: "form-actions", style: "margin-top:12px" }, enableBtn, disableBtn, testAllBtn);
+  const actionsRow = h("div", { class: "form-actions", style: "margin-top:12px" }, enableBtn, disableBtn, testAllBtn, diagBtn);
   const table = dataTable({ empty: "No device registered yet.", compact: true, columns: [
     { label: "Device", render: (d) => [h("strong", null, d.device || "Device"), " ", h("span", { class: "muted" }, d.endpoint_host || "")] },
     { label: "Added", render: (d) => fmtDateTime(d.created_at) },
@@ -235,7 +235,17 @@ function pushPanel() {
     try { const r = await api.post("/api/push/test"); toast(`Test push: ${r.sent} sent, ${r.failed} failed, ${r.gone} removed`, r.sent ? "success" : "error"); load(); }
     catch (e) { toast(e.message, "error"); }
   });
-  const el = h("div", null, status, actionsRow,
+  const diagOut = h("pre", { hidden: true, style: "white-space:pre-wrap;word-break:break-word;font-size:.78em;background:var(--code-bg,#eee);padding:10px;border-radius:6px;margin-top:10px;max-height:50vh;overflow:auto" });
+  const diagBtn = h("button", { type: "button", class: "btn btn-ghost", onClick: async () => {
+    diagOut.hidden = false; diagOut.textContent = "Running…";
+    try {
+      const r = await api.post("/api/push/diag");
+      const lines = [`server key ${r.public_key_fp} · crypto ${r.crypto_source} · key decrypts=${r.vapid_key_decrypts} current=${r.vapid_key_current}`,
+        `sub ${r.claims_sub}`, "", ...((r.devices || []).length ? r.devices.map((d) => `${d.host}\n  ${d.ok ? "OK — delivered" : d.error}`) : ["no devices registered"])];
+      diagOut.textContent = lines.join("\n");
+    } catch (e) { diagOut.textContent = e.message; }
+  } }, icon("search"), "Diagnose");
+  const el = h("div", null, status, actionsRow, diagOut,
     h("h3", { style: "margin:18px 0 6px" }, "Registered devices"),
     h("p", { class: "hint" }, "Every device that enabled push for this workspace. On iPhone/iPad open the Home Screen app to enable it; Safari tabs can't receive push."),
     table.el);

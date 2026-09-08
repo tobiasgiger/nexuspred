@@ -248,3 +248,21 @@ def test_vapid_key_is_reencrypted_after_a_crypto_key_change(admin, monkeypatch):
     key2 = push.public_key()                        # _load decrypts via legacy and must NOT regenerate
     assert key2 == key1                              # same keypair survived the rotation
     assert crypto.is_current(db.meta_get("vapid_private_pem"))   # …and was re-encrypted with the new key
+
+
+async def test_diagnose_reports_identity_and_does_not_prune(client, sent):
+    calls, responses = sent
+    await client.post("/api/push/subscribe", json={"subscription": SUB, "device": "iPhone"})
+    responses[SUB["endpoint"]] = 410           # would normally be pruned by a test
+    r = await client.post("/api/push/diag")
+    d = r.json()
+    assert d["available"] is True and len(d["public_key"]) > 80 and len(d["public_key_fp"]) == 12
+    assert d["vapid_key_encrypted"] and d["vapid_key_decrypts"] and d["vapid_key_current"]
+    assert d["claims_sub"].startswith("mailto:")
+    assert d["devices"][0]["host"] == "web.push.apple.com" and d["devices"][0]["ok"] is False and "410" in d["devices"][0]["error"]
+    # diagnose must NOT delete the device (unlike test)
+    assert len(db.list_push_subscriptions(context.get_area())) == 1
+
+
+async def test_diag_requires_admin(anon_client, admin):
+    assert (await anon_client.post("/api/push/diag")).status_code == 401

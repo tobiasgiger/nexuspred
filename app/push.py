@@ -79,6 +79,33 @@ def public_key() -> str:
     return _public_b64
 
 
+def diagnose(area_id: int) -> dict[str, Any]:
+    """Admin diagnostics: the server's push identity and a live send to every
+    device WITHOUT pruning, so the raw push-service answer is visible."""
+    import hashlib
+    if not available():
+        return {"available": False, "error": "pywebpush is not installed on the server"}
+    _load()
+    stored = db.meta_get("vapid_private_pem") or ""
+    info: dict[str, Any] = {
+        "available": True,
+        "public_key": _public_b64,
+        "public_key_fp": hashlib.sha256(_public_b64.encode()).hexdigest()[:12],
+        "vapid_key_encrypted": bool(stored) and crypto.is_encrypted(stored),
+        "vapid_key_decrypts": bool(stored) and bool(crypto.decrypt(stored)),
+        "vapid_key_current": bool(stored) and crypto.is_current(stored),
+        "crypto_source": crypto.key_source(),
+        "claims_sub": _claims().get("sub"),
+        "devices": [],
+    }
+    payload = {"title": "Fluxbridge diagnostic", "body": "diagnostic ping", "url": "/#/settings/alerts", "tag": "diag"}
+    for sub in db.list_push_subscriptions(area_id):
+        ok, status, err = _send_one(sub, payload)
+        info["devices"].append({"device": sub.get("device") or sub["id"], "host": sub["endpoint"].split("//", 1)[-1].split("/", 1)[0],
+                                "ok": ok, "status": status, "error": err})
+    return info
+
+
 def reset() -> None:
     global _vapid, _public_b64
     _vapid = None
@@ -108,7 +135,7 @@ def _send_one(sub: dict[str, Any], payload: dict[str, Any]) -> tuple[bool, int, 
         resp = getattr(exc, "response", None)
         status = getattr(resp, "status_code", 0) or 0
         body = (getattr(resp, "text", "") or "").strip().replace("\n", " ")
-        return False, status, f"{status or 'error'}: {body or str(exc)}"[:200]
+        return False, status, f"{status or 'error'}: {body or str(exc)}"[:300]
     except Exception as exc:  # noqa: BLE001
         return False, 0, f"{type(exc).__name__}: {exc}"[:200]
 

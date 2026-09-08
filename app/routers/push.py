@@ -78,6 +78,14 @@ async def api_push_unsubscribe(request: Request) -> dict[str, Any]:
     return {"removed": bool(removed)}
 
 
+@router.post("/api/push/diag")
+async def api_push_diag(request: Request) -> dict[str, Any]:
+    """Admin: server push identity + a live, non-pruning send to every device."""
+    from ..web import require_admin
+    require_admin(request)
+    return push.diagnose(context.get_area())
+
+
 @router.post("/api/push/test")
 async def api_push_test(request: Request) -> dict[str, Any]:
     """Send a test push — to one device (``{"id": …}``) or to all of the area's devices."""
