@@ -26,6 +26,15 @@ export async function registerWorker() {
   try { return await navigator.serviceWorker.register("/sw.js", { scope: "/" }); } catch (e) { return null; }
 }
 
+function sameServerKey(sub, appKey) {
+  const stored = sub.options && sub.options.applicationServerKey;
+  if (!stored) return true;   // unknown → don't force a needless re-subscribe
+  const a = new Uint8Array(stored), b = appKey;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
 export async function currentSubscription() {
   const reg = await registerWorker();
   if (!reg) return null;
@@ -49,8 +58,12 @@ export async function enablePush() {
   const perm = await Notification.requestPermission();
   if (perm !== "granted") throw new Error("Notification permission was not granted");
   const { public_key } = await api.get("/api/push/public-key");
+  const appKey = b64ToBytes(public_key);
   let sub = await reg.pushManager.getSubscription();
-  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(public_key) });
+  // A subscription bound to a different server key (the bridge rotated its VAPID
+  // key) is rejected by Apple/FCM forever — drop it and subscribe afresh.
+  if (sub && !sameServerKey(sub, appKey)) { try { await sub.unsubscribe(); } catch (e) { /* ignore */ } sub = null; }
+  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appKey });
   const json = sub.toJSON();
   return api.post("/api/push/subscribe", { subscription: json, device: deviceName() });
 }

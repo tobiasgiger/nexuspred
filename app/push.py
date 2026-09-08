@@ -60,6 +60,13 @@ def _load() -> Any:
         v.generate_keys()
         db.meta_set("vapid_private_pem", crypto.encrypt(v.private_pem().decode("utf-8")))
         _vapid = v
+    elif stored and not crypto.is_current(stored):
+        # Readable only via a legacy key → re-store under the current key so a
+        # future key change (with PREVIOUS set) can't strand every subscription.
+        try:
+            db.meta_set("vapid_private_pem", crypto.encrypt(_vapid.private_pem().decode("utf-8")))
+        except Exception:  # noqa: BLE001
+            pass
     pub = _vapid.public_key.public_bytes(serialization.Encoding.X962,
                                         serialization.PublicFormat.UncompressedPoint)
     _public_b64 = _b64url(pub)
@@ -113,12 +120,19 @@ def _deliver_sync(area_id: int, payload: dict[str, Any], only_ids: Optional[list
     sent = gone = failed = 0
     for sub in subs:
         ok, status, err = _send_one(sub, payload)
+        low = err.lower()
+        stale = status in (404, 410) or (status == 403 and ("badjwttoken" in low or "vapidpkhash" in low or "mismatch" in low))
         if ok:
             sent += 1
             db.touch_push_subscription(sub["id"], ok=True)
-        elif status in (404, 410):
+        elif stale:
             gone += 1
-            db.delete_push_subscription(area_id, sub["id"])  # the device unsubscribed / app removed
+            db.delete_push_subscription(area_id, sub["id"])  # unsubscribed / app removed / bound to a rotated key
+            try:
+                with context.use_area(area_id):
+                    state.log_event("info", f"Push device '{sub.get('device') or sub['id']}' removed (stale subscription) — re-enable it on the device to restore alerts")
+            except Exception:  # noqa: BLE001
+                pass
         else:
             failed += 1
             db.touch_push_subscription(sub["id"], ok=False, error=err)

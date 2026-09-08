@@ -30,7 +30,8 @@ def sent(monkeypatch):
         status = responses.get(sub["endpoint"], 201)
         if status < 300:
             return True, status, ""
-        return False, status, f"HTTP {status}"
+        body = "403: {\"reason\":\"BadJwtToken\"}" if status == 403 else f"HTTP {status}"
+        return False, status, body
 
     monkeypatch.setattr(push, "_send_one", fake_send_one)
     monkeypatch.setattr(push, "available", lambda: True)
@@ -205,3 +206,45 @@ async def test_subscribe_rejects_internal_endpoints_and_caps_devices(client, mon
     # oversized keys are rejected
     r = await client.post("/api/push/subscribe", json={"subscription": {"endpoint": "https://push.example/4", "keys": {"p256dh": "x" * 300, "auth": "a"}}})
     assert r.status_code == 400
+
+
+async def test_apple_badjwt_prunes_the_subscription(client, sent):
+    calls, responses = sent
+    a = (await client.post("/api/push/subscribe", json={"subscription": SUB, "device": "iPhone"})).json()["id"]
+    (await client.post("/api/push/subscribe", json={"subscription": SUB2, "device": "Chrome"}))
+    # Apple rejects a subscription bound to a rotated key with 403 BadJwtToken → prune it
+    responses[SUB["endpoint"]] = 403
+    r = await client.post("/api/push/test")
+    assert r.json()["gone"] == 1 and r.json()["sent"] == 1
+    left = [d.get("endpoint_host") for d in (await client.get("/api/push/subscriptions")).json()]
+    assert left == ["fcm.googleapis.com"]   # the FCM one survives, the stale Apple one is gone
+
+
+def test_send_one_reports_the_push_service_reason(admin, monkeypatch):
+    import pywebpush
+
+    class Resp:
+        status_code = 403
+        text = '{"reason":"BadJwtToken"}'
+
+    def boom(**kw):
+        raise pywebpush.WebPushException("rejected", response=Resp())
+    monkeypatch.setattr(pywebpush, "webpush", boom)
+    ok, status, err = push._send_one({"endpoint": SUB["endpoint"], "p256dh": "k", "auth": "a"}, {"title": "t"})
+    assert ok is False and status == 403 and "BadJwtToken" in err
+
+
+def test_vapid_key_is_reencrypted_after_a_crypto_key_change(admin, monkeypatch):
+    from app import crypto, db
+    key1 = push.public_key()
+    stored1 = db.meta_get("vapid_private_pem")
+    assert crypto.is_current(stored1)
+    # rotate the crypto key, keeping the old one as legacy (as NEXUSPRED_ENCRYPTION_KEY_PREVIOUS would)
+    monkeypatch.setenv("NEXUSPRED_ENCRYPTION_KEY_PREVIOUS", "test-session-secret")
+    monkeypatch.setenv("NEXUSPRED_ENCRYPTION_KEY", "a-brand-new-encryption-key-value")
+    crypto.reset()
+    push.reset()
+    assert not crypto.is_current(stored1)          # the old ciphertext needs the legacy key now
+    key2 = push.public_key()                        # _load decrypts via legacy and must NOT regenerate
+    assert key2 == key1                              # same keypair survived the rotation
+    assert crypto.is_current(db.meta_get("vapid_private_pem"))   # …and was re-encrypted with the new key

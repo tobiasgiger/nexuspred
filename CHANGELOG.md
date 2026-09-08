@@ -4,6 +4,17 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.21
+- **Fix iPhone push (403 BadJwtToken).** The VAPID keypair is stored encrypted in the
+  meta table but was not covered by the startup re-encryption pass, so a change to the
+  encryption key left it unreadable and the bridge silently generated a *new* keypair —
+  invalidating every existing subscription (Apple then rejects with 403 BadJwtToken while
+  a device that subscribed under the new key still works). Now: the key is re-encrypted
+  under the current crypto key instead of being regenerated; enabling push on a device
+  whose stored server key no longer matches drops the stale subscription and subscribes
+  afresh; and a 403 BadJwtToken / key-hash mismatch prunes the subscription (like 410) and
+  logs a re-enable hint. Re-enable push once per affected device to fix it.
+
 ## 5.0.0-alpha.20
 - **Push diagnostics.** A failed push now records the push service's actual HTTP status
   and body (Apple / FCM), shows it under the device on Settings → Alerts, and logs it to

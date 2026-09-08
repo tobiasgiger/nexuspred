@@ -13,7 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, config, context, crypto, db, health, history, http, journal, pnl, security, state
+from . import auth, config, context, crypto, db, health, history, http, journal, pnl, push, security, state
 from .discord_signals.routes import router as discord_router
 from .routers import ROUTERS
 from .web import BASE_DIR, is_auth_exempt, wants_html
@@ -32,6 +32,10 @@ async def _startup() -> None:
         state.log_event("warn", f"alert-email backfill failed: {exc}")
     # Encrypt secrets written by earlier versions (idempotent, one pass).
     try:
+        try:
+            push.available() and push.public_key()  # re-encrypt the VAPID key under the current crypto key
+        except Exception:  # noqa: BLE001
+            pass
         if db.encrypt_existing_settings():
             config.invalidate()
         if crypto.key_source() == "db":
