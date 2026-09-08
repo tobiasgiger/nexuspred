@@ -4,6 +4,13 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.23
+- **Serve JavaScript with ``no-store``.** ES modules import their siblings with un-versioned
+  relative paths, and a standalone iOS PWA served those from cache without revalidating even
+  under ``no-cache`` — so a device could keep running an old bundle (e.g. the pre-fix push
+  client) after a deploy. JS is now ``no-store`` (always fetched fresh); CSS stays ``no-cache``
+  since it is already version-busted.
+
 ## 5.0.0-alpha.22
 - **Fix the iPhone re-enable loop.** iOS Safari never exposes a subscription's
   ``applicationServerKey``, so the previous "same key?" check could not tell a stale

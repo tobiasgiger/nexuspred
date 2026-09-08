@@ -100,8 +100,14 @@ class _Static(StaticFiles):
 
     async def get_response(self, path: str, scope):  # type: ignore[override]
         resp = await super().get_response(path, scope)
-        if path.endswith((".js", ".css")):
-            resp.headers["Cache-Control"] = "no-cache"
+        if path.endswith(".js"):
+            # ES modules import their siblings with plain relative paths (no
+            # version query), and a standalone iOS PWA will serve those from
+            # cache without revalidating even under no-cache — leaving a device
+            # on stale code after a deploy. no-store forces a fresh fetch.
+            resp.headers["Cache-Control"] = "no-store"
+        elif path.endswith(".css"):
+            resp.headers["Cache-Control"] = "no-cache"  # already ?v= busted
         return resp
 
 

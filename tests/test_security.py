@@ -276,6 +276,15 @@ async def test_pwa_manifest_and_icons(anon_client, admin):
     assert m["display"] == "standalone" and m["start_url"].startswith("/")
     for icon in m["icons"]:
         assert (await anon_client.get(icon["src"])).status_code == 200
+
+
+async def test_js_is_never_cached_but_css_may_revalidate(anon_client, admin):
+    # ES modules import siblings without a version query; a cached bundle would
+    # strand an iOS PWA on old code after a deploy.
+    js = await anon_client.get("/static/js/push.js")
+    assert js.status_code == 200 and js.headers["cache-control"] == "no-store"
+    css = await anon_client.get("/static/css/base.css")
+    assert css.status_code == 200 and css.headers["cache-control"] == "no-cache"
     page = await anon_client.get("/login")
     assert 'rel="manifest"' in page.text and "apple-touch-icon" in page.text
 
