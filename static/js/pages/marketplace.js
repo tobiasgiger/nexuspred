@@ -1,5 +1,6 @@
 /* Marketplace: signals other users published; subscribe with your own accounts. */
 import { h, card, tag, toast, confirmDialog, pageHead, clear } from "../ui.js";
+import { maskAccount } from "../privacy.js";
 import { icon } from "../icons.js";
 import { api } from "../api.js";
 import { store } from "../store.js";
@@ -25,7 +26,7 @@ export function openSubscriptionDrawer(item, onDone) {
     columns: [
       { label: "Route", render: (a) => h("input", { type: "checkbox", class: "switch acc-on", checked: !!(selected.get(accountKey(a.token_idx, a.spec)) || {}).enabled, dataset: { key: accountKey(a.token_idx, a.spec) } }) },
       { label: "Login", render: (a) => a.token_name || "—" },
-      { label: "Account", render: (a) => h("code", null, a.spec || "—") },
+      { label: "Account", render: (a) => h("code", null, maskAccount(a.spec) || "—") },
       { label: "Env", render: (a) => tag((a.environment || "—").toUpperCase(), a.environment === "live" ? "live" : "demo") },
       { label: "Qty ×", render: (a) => h("input", { type: "number", class: "acc-mult input-sm", min: 0.1, step: 0.1, style: "width:80px", value: (selected.get(accountKey(a.token_idx, a.spec)) || {}).qty_multiplier ?? 1, dataset: { key: accountKey(a.token_idx, a.spec) } }) },
     ],

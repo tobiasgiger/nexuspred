@@ -1,5 +1,6 @@
 /* Settings → Tradovate Accounts: token logins + the discovered trade accounts. */
 import { h, card, tag, toast, confirmDialog, pageHead } from "../ui.js";
+import { maskAccount } from "../privacy.js";
 import { icon } from "../icons.js";
 import { api } from "../api.js";
 import { store } from "../store.js";
@@ -71,7 +72,7 @@ export default {
       empty: "No accounts yet — add a login above, save, then Connect & Verify.",
       columns: [
         { label: "Login", render: (a) => a.token_name || "—" },
-        { label: "Account", render: (a) => h("code", null, a.spec || "—") },
+        { label: "Account", render: (a) => h("code", null, maskAccount(a.spec) || "—") },
         { label: "Env", render: (a) => tag((a.environment || "—").toUpperCase(), a.environment === "live" ? "live" : "demo") },
         { label: "Login enabled", render: (a) => h("span", { class: a.token_enabled ? "pos" : "muted" }, a.token_enabled ? "yes" : "no") },
         { label: "Status", render: (a) => h("span", { class: a.connected ? "pos" : "neg" }, a.connected ? "Connected" : "Not connected") },

@@ -1,5 +1,6 @@
 /* Logs: event log + signal log, filterable, live via the stream. */
 import { h, card, tag, fmtTime, fmtDateTime, pageHead, clear } from "../ui.js";
+import { maskAccount } from "../privacy.js";
 import { icon } from "../icons.js";
 import { store } from "../store.js";
 import { actions } from "../actions.js";
@@ -96,7 +97,7 @@ export default {
       { label: "Time", render: (o) => fmtDateTime(o.ts) },
       { label: "Action", render: (o) => tag(o.action || "—", (o.action || "").toLowerCase() === "buy" ? "buy" : (o.action || "").toLowerCase() === "sell" ? "sell" : "") },
       { label: "Symbol", render: (o) => [o.symbol || "—", o.simulated ? [" ", tag("SIM", "sim")] : null] },
-      { label: "Account", render: (o) => o.account || "—" },
+      { label: "Account", render: (o) => maskAccount(o.account) || "—" },
       { label: "Qty", className: "num", render: (o) => String(o.qty ?? "—") },
       { label: "Type", render: (o) => o.order_type || "—" },
       { label: "Price", className: "num", render: (o) => String(o.price ?? o.stop_price ?? "—") },

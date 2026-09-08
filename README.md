@@ -434,6 +434,10 @@ Performance report, a CSV upload) are stored once: the importer recognises the s
 trip by its broker fill ids or by account / symbol / side / size / prices and exit time.
 **Journal → Remove duplicates** collapses anything older imports stored twice, keeping notes.
 
+**Privacy mode** (the eye icon in the top bar) masks account names on screen — the first
+six characters stay, the rest become asterisks — handy for screenshots and streaming. It is
+a display setting per browser; alerts, exports and the API are unaffected.
+
 Connection lost/restored only fires on the actual transition (never on the first
 observation of a session, and never twice in a row for the same state) — so you get one
 alert when it drops and one when it comes back, not a repeat every health check. A failed

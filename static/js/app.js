@@ -84,7 +84,8 @@ async function boot() {
   initTheme();
   shell.classList.toggle("collapsed", collapsed);
   $("#scrim").addEventListener("click", () => shell.classList.remove("sidebar-open"));
-  renderTopbar(topbarEl, { navigate, onHamburger: () => shell.classList.toggle("sidebar-open") });
+  renderTopbar(topbarEl, { navigate, onHamburger: () => shell.classList.toggle("sidebar-open"),
+    onPrivacy: () => { currentPath = null; render(); } });   // repaint the page with (un)masked names
 
   try {
     await actions.loadMe();

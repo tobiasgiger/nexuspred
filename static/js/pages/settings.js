@@ -1,6 +1,7 @@
 /* Settings pages that are plain forms over /api/settings: general, alerts,
    security, updates, symbol map, account. Each page posts only its own keys. */
 import { h, card, tag, toast, confirmDialog, pageHead, fmtDateTime, clear } from "../ui.js";
+import { maskAccount } from "../privacy.js";
 import { icon } from "../icons.js";
 import { api } from "../api.js";
 import { store } from "../store.js";
@@ -128,7 +129,7 @@ function alertAccountsPanel() {
         hint.textContent = "Unsaved changes"; hint.className = "save-hint";
       } });
       list.append(h("label", { class: "check-row", for: id }, box,
-        h("span", null, h("strong", null, a.spec || `#${a.id}`), " ", h("span", { class: "muted" }, `${a.token_name} · ${a.environment}${a.enabled ? "" : " · disabled"}`))));
+        h("span", null, h("strong", null, maskAccount(a.spec) || `#${a.id}`), " ", h("span", { class: "muted" }, `${a.token_name} · ${a.environment}${a.enabled ? "" : " · disabled"}`))));
     }
   }
   allSwitch.addEventListener("change", () => {

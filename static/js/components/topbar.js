@@ -5,8 +5,9 @@ import { icon } from "../icons.js";
 import { store } from "../store.js";
 import { actions } from "../actions.js";
 import { getTheme, setTheme } from "../theme.js";
+import { isPrivate, setPrivate } from "../privacy.js";
 
-export function renderTopbar(root, { navigate, onHamburger }) {
+export function renderTopbar(root, { navigate, onHamburger, onPrivacy }) {
   clear(root);
   const title = h("span", { class: "title" }, "Fluxbridge");
 
@@ -73,12 +74,28 @@ export function renderTopbar(root, { navigate, onHamburger }) {
   themeMenuItem.addEventListener("click", flipTheme);
   paintTheme();
 
+  // Privacy mode (mask account names for screenshots / streaming)
+  const privacyBtn = h("button", { type: "button", class: "btn btn-ghost btn-icon hide-mobile" });
+  const privacyMenuItem = h("button", { type: "button" });
+  const paintPrivacy = () => {
+    const on = isPrivate();
+    privacyBtn.title = on ? "Privacy mode on — account names are masked. Click to show them." : "Privacy mode — mask account names (for screenshots / streaming)";
+    privacyBtn.classList.toggle("active", on);
+    privacyBtn.replaceChildren(icon(on ? "eyeOff" : "eye"));
+    privacyMenuItem.replaceChildren(icon(on ? "eye" : "eyeOff"), on ? "Show account names" : "Mask account names");
+  };
+  const flipPrivacy = () => { setPrivate(!isPrivate()); paintPrivacy(); if (onPrivacy) onPrivacy(isPrivate()); };
+  privacyBtn.addEventListener("click", flipPrivacy);
+  privacyMenuItem.addEventListener("click", flipPrivacy);
+  paintPrivacy();
+
   // User menu
   const who = h("div", { class: "who" }, h("strong", null, "…"), "signed in");
   const avatar = h("button", { type: "button", class: "avatar", title: "Account" }, "?");
   const menu = h("div", { class: "menu" }, who,
     h("a", { href: "#/settings/account", onClick: (e) => { e.preventDefault(); userMenu.classList.remove("open"); navigate("/settings/account"); } }, icon("user"), "Account"),
     themeMenuItem,
+    privacyMenuItem,
     h("a", { href: "/logout" }, icon("logout"), "Sign out"));
   const userMenu = h("div", { class: "user-menu" }, avatar, menu);
   avatar.addEventListener("click", (e) => { e.stopPropagation(); userMenu.classList.toggle("open"); });
@@ -87,7 +104,7 @@ export function renderTopbar(root, { navigate, onHamburger }) {
   root.append(
     h("button", { type: "button", class: "btn btn-ghost btn-icon hamburger", title: "Menu", onClick: onHamburger }, icon("menu")),
     title, h("span", { class: "spacer" }),
-    h("div", { class: "right" }, updateBtn, streamPill, connPill, tradingPill, sosBtn, themeBtn, userMenu));
+    h("div", { class: "right" }, updateBtn, streamPill, connPill, tradingPill, sosBtn, privacyBtn, themeBtn, userMenu));
 
   const unsubs = [
     store.subscribe("route", (r) => { title.textContent = r ? r.title : "Fluxbridge"; }, { immediate: true }),

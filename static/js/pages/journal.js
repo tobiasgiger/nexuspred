@@ -1,6 +1,7 @@
 /* Trading journal: imported Tradovate trades with P&L reporting per day / week /
    month, equity curve, calendar, breakdowns, notes & tags, import on demand. */
 import { h, card, tag, fmtDateTime, fmtNum, pageHead, clear, toast, confirmDialog } from "../ui.js";
+import { maskAccount } from "../privacy.js";
 import { icon } from "../icons.js";
 import { api } from "../api.js";
 import { dataTable } from "../components/table.js";
@@ -73,7 +74,7 @@ export default {
       onRow: (t) => openTrade(t),
       columns: [
         { label: "Closed", render: (t) => fmtDateTime(t.exit_ts) },
-        { label: "Account", render: (t) => t.account_name || t.account_spec },
+        { label: "Account", render: (t) => maskAccount(t.account_name || t.account_spec) },
         { label: "Symbol", render: (t) => h("code", null, t.symbol) },
         { label: "Side", render: (t) => tag(t.side, t.side === "long" ? "buy" : "sell") },
         { label: "Qty", className: "num", render: (t) => String(t.qty) },
@@ -147,7 +148,7 @@ export default {
       mount(byHour, (w) => columnChart(hrCols, { width: w, height: 170, maxLabels: 24 }));
       clear(byHourTable); byHourTable.append(bt(hr, (x) => `${String(x).padStart(2, "0")}:00`));
 
-      fillOptions(accountSel, ov.accounts.map((a) => [a.account_spec || String(a.account_id), `${a.account_name || a.account_spec} (${a.n})`]), f.account);
+      fillOptions(accountSel, ov.accounts.map((a) => [a.account_spec || String(a.account_id), `${maskAccount(a.account_name || a.account_spec)} (${a.n})`]), f.account);
       fillOptions(symbolSel, ov.symbols.map((s) => [s, s]), f.symbol);
       importInfo.textContent = (ov.last_import ? `Last import ${fmtDateTime(ov.last_import)}` : "Never imported") +
         (ov.schedule.enabled ? ` · daily at ${ov.schedule.time} ${ov.schedule.timezone}` : " · auto-import off");
@@ -295,7 +296,7 @@ export default {
           h("dl", { class: "kv-list" },
             row("Net P&L", pnl(t.net_pnl)), row("Gross / fees", [fmtSigned(t.gross_pnl, 2), " / ", fmtMoney(t.fees, 2)]),
             row("Entry", `${fmtNum(t.entry_price, 4)} · ${fmtDateTime(t.entry_ts)}`), row("Exit", `${fmtNum(t.exit_price, 4)} · ${fmtDateTime(t.exit_ts)}`),
-            row("Points", `${fmtNum(t.points, 4)} × $${fmtNum(t.value_per_point, 2)}/pt`), row("Account", `${t.account_name || t.account_spec} (${t.environment})`),
+            row("Points", `${fmtNum(t.points, 4)} × $${fmtNum(t.value_per_point, 2)}/pt`), row("Account", `${maskAccount(t.account_name || t.account_spec)} (${t.environment})`),
             row("Source", t.source === "fillpair" ? "Tradovate fill pair" : "FIFO pairing")),
           h("div", { class: "field" }, h("label", null, "Journal note"), note),
           h("div", { class: "field" }, h("label", null, "Tags"), tags)),

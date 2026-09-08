@@ -1,5 +1,6 @@
 /* Overview: KPIs, connection health, positions, active trades, recent orders — all live. */
 import { h, tag, card, fmtTime, fmtDateTime, pageHead, debounce, clear, toast } from "../ui.js";
+import { maskAccount } from "../privacy.js";
 import { icon } from "../icons.js";
 import { api } from "../api.js";
 import { fmtMoney, fmtSigned } from "../charts.js";
@@ -47,7 +48,7 @@ export default {
       empty: "No open positions",
       columns: [
         { label: "Symbol", render: (p) => p.symbol ?? "—" },
-        { label: "Account", render: (p) => p.account ?? "—" },
+        { label: "Account", render: (p) => maskAccount(p.account) || "—" },
         { label: "Net pos", className: "num", render: (p) => h("span", { class: (p.netPos ?? 0) >= 0 ? "pos" : "neg" }, String(p.netPos ?? 0)) },
         { label: "Avg price", className: "num", render: (p) => p.netPrice ?? "—" },
       ],
@@ -59,7 +60,7 @@ export default {
         { label: "Symbol", render: (t) => t.sym },
         { label: "Contract", render: (t) => t.contract || "—" },
         { label: "Side", render: (t) => tag((t.side || "").toUpperCase(), t.side) },
-        { label: "Account", render: (t) => t.account },
+        { label: "Account", render: (t) => maskAccount(t.account) },
         { label: "Qty", className: "num", render: (t) => String(t.qty ?? "—") },
         { label: "SL order", render: (t) => String(t.sl_order_id || "—") },
         { label: "TP orders", render: (t) => (t.tp_order_ids || []).join(", ") || "—" },
@@ -72,7 +73,7 @@ export default {
         { label: "Time", render: (o) => fmtTime(o.ts) },
         { label: "Action", render: (o) => tag(o.action || "—", (o.action || "").toLowerCase() === "buy" ? "buy" : (o.action || "").toLowerCase() === "sell" ? "sell" : "") },
         { label: "Symbol", render: (o) => [o.symbol || "—", o.simulated ? [" ", tag("SIM", "sim")] : null] },
-        { label: "Account", render: (o) => o.account || "—" },
+        { label: "Account", render: (o) => maskAccount(o.account) || "—" },
         { label: "Qty", className: "num", render: (o) => String(o.qty ?? "—") },
         { label: "Type", render: (o) => o.order_type || "—" },
         { label: "Price", className: "num", render: (o) => String(o.price ?? o.stop_price ?? "—") },
@@ -175,7 +176,7 @@ export default {
         const ch = (k) => !!was && Number(was[k]) !== Number(a[k]);
         if (hideIdle && isIdle(a)) continue;
         pnlRows.append(h("div", { class: `pnl-row${isIdle(a) ? " idle" : ""}` },
-          h("span", { class: "pnl-acct" }, a.spec || String(id), a.environment === "live" ? [" ", tag("live", "accent")] : null),
+          h("span", { class: "pnl-acct" }, maskAccount(a.spec || String(id)), a.environment === "live" ? [" ", tag("live", "accent")] : null),
           cell("realised", money(a.realized), ch("realized")),
           cell("open", money(a.open), ch("open")),
           cell("week", money(a.week), ch("week")),

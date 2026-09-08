@@ -4,6 +4,14 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.29
+- **Privacy mode** (eye icon in the top bar next to the theme toggle, also in the user
+  menu): masks account names everywhere they are shown — first six characters, the rest
+  as asterisks — for screenshots, screen sharing and streaming. Applies to the Today's
+  P&L card, positions, tracked trades, orders, logs, the journal (table, filter, detail),
+  the accounts / alerts / webhook / marketplace lists. Remembered per browser; the page
+  repaints immediately when toggled.
+
 ## 5.0.0-alpha.28
 - **Sortable, live Today's P&L card.** Column headers (Account, Realised, Open, Week,
   Balance) sort the per-account rows, click again to flip; the default order puts the
