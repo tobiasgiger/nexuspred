@@ -149,6 +149,9 @@ function alertAccountsPanel() {
     h("label", { class: "check-row", for: "alert-accounts-all", style: "margin-bottom:8px" }, allSwitch, h("span", null, h("strong", null, "All accounts"), " ", h("span", { class: "muted" }, "untick to pick specific accounts"))),
     list,
     h("div", { class: "form-actions", style: "margin-top:12px" }, saveBtn, hint));
+  // The panel lives inside the settings form; its own inputs must not flip the
+  // form's "unsaved changes" bar (they are saved by the button above).
+  for (const type of ["input", "change"]) el.addEventListener(type, (e) => e.stopPropagation());
   paint();
   const unsubs = [store.subscribe("tradeAccounts", paint),
     store.subscribe("settings", (s) => { if (hint.textContent !== "Unsaved changes") { selected = new Set((s || {}).alert_accounts || []); paint(); } })];
