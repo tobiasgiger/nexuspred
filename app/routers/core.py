@@ -101,6 +101,13 @@ async def api_save_settings(request: Request) -> dict[str, Any]:
         if len(parts) != 2 or not all(x.isdigit() for x in parts) or not (0 <= int(parts[0]) < 24 and 0 <= int(parts[1]) < 60):
             raise HTTPException(status_code=400, detail="Journal import time must be HH:MM")
         updates["journal_import_time"] = f"{int(parts[0]):02d}:{int(parts[1]):02d}"
+    if "alert_accounts" in updates:
+        raw = updates.get("alert_accounts")
+        if raw is None:
+            raw = []
+        if not isinstance(raw, list) or len(raw) > 500 or not all(isinstance(x, str) and len(x) <= 64 for x in raw):
+            raise HTTPException(status_code=400, detail="alert_accounts must be a list of account names")
+        updates["alert_accounts"] = sorted({x.strip() for x in raw if x.strip()})
     if "daily_summary_time" in updates:
         raw = str(updates.get("daily_summary_time") or "22:05").strip()
         parts = raw.split(":")

@@ -118,6 +118,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # Position watcher (broker-side view, catches stop / target fills and manual
     # trades too): opened / added, closed / reduced with the realised P&L.
     "alert_on_trade_opened": True,
+    # Trade-account specs that may trigger account-level alerts (position
+    # opened / closed, signal executed, daily summary). Empty = every account.
+    "alert_accounts": [],
     "alert_on_trade_closed": True,
     # Execution agents (VPS helpers) going offline / back online.
     "alert_on_agent_lost": True,

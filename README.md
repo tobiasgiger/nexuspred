@@ -419,6 +419,11 @@ Eleven triggers, each independently toggled (push devices receive every trigger)
 | Execution agent offline / back online | Discord + email + push | a paired VPS agent stopped or resumed polling |
 | Daily summary | all channels | once a day at a configurable local time: realised P&L per account, trades closed, wins / losses |
 
+**Accounts** on the same page picks which trade accounts may raise account-level alerts
+(position opened / closed, signal executed, daily summary) — leave *All accounts* on, or
+tick a few when you mirror to many accounts and only want to hear about the leaders.
+Connection alerts are per login and always fire.
+
 Position alerts come from polling the broker's position list every few seconds (the same
 poll that feeds the Overview's live P&L, `pnl_poll_seconds`), so they fire even when the
 trade was not placed by the bridge. Positions already open when the bridge starts are

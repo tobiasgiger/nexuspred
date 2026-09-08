@@ -38,6 +38,9 @@ button, input, select, textarea { font-family: inherit; font-size: 13px; color: 
 
 /* ------------------------------------------------------------------ buttons */
 [hidden] { display: none !important; }
+.check-list { display: grid; gap: 4px; max-height: 320px; overflow: auto; }
+.check-row { display: flex; align-items: center; gap: 10px; padding: 4px 2px; cursor: pointer; }
+.check-row input[type="checkbox"]:not(.switch) { width: 16px; height: 16px; accent-color: var(--accent, #2563eb); }
 
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 7px;

@@ -188,3 +188,55 @@ async def test_daily_summary_time_is_validated(client):
     assert r.status_code == 400
     r = await client.post("/api/settings", json={"daily_summary_time": "7:5"})
     assert r.status_code == 200 and r.json()["daily_summary_time"] == "07:05"
+
+
+async def test_alert_accounts_filter(admin, sent):
+    """Only ticked accounts raise account-level alerts; others are tracked silently."""
+    with context.use_area(1):
+        config.save_settings({"alert_accounts": ["DEMO11"]})
+    sess = Sess(accounts=[{"id": 11, "spec": "DEMO11"}, {"id": 12, "spec": "DEMO12"}])
+    await watch.observe_area(1, [sess], [_snap(11, 0.0), _snap(12, 0.0)])
+    sess.positions = [{"accountId": 11, "contractId": 901, "netPos": 1}, {"accountId": 12, "contractId": 901, "netPos": 1}]
+    ev = await watch.observe_area(1, [sess], [_snap(11, 0.0), _snap(12, 0.0)])
+    assert [e["account"] for e in ev] == ["DEMO11", "DEMO12"]           # both detected…
+    assert [c[1][0] for c in sent] == ["DEMO11"]                        # …one alerted
+    sess.positions = []
+    await watch.observe_area(1, [sess], [_snap(11, 30.0), _snap(12, -5.0)])
+    assert [c[1][0] for c in sent if c[0] == "trade_closed"] == ["DEMO11"]
+
+
+async def test_alert_accounts_filter_texts(admin, monkeypatch):
+    pushed = []
+
+    async def fake_push(title, message, *, url="/"):
+        pushed.append((title, message))
+
+    async def quiet(*a, **k):
+        return None
+    monkeypatch.setattr(alerts, "_send_push", fake_push)
+    monkeypatch.setattr(alerts, "_send_discord", quiet)
+    monkeypatch.setattr(alerts, "_send_email", quiet)
+    with context.use_area(1):
+        config.save_settings({"alert_accounts": ["DEMO11"]})
+        # the daily summary covers the selected accounts only
+        await alerts.daily_summary({"accounts": [_snap(11, 30.0) | {"open": 0}, _snap(12, -5.0) | {"open": 0}], "realized": 25.0, "open": 0.0},
+                                   [{"account": "DEMO11", "pnl": 30.0}, {"account": "DEMO12", "pnl": -5.0}], "2026-09-08")
+        assert pushed[-1] == ("Daily P&L +$30.00", "1 trade closed (1 win, 0 loss) · DEMO11 +$30.00")
+        # signal-executed alerts list only the selected accounts, and skip entirely when none match
+        await alerts.trade_executed("Breakout", "buy", "MNQZ6", ["DEMO12", "DEMO11"])
+        assert pushed[-1][1].endswith("MNQZ6 on DEMO11")
+        n = len(pushed)
+        await alerts.trade_executed("Breakout", "buy", "MNQZ6", ["DEMO12"])
+        assert len(pushed) == n
+        config.save_settings({"alert_accounts": []})                     # empty → everyone again
+        await alerts.trade_executed("Breakout", "buy", "MNQZ6", ["DEMO12"])
+        assert len(pushed) == n + 1
+
+
+async def test_alert_accounts_are_validated_and_normalised(client):
+    r = await client.post("/api/settings", json={"alert_accounts": "DEMO11"})
+    assert r.status_code == 400
+    r = await client.post("/api/settings", json={"alert_accounts": [" DEMO12 ", "DEMO11", "DEMO11", ""]})
+    assert r.status_code == 200 and r.json()["alert_accounts"] == ["DEMO11", "DEMO12"]
+    r = await client.post("/api/settings", json={"alert_accounts": None})
+    assert r.status_code == 200 and r.json()["alert_accounts"] == []

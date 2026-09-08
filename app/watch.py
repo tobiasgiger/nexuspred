@@ -158,6 +158,8 @@ async def observe_area(area_id: int, sessions: list[Any], snapshots: list[dict[s
         return []
     with context.use_area(area_id):
         for ev in events:
+            if not alerts.account_alerts_on(ev["account"], s):
+                continue  # tracked, but this account is not on the alert list
             if ev["kind"] == "opened" and want_open:
                 await alerts.trade_opened(ev["account"], ev["symbol"], _direction(ev["qty"]), abs(ev["qty"]), ev.get("price"))
             elif ev["kind"] == "added" and want_open:

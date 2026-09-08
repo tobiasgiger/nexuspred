@@ -24,6 +24,19 @@ from typing import Any
 from . import config, context, db, http, push, state
 
 
+def account_alerts_on(spec: str, settings: dict[str, Any] | None = None) -> bool:
+    """Whether account-level alerts are wanted for this trade account.
+    ``alert_accounts`` lists the wanted specs; an empty list means all."""
+    s = settings if settings is not None else config.load_settings()
+    wanted = s.get("alert_accounts") or []
+    return not wanted or str(spec) in set(wanted)
+
+
+def alert_accounts(accounts: list[str], settings: dict[str, Any] | None = None) -> list[str]:
+    s = settings if settings is not None else config.load_settings()
+    return [a for a in accounts if account_alerts_on(a, s)]
+
+
 async def _send_push(title: str, message: str, *, url: str = "/") -> None:
     """Web Push to the area's installed apps (see :mod:`app.push`)."""
     s = config.load_settings()
@@ -142,7 +155,10 @@ async def trade_executed(
     s = config.load_settings()
     if not s.get("alert_on_trade_executed", True):
         return
-    accts = ", ".join(accounts) if accounts else "none"
+    accounts = alert_accounts(accounts, s)
+    if not accounts:
+        return  # none of the traded accounts is on the alert list
+    accts = ", ".join(accounts)
     message = (
         f"⚡ **Trade executed** — strategy `{webhook_name}`: {action.upper()} "
         f"{contract} on {accts}"
@@ -234,13 +250,15 @@ async def daily_summary(pnl: dict[str, Any], closes: list[dict[str, Any]], day: 
     s = config.load_settings()
     if not s.get("alert_daily_summary", True):
         return
-    accounts = pnl.get("accounts") or []
+    accounts = [a for a in (pnl.get("accounts") or []) if account_alerts_on(a.get("spec") or a.get("account_id"), s)]
+    closes = [c for c in closes if account_alerts_on(c.get("account", ""), s)]
     per = ", ".join(f"{a.get('spec') or a.get('account_id')} {_money(a.get('realized'))}" for a in accounts) or "no accounts polled"
     wins = sum(1 for c in closes if isinstance(c.get("pnl"), (int, float)) and c["pnl"] > 0)
     losses = sum(1 for c in closes if isinstance(c.get("pnl"), (int, float)) and c["pnl"] < 0)
     trades = f"{len(closes)} trade{'s' if len(closes) != 1 else ''} closed" + (f" ({wins} win, {losses} loss)" if closes else "")
-    total = _money(pnl.get("realized", 0))
-    message = f"📊 **Daily summary {day}** — realised **{total}** ({per}) · {trades} · open {_money(pnl.get('open', 0))}"
+    total = _money(sum(float(a.get("realized") or 0) for a in accounts))
+    open_pnl = _money(sum(float(a.get("open") or 0) for a in accounts))
+    message = f"📊 **Daily summary {day}** — realised **{total}** ({per}) · {trades} · open {open_pnl}"
     await asyncio.gather(_send_discord(message),
                          _send_email(f"Fluxbridge: daily summary {day} ({total})", message),
                          _send_push(f"Daily P&L {total}", f"{trades} · {per}", url="/#/journal"))

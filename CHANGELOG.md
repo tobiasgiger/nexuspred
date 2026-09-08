@@ -4,6 +4,13 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.19
+- **Alert accounts** (Settings → Alerts → Accounts, `alert_accounts`): choose which trade
+  accounts may raise account-level alerts — position opened / added / closed / reduced,
+  signal executed and the daily summary. Empty (the default *All accounts*) keeps the old
+  behaviour; with a selection, other accounts are still tracked but stay silent, and the
+  daily summary totals only the selected ones. Connection alerts are per login and unaffected.
+
 ## 5.0.0-alpha.18
 - **Position alerts from the broker's view** (`app/watch.py`). The live P&L poll now also
   reads each login's position list and diffs it tick to tick: *Position opened* (account,

@@ -1,6 +1,6 @@
 /* Settings pages that are plain forms over /api/settings: general, alerts,
    security, updates, symbol map, account. Each page posts only its own keys. */
-import { h, card, tag, toast, confirmDialog, pageHead, fmtDateTime } from "../ui.js";
+import { h, card, tag, toast, confirmDialog, pageHead, fmtDateTime, clear } from "../ui.js";
 import { icon } from "../icons.js";
 import { api } from "../api.js";
 import { store } from "../store.js";
@@ -108,6 +108,55 @@ export const updates = {
   },
 };
 
+/* "Accounts" block: which trade accounts may trigger account-level alerts. */
+function alertAccountsPanel() {
+  const hint = h("span", { class: "save-hint" });
+  const list = h("div", { class: "check-list" });
+  const allSwitch = h("input", { type: "checkbox", class: "switch", id: "alert-accounts-all" });
+  let selected = new Set((store.get("settings") || {}).alert_accounts || []);
+  const allMode = () => selected.size === 0;
+
+  function paint() {
+    clear(list);
+    const accounts = store.get("tradeAccounts") || [];
+    allSwitch.checked = allMode();
+    if (!accounts.length) { list.append(h("p", { class: "hint" }, "No trade accounts discovered yet — connect a login under Tradovate Accounts first.")); return; }
+    for (const a of accounts) {
+      const id = `alert-acct-${a.spec}`;
+      const box = h("input", { type: "checkbox", id, checked: allMode() || selected.has(a.spec), disabled: allMode(), onChange: (e) => {
+        if (e.target.checked) selected.add(a.spec); else selected.delete(a.spec);
+        hint.textContent = "Unsaved changes"; hint.className = "save-hint";
+      } });
+      list.append(h("label", { class: "check-row", for: id }, box,
+        h("span", null, h("strong", null, a.spec || `#${a.id}`), " ", h("span", { class: "muted" }, `${a.token_name} · ${a.environment}${a.enabled ? "" : " · disabled"}`))));
+    }
+  }
+  allSwitch.addEventListener("change", () => {
+    if (allSwitch.checked) selected = new Set();
+    else selected = new Set((store.get("tradeAccounts") || []).map((a) => a.spec));
+    hint.textContent = "Unsaved changes"; hint.className = "save-hint";
+    paint();
+  });
+  const saveBtn = h("button", { type: "button", class: "btn btn-primary", onClick: async () => {
+    hint.textContent = "Saving…"; hint.className = "save-hint";
+    try {
+      await actions.saveSettings({ alert_accounts: allMode() ? [] : [...selected] });
+      hint.textContent = allMode() ? "Saved — alerts for every account." : `Saved — alerts for ${selected.size} account${selected.size === 1 ? "" : "s"}.`;
+      hint.className = "save-hint ok"; toast("Alert accounts saved", "success");
+    } catch (e) { hint.textContent = e.message; hint.className = "save-hint err"; toast(e.message, "error"); }
+  } }, "Save accounts");
+  const el = h("div", null,
+    h("label", { class: "check-row", for: "alert-accounts-all", style: "margin-bottom:8px" }, allSwitch, h("span", null, h("strong", null, "All accounts"), " ", h("span", { class: "muted" }, "untick to pick specific accounts"))),
+    list,
+    h("div", { class: "form-actions", style: "margin-top:12px" }, saveBtn, hint));
+  paint();
+  const unsubs = [store.subscribe("tradeAccounts", paint),
+    store.subscribe("settings", (s) => { if (hint.textContent !== "Unsaved changes") { selected = new Set((s || {}).alert_accounts || []); paint(); } })];
+  actions.loadTradeAccounts();
+  el.cleanup = () => unsubs.forEach((u) => u());
+  return el;
+}
+
 /* "Push notifications" block: this device's subscription + every registered device. */
 function pushPanel() {
   const status = h("p", { class: "hint" }, "Checking this device…");
@@ -204,6 +253,7 @@ export const alerts = {
         else { testHint.textContent = `Sent to: ${on.join(", ")}. Check that it arrived.`; testHint.className = "save-hint ok"; toast("Test alert sent", "success"); }
       } catch (e) { testHint.textContent = e.message; testHint.className = "save-hint err"; toast(e.message, "error"); }
     } }, icon("bell"), "Send test alert");
+    const accountsPanel = alertAccountsPanel();
     const form = settingsForm({
       values: store.get("settings"),
       onSave: (v) => actions.saveSettings(v),
@@ -221,6 +271,7 @@ export const alerts = {
           { name: "alert_smtp_username", type: "text", label: "SMTP username", placeholder: "you@gmail.com" },
           { name: "alert_smtp_password", type: "password", label: "SMTP password", placeholder: "App Password" },
         ] },
+        { title: "Accounts", hint: "Which trade accounts may raise account-level alerts: position opened / closed, signal executed and the daily summary. Connection alerts are per login and always fire. Keep this short when you run many mirrored accounts.", after: accountsPanel },
         { title: "Push notifications", hint: "Notifications on your phone or desktop, even when the dashboard is closed. Works in Chrome/Edge/Firefox and on iPhone/iPad (iOS 16.4+) once the dashboard is added to the Home Screen.", fields: [
           { name: "alert_push_enabled", type: "switch", label: "Push alerts enabled", hint: "Master switch for every registered device" },
         ], after: pushPanel() },
@@ -245,7 +296,7 @@ export const alerts = {
     });
     root.append(pageHead("Alerts", "Notify a Discord channel, an email address and/or your phone when something happens. " + lead), form.el);
     const unsub = store.subscribe("settings", (s) => { if (!form.isDirty()) form.setValues(s); });
-    return () => unsub();
+    return () => { unsub(); if (accountsPanel.cleanup) accountsPanel.cleanup(); };
   },
 };
 
