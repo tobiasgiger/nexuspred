@@ -13,7 +13,18 @@ import { dataTable } from "../components/table.js";
 import { openDrawer, closeDrawer } from "../components/drawer.js";
 
 const accountKey = (idx, spec) => `${idx}::${spec}`;
-const KIND_TONE = { mirror: "on", feed_up: "on", resumed: "on", reject: "off", feed_lost: "warn", paused: "warn", drift: "warn", flatten: "warn", skipped: "", ignored: "" };
+const CONTRACT_RE = /^([A-Z]{1,4})[FGHJKMNQUVXZ]\d{1,2}$/;
+/** MNQU6 → MNQ, MNQ1! → MNQ (same rule as the backend). */
+const baseRoot = (name) => { const m = CONTRACT_RE.exec(String(name || "").toUpperCase()); return m ? m[1] : String(name || "").toUpperCase().replace("1!", "").trim(); };
+/** Roots the bridge knows from Settings → Symbol Mapping (map keys + values + allowed roots). */
+function knownRoots(settings) {
+  const out = new Set();
+  const map = (settings && settings.symbol_map) || {};
+  for (const [k, v] of Object.entries(map)) { if (k) out.add(baseRoot(k)); if (v) out.add(baseRoot(v)); }
+  for (const r of (settings && settings.allowed_symbols) || []) out.add(baseRoot(r));
+  return [...out].filter(Boolean).sort();
+}
+const KIND_TONE = { mirror: "on", feed_up: "on", resumed: "on", reject: "off", feed_lost: "warn", paused: "warn", drift: "warn", flatten: "warn", ws_miss: "warn", filtered: "", skipped: "", ignored: "" };
 
 function feedTag(g) {
   const s = g.status;
@@ -44,7 +55,16 @@ function groupDrawer(group, { reload, onClose = null }) {
     h("option", { value: "", selected: isNew }, "— choose the leader account —"),
     known.map((a) => h("option", { value: accountKey(a.token_idx, a.spec), selected: !isNew && a.token_idx === g.leader.token_idx && a.spec === g.leader.spec },
       `${maskAccount(a.spec)} · ${a.token_name} · ${(a.environment || "").toUpperCase()}${a.agent_id ? " · via agent" : ""}`)));
-  const symbolsInp = h("input", { value: (g.symbols || []).join(", "), placeholder: "all symbols" });
+  // --- Symbols: chips from the symbol mapping + free text for anything else
+  const roots = knownRoots(store.get("settings"));
+  const chosen = new Set((g.symbols || []).map(baseRoot));
+  const allSw = h("input", { type: "checkbox", class: "switch", checked: !chosen.size });
+  const chips = h("div", { class: "check-list cp-syms" }, roots.map((r) => h("label", null, h("input", { type: "checkbox", class: "cp-sym", value: r, checked: chosen.has(r) }), r)));
+  const extraInp = h("input", { value: [...chosen].filter((r) => !roots.includes(r)).join(", "), placeholder: "other roots, e.g. CL, RTY" });
+  const symBox = h("div", { class: chosen.size ? "" : "hidden" }, chips, h("div", { class: "field", style: "margin-top:6px" }, extraInp));
+  allSw.addEventListener("change", () => symBox.classList.toggle("hidden", allSw.checked));
+  const collectSymbols = () => allSw.checked ? [] : [...new Set([...[...chips.querySelectorAll(".cp-sym:checked")].map((c) => c.value),
+    ...extraInp.value.split(/[,;\s]+/).map(baseRoot).filter(Boolean)])];
   const feedSel = h("select", null,
     h("option", { value: "auto", selected: (g.feed || "auto") === "auto" }, "Auto (WebSocket, poll for agent logins)"),
     h("option", { value: "websocket", selected: g.feed === "websocket" }, "WebSocket (user sync, ~100 ms)"),
@@ -88,7 +108,7 @@ function groupDrawer(group, { reload, onClose = null }) {
     return {
       name: nameInp.value.trim() || g.name, enabled: enabledSw.checked,
       leader: lead ? { token_idx: lead.token_idx, spec: lead.spec, account_id: lead.id } : undefined,
-      symbols: symbolsInp.value, followers: collectFollowers(), feed: feedSel.value,
+      symbols: collectSymbols(), followers: collectFollowers(), feed: feedSel.value,
       feed_loss_flatten_s: Number(lossInp.value) || 30, copy_adds: addsSw.checked,
     };
   };
@@ -115,10 +135,19 @@ function groupDrawer(group, { reload, onClose = null }) {
           p.baseline ? tag("baseline · not copied", "warn") : null));
       }
     }
+    const diag = st.diag || {};
+    const diagLines = [
+      `leader account id: ${diag.leader_account_id || "unknown"}`,
+      st.feed === "websocket" ? `user id: ${diag.user_id || "—"} · frames: ${diag.frames || 0} · sync: ${diag.sync ? `${diag.sync.status} (${diag.sync.positions} position(s), accounts ${(diag.sync.accounts || []).join("/") || "—"})` : "no response yet"}` : null,
+      st.feed === "websocket" ? `events: ${Object.entries(diag.props || {}).map(([k, v]) => `${k} ${v}`).join(", ") || "none"} · backstop catches: ${diag.backstop_catches || 0}` : null,
+      diag.last_position_event ? `last position event: ${JSON.stringify(diag.last_position_event)}` : null,
+      (diag.baseline || []).length ? `baseline (not copied): ${diag.baseline.join(", ")}` : null,
+    ].filter(Boolean);
+    const diagBox = h("details", { class: "cp-diag" }, h("summary", null, "Diagnostics"), h("pre", { class: "code cp-diag-pre" }, diagLines.join("\n")));
     liveBox.append(head, notes, (st.leader_positions || []).length
       ? h("div", { class: "muted", style: "font-size:12px;margin-bottom:6px" }, "Leader: ", st.leader_positions.map((p) => `${p.symbol} ${signed(p.net)}${p.baseline ? " (baseline)" : ""}`).join(" · "))
       : h("div", { class: "muted", style: "font-size:12px;margin-bottom:6px" }, "Leader is flat."),
-      rows.length ? rows : null);
+      rows.length ? rows : null, diagBox);
   }
   paintLive(g.status);
 
@@ -170,8 +199,11 @@ function groupDrawer(group, { reload, onClose = null }) {
         h("div", { class: "field" }, h("label", null, "Leader account"), leaderSel, h("div", { class: "field-hint" }, "Every position change on this account is mirrored onto the followers below."))),
       h("label", { class: "switch-row" }, h("span", null, "Group active", h("small", null, "Off = nothing is mirrored. Your Trading switch (Settings → General) applies as well.")), enabledSw),
       h("div", { class: "grid grid-2" },
-        h("div", { class: "field" }, h("label", null, "Symbols"), symbolsInp, h("div", { class: "field-hint" }, "Roots, comma-separated (MNQ, ES). Empty = every contract the leader trades.")),
-        h("div", { class: "field" }, h("label", null, "Feed"), feedSel, h("div", { class: "field-hint" }, "Logins that execute through an agent are always polled through that agent."))),
+        h("div", { class: "field" }, h("label", null, "Feed"), feedSel, h("div", { class: "field-hint" }, "Logins that execute through an agent are always polled through that agent. On the WebSocket feed a REST check every 5 s catches anything the socket missed.")),
+        h("div", { class: "field" }, h("label", null, "Symbols"),
+          h("label", { class: "switch-row", style: "padding-top:4px" }, h("span", null, "Every contract the leader trades"), allSw),
+          symBox,
+          h("div", { class: "field-hint" }, "Roots from Settings → Symbol Mapping; a dated contract such as MNQU6 counts as MNQ."))),
       h("div", { class: "grid grid-2" },
         h("div", { class: "field" }, h("label", null, "Flatten followers after feed loss (seconds)"), lossInp, h("div", { class: "field-hint" }, "No leader feed for this long → every follower's mirrored position is closed at market and the group pauses.")),
         h("label", { class: "switch-row" }, h("span", null, "Fixed mode follows adds / reductions", h("small", null, "On: 2 fixed contracts become 4 when the leader doubles up. Off: always the fixed size.")), addsSw)),
@@ -233,6 +265,7 @@ export default {
     }
     const addBtn = h("button", { class: "btn btn-primary", onClick: async () => {
       if (!(store.get("tradeAccounts") || []).length) await actions.loadTradeAccounts();
+      if (!store.get("settings")) await actions.loadSettings().catch(() => {});
       groupDrawer({ name: `Copy group ${groups.length + 1}`, enabled: false, followers: [], symbols: [], feed: "auto", feed_loss_flatten_s: 30, copy_adds: true }, { reload: () => { load(); loadEvents(); }, onClose: null });
     } }, icon("plus"), "Add copy group");
 
@@ -254,6 +287,7 @@ export default {
     const unsub = store.subscribe("route", (r) => { if (r && r.path.startsWith("/copy") && r.params.id && groups.length) openFor(r.params.id); });
     const boot = (async () => {
       if (!(store.get("tradeAccounts") || []).length) await actions.loadTradeAccounts();
+      if (!store.get("settings")) await actions.loadSettings().catch(() => {});
       await load();
       await loadEvents();
       if (params && params.id && !leaving) openFor(params.id);

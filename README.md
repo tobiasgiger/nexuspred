@@ -545,7 +545,8 @@ any number of **follower** accounts — your own or third-party accounts whose l
 hold. It works on the broker's position, not on signals, so it also copies trades the
 leader places by hand in the Tradovate UI, stop / target fills and manual closes.
 
-- **Group** = leader account + optional symbol filter (roots such as `MNQ, ES`) +
+- **Group** = leader account + optional symbol filter (roots picked from Settings → Symbol
+  Mapping, e.g. `MNQ, ES`, or typed by hand) +
   followers. Each follower has a **mode** — *multiplier* (leader size × factor, rounded,
   never below 1 while the leader holds) or *fixed* (N contracts for the leader's entry;
   with *Fixed mode follows adds* on, 2 fixed contracts become 4 when the leader doubles
@@ -561,6 +562,10 @@ leader places by hand in the Tradovate UI, stop / target fills and manual closes
   executes through an **execution agent** is polled once a second through that agent, so
   the login's IP rule is kept (*Feed: Auto*; *Poll* forces polling). The table shows the
   feed state and the last mirror **latency** (leader change → follower order sent).
+- **Backstop**: on the WebSocket feed the leader's positions are also read over REST every
+  5 s; a change the socket did not deliver is mirrored right away and logged as `ws_miss`.
+  The drawer's **Diagnostics** block shows the leader account id, the sync response and
+  event counts — the first place to look when a group does not copy.
 - **Feed loss**: no frames for 12 s marks the feed lost; after *Flatten followers after
   feed loss* seconds (default 30) every mirrored follower position is **closed at
   market**, the group **pauses** and an alert goes out (Discord, push and email).

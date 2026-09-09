@@ -44,6 +44,8 @@ RECONCILE_INTERVAL_S = 10.0
 HEARTBEAT_S = 2.5
 RECONNECT_BACKOFF_S = 2.0   # first retry delay after a feed error (doubles up to 30 s)
 FEED_STALE_S = 12.0          # no frame for this long → the WebSocket is considered lost
+WS_BACKSTOP_S = 5.0          # on the WebSocket feed: REST position check this often (belt and braces)
+REJECT_HOLDOFF_S = 30.0      # reconcile leaves a follower alone this long after a rejected order
 MAX_EVENTS_MEMORY = 200
 
 
@@ -202,6 +204,10 @@ class GroupRunner:
         self.locks: dict[str, asyncio.Lock] = {}
         self._leader_seeded = False
         self._last_error = ""
+        self._filtered: set[int] = set()              # contracts already reported as filtered out
+        self.follower_err_at: dict[str, float] = {}   # spec → monotonic of the last reject
+        self.leader_account_id = 0
+        self.diag: dict[str, Any] = {"frames": 0, "props": {}, "backstop_catches": 0}
         self._stop = asyncio.Event()
 
     # ---- helpers
@@ -210,15 +216,22 @@ class GroupRunner:
         idx = int(self.group["leader"]["token_idx"])
         return sessions[idx] if 0 <= idx < len(sessions) and sessions[idx].enabled else None
 
-    def _leader_account_id(self) -> int:
-        s = self._leader_session()
-        if not s:
-            return int(self.group["leader"].get("account_id") or 0)
+    async def _leader_account_id(self, session: Any) -> int:
+        """Tradovate's numeric id of the leader account (settings first, then
+        the login's account list). 0 = unknown → the feed cannot be filtered."""
         spec = self.group["leader"]["spec"]
-        for a in s.accounts:
+        for a in session.accounts:
             if a.get("spec") == spec and a.get("id"):
                 return int(a["id"])
-        return int(self.group["leader"].get("account_id") or 0)
+        if self.group["leader"].get("account_id"):
+            return int(self.group["leader"]["account_id"])
+        try:
+            for a in await session._request("GET", "/account/list") or []:
+                if str(a.get("name")) == spec and a.get("id"):
+                    return int(a["id"])
+        except Exception as exc:  # noqa: BLE001
+            self.error = f"account list: {exc}"[:200]
+        return 0
 
     def _executor(self, f: dict[str, Any]) -> Optional[AccountExecutor]:
         return tradovate.manager_for(self.area_id).executor_for(int(f["token_idx"]), str(f["spec"]), 1)
@@ -326,7 +339,13 @@ class GroupRunner:
                 self.feed_ok = False
                 await asyncio.sleep(5)
                 continue
-            account_id = self._leader_account_id()
+            account_id = await self._leader_account_id(session)
+            self.leader_account_id = account_id
+            if not account_id:
+                self.error = f"leader account {self.group['leader']['spec']} has no Tradovate id — run Connect & Verify on the login"
+                self.feed_ok = False
+                await asyncio.sleep(10)
+                continue
             kind = self.group.get("feed") or "auto"
             use_ws = kind == "websocket" or (kind == "auto" and not session.agent_id)
             self.feed_kind = "websocket" if use_ws else "poll"
@@ -364,11 +383,19 @@ class GroupRunner:
     async def _run_ws(self, session: Any, account_id: int) -> None:
         import websockets  # lazy: only groups on the WebSocket feed need it
         token = await session._get_token()
+        user_id = 0
         try:
-            users = await session._request("GET", "/user/list") or []
-            user_id = int((users[0] or {}).get("id") or 0) if isinstance(users, list) and users else 0
+            me = await session._request("GET", "/auth/me") or {}
+            user_id = int(me.get("userId") or me.get("id") or 0)
         except Exception:  # noqa: BLE001
-            user_id = 0
+            pass
+        if not user_id:
+            try:
+                users = await session._request("GET", "/user/list") or []
+                user_id = int((users[0] or {}).get("id") or 0) if isinstance(users, list) and users else 0
+            except Exception:  # noqa: BLE001
+                user_id = 0
+        self.diag.update({"user_id": user_id, "leader_account_id": account_id, "sync": None})
         url = WS_URLS["live" if session.environment == "live" else "demo"]
         async with websockets.connect(url, ping_interval=None, open_timeout=15, close_timeout=5) as ws:
             first = await asyncio.wait_for(ws.recv(), 15)
@@ -377,18 +404,27 @@ class GroupRunner:
             await ws.send(f"authorize\n1\n\n{token}")
             await ws.send("user/syncrequest\n2\n\n" + json.dumps({"users": [user_id]} if user_id else {}))
             self._mark_feed(True)
-            last_beat = time.monotonic()
+            last_beat = last_poll = time.monotonic()
             while not self._stop.is_set():
-                if time.monotonic() - last_beat >= HEARTBEAT_S:
+                now = time.monotonic()
+                if now - last_beat >= HEARTBEAT_S:
                     await ws.send("[]")
-                    last_beat = time.monotonic()
+                    last_beat = now
+                if now - last_poll >= WS_BACKSTOP_S:
+                    # REST check of the leader's positions: catches anything the
+                    # socket did not deliver (or delivered in a shape we don't parse)
+                    last_poll = now
+                    caught = await self._poll_once(session, account_id, source="backstop")
+                    if caught:
+                        self.diag["backstop_catches"] = int(self.diag.get("backstop_catches") or 0) + caught
                 try:
-                    raw = await asyncio.wait_for(ws.recv(), timeout=HEARTBEAT_S)
+                    raw = await asyncio.wait_for(ws.recv(), timeout=min(HEARTBEAT_S, 1.0))
                 except asyncio.TimeoutError:
                     if time.monotonic() - self.last_frame > FEED_STALE_S:
                         raise TradovateError("no frames from Tradovate")
                     continue
                 self.last_frame = time.monotonic()
+                self.diag["frames"] = int(self.diag.get("frames") or 0) + 1
                 for msg in parse_frames(str(raw)):
                     await self._on_ws_message(session, account_id, msg)
 
@@ -400,34 +436,61 @@ class GroupRunner:
             raise TradovateError(f"Tradovate shutdown: {msg.get('d')}")
         if msg.get("i") == 1 and msg.get("s") not in (None, 200):
             raise TradovateError(f"authorize failed: {msg.get('d') or msg.get('s')}")
-        if msg.get("i") == 2 and isinstance(msg.get("d"), dict):
+        if msg.get("i") == 2:
+            d = msg.get("d")
+            if msg.get("s") not in (None, 200) or not isinstance(d, dict):
+                raise TradovateError(f"user sync failed: {msg.get('s')} {str(d)[:120]}")
             # initial snapshot: positions of all the user's accounts
-            for p in msg["d"].get("positions") or []:
+            positions = d.get("positions") or []
+            self.diag["sync"] = {"status": msg.get("s"), "keys": sorted(d.keys())[:20], "positions": len(positions),
+                                 "accounts": [a.get("id") for a in (d.get("accounts") or []) if isinstance(a, dict)][:20]}
+            for p in positions:
                 if int(p.get("accountId") or 0) == account_id:
                     await self._on_position(session, int(p.get("contractId") or 0), int(p.get("netPos") or 0),
                                             snapshot=True)
             return
-        if e == "props" and isinstance(msg.get("d"), dict):
-            d = msg["d"]
-            ent = d.get("entity") or {}
-            if d.get("entityType") == "position" and int(ent.get("accountId") or 0) == account_id:
+        if e == "props":
+            d = msg.get("d") if isinstance(msg.get("d"), dict) else {}
+            etype = str(d.get("entityType") or "").lower()
+            props = self.diag.setdefault("props", {})
+            props[etype or "?"] = int(props.get(etype or "?") or 0) + 1
+            if etype != "position":
+                return
+            ent = d.get("entity") if isinstance(d.get("entity"), dict) else d
+            self.diag["last_position_event"] = {k: ent.get(k) for k in ("accountId", "contractId", "netPos", "netPrice", "timestamp") if k in ent}
+            if int(ent.get("accountId") or 0) == account_id and "netPos" in ent:
                 await self._on_position(session, int(ent.get("contractId") or 0), int(ent.get("netPos") or 0))
+
+    async def _poll_once(self, session: Any, account_id: int, *, source: str = "poll") -> int:
+        """One REST look at the leader's positions; mirrors every change found.
+        Returns how many contracts changed."""
+        raw = await session._request("GET", "/position/list") or []
+        self.last_frame = time.monotonic()
+        seen: set[int] = set()
+        changed = 0
+        for p in raw if isinstance(raw, list) else []:
+            if int(p.get("accountId") or 0) != account_id:
+                continue
+            cid, net = int(p.get("contractId") or 0), int(p.get("netPos") or 0)
+            seen.add(cid)
+            if self.leader_net.get(cid, 0) != net:
+                changed += 1
+                if source != "poll":
+                    self._record("ws_miss", symbol=self.contract_names.get(cid, str(cid)),
+                                 detail=f"{source}: leader {self.leader_net.get(cid, 0):+d} → {net:+d} not delivered by the socket")
+                await self._on_position(session, cid, net)
+        for cid in [c for c, n in self.leader_net.items() if n and c not in seen]:
+            changed += 1
+            if source != "poll":
+                self._record("ws_miss", symbol=self.contract_names.get(cid, str(cid)),
+                             detail=f"{source}: leader {self.leader_net.get(cid, 0):+d} → 0 not delivered by the socket")
+            await self._on_position(session, cid, 0)
+        return changed
 
     async def _run_poll(self, session: Any, account_id: int) -> None:
         self._mark_feed(True)
         while not self._stop.is_set():
-            raw = await session._request("GET", "/position/list") or []
-            self.last_frame = time.monotonic()
-            seen: set[int] = set()
-            for p in raw if isinstance(raw, list) else []:
-                if int(p.get("accountId") or 0) != account_id:
-                    continue
-                cid, net = int(p.get("contractId") or 0), int(p.get("netPos") or 0)
-                seen.add(cid)
-                if self.leader_net.get(cid, 0) != net:
-                    await self._on_position(session, cid, net)
-            for cid in [c for c, n in self.leader_net.items() if n and c not in seen]:
-                await self._on_position(session, cid, 0)
+            await self._poll_once(session, account_id)
             await asyncio.sleep(POLL_INTERVAL_S)
 
     # ---- mirror
@@ -454,6 +517,9 @@ class GroupRunner:
             self._record("ignored", symbol=name, detail=f"leader {prev:+d} → {net:+d}: existing position, not copied until flat or synced")
             return
         if not self._wanted(cid):
+            if cid not in self._filtered:
+                self._filtered.add(cid)
+                self._record("filtered", symbol=name, detail=f"leader {prev:+d} → {net:+d}: {_base_root(name)} is not in the group's symbols")
             return
         if self.paused:
             self._record("skipped", symbol=name, detail=f"leader {prev:+d} → {net:+d}: group paused")
@@ -467,8 +533,12 @@ class GroupRunner:
     async def _mirror_contract(self, cid: int, name: str, net: int, *, reason: str, t0: Optional[float] = None) -> None:
         unit = self.unit.get(cid) or abs(net) or 1
         copy_adds = bool(self.group.get("copy_adds", True))
-        await asyncio.gather(*(self._mirror_follower(f, cid, name, net, unit, copy_adds, reason, t0)
-                               for f in self.group["followers"] if f.get("enabled", True)), return_exceptions=True)
+        results = await asyncio.gather(*(self._mirror_follower(f, cid, name, net, unit, copy_adds, reason, t0)
+                                         for f in self.group["followers"] if f.get("enabled", True)), return_exceptions=True)
+        for f, r in zip([f for f in self.group["followers"] if f.get("enabled", True)], results):
+            if isinstance(r, BaseException) and not isinstance(r, asyncio.CancelledError):
+                self.follower_err[f["spec"]] = f"{type(r).__name__}: {r}"[:200]
+                self._record("reject", follower=f["spec"], symbol=name, detail=f"{reason}: {type(r).__name__}: {r}")
 
     async def _mirror_follower(self, f: dict[str, Any], cid: int, name: str, net: int, unit: int,
                                copy_adds: bool, reason: str, t0: Optional[float]) -> None:
@@ -489,19 +559,26 @@ class GroupRunner:
                 try:
                     res = await ex.place_order(symbol=name, action="Buy" if delta > 0 else "Sell",
                                                qty=abs(delta), order_type="Market")
-                except TradovateError as exc:
-                    self.follower_err[spec] = str(exc)[:200]
-                    self._record("reject", follower=spec, symbol=name, detail=f"{reason}: {exc}")
-                    await alerts.copy_alert(f"Copy reject: {spec}", f"{name} {reason}: {exc}")
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - a follower failure must be visible, never swallowed
+                    err = f"{exc}" if isinstance(exc, TradovateError) else f"{type(exc).__name__}: {exc}"
+                    self.follower_err[spec] = err[:200]
+                    self.follower_err_at[spec] = time.monotonic()
+                    self._record("reject", follower=spec, symbol=name, detail=f"{reason}: {err}")
+                    await alerts.copy_alert(f"Copy reject: {spec}", f"{name} {reason}: {err}")
                     return
-            if res.get("status") != "submitted":
-                err = str((res.get("raw") or {}).get("errorText") or res.get("status"))
+            if not isinstance(res, dict) or res.get("status") != "submitted":
+                raw = res.get("raw") if isinstance(res, dict) else None
+                err = str((raw or {}).get("errorText") or (res.get("status") if isinstance(res, dict) else res))
                 self.follower_err[spec] = err[:200]
+                self.follower_err_at[spec] = time.monotonic()
                 self._record("reject", follower=spec, symbol=name, detail=f"{reason}: {err}")
                 await alerts.copy_alert(f"Copy reject: {spec}", f"{name} {reason}: {err}")
                 return
             self.follower_pos[(spec, cid)] = target
             self.follower_err.pop(spec, None)
+            self.follower_err_at.pop(spec, None)
             latency = int((time.monotonic() - t0) * 1000) if t0 is not None else None
             self.last_latency_ms = latency if latency is not None else self.last_latency_ms
             self._record("mirror", follower=spec, symbol=name, latency_ms=latency,
@@ -544,20 +621,21 @@ class GroupRunner:
                 if f:
                     actual[(f["spec"], int(p.get("contractId") or 0))] = int(p.get("netPos") or 0)
             for f in fs:
+                if time.monotonic() - self.follower_err_at.get(f["spec"], -1e9) < REJECT_HOLDOFF_S:
+                    continue                                    # just rejected: don't hammer the broker
                 for cid, net in list(self.leader_net.items()):
                     if cid in self.baseline or not self._wanted(cid):
                         continue
                     key = (f["spec"], cid)
                     have = actual.get(key, 0)
-                    if have != self.follower_pos.get(key, 0):
-                        self.follower_pos[key] = have           # trust the broker
-                        target = target_qty(f, net, self.unit.get(cid) or abs(net) or 1, copy_adds=bool(self.group.get("copy_adds", True)))
-                        if have != target:
-                            name = self.contract_names.get(cid, str(cid))
-                            self._record("drift", follower=f["spec"], symbol=name, detail=f"broker {have:+d}, expected {target:+d} — correcting")
-                            await self._mirror_follower(f, cid, name, net, self.unit.get(cid) or abs(net) or 1,
-                                                        bool(self.group.get("copy_adds", True)), "drift", None)
-                            fixes += 1
+                    self.follower_pos[key] = have               # trust the broker
+                    target = target_qty(f, net, self.unit.get(cid) or abs(net) or 1, copy_adds=bool(self.group.get("copy_adds", True)))
+                    if have != target:
+                        name = self.contract_names.get(cid, str(cid))
+                        self._record("drift", follower=f["spec"], symbol=name, detail=f"broker {have:+d}, expected {target:+d} — correcting")
+                        await self._mirror_follower(f, cid, name, net, self.unit.get(cid) or abs(net) or 1,
+                                                    bool(self.group.get("copy_adds", True)), "drift", None)
+                        fixes += 1
         return fixes
 
     async def watchdog(self) -> None:
@@ -628,6 +706,7 @@ class GroupRunner:
         return {"id": self.id, "running": bool(self.tasks), "feed": self.feed_kind, "feed_ok": self.feed_ok,
                 "paused": self.paused, "pause_reason": self.pause_reason, "error": self.error,
                 "last_event_ts": self.last_event_ts, "latency_ms": self.last_latency_ms,
+                "diag": {**self.diag, "leader_account_id": self.leader_account_id, "baseline": sorted(self.contract_names.get(c, str(c)) for c in self.baseline)},
                 "leader_positions": [{"symbol": self.contract_names.get(c, str(c)), "net": n, "baseline": c in self.baseline}
                                      for c, n in self.leader_net.items() if n],
                 "followers": followers}

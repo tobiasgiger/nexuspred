@@ -4,6 +4,26 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.34
+- **Copy trading: no silent paths, REST backstop, diagnostics.** A live group saw the
+  leader's trade but sent no follower order and logged nothing. Every branch that could
+  swallow a mirror now leaves a trace: the leader's Tradovate account id is resolved from
+  the login's account list when settings lack it (an unknown id previously filtered *every*
+  socket event out, silently) and the group reports it; a symbol outside the filter logs
+  `filtered` once per contract; any exception while placing a follower order — not only
+  Tradovate errors — logs `reject` and raises the alert; a failed `user/syncrequest` marks
+  the feed lost with the reason. On the WebSocket feed the leader's positions are also read
+  over REST every 5 s and any change the socket did not deliver is mirrored immediately and
+  logged as `ws_miss`. Reconcile now compares each follower with its **target** (not only
+  with the last mirror), so a follower that never received an order is filled within 10 s,
+  with a 30 s hold-off after a reject. The drawer shows a **Diagnostics** block (leader
+  account id, user id, frames, sync response, event counts per entity type, last position
+  event, baseline contracts).
+- **Symbols picked from the symbol mapping.** The group's symbol filter is a set of chips
+  built from Settings → Symbol Mapping (map keys, mapped contracts and allowed roots — a
+  dated `MNQU6` counts as `MNQ`), plus a free-text field for other roots and an *every
+  contract* switch.
+
 ## 5.0.0-alpha.33
 - **Copy Trading** (new Routing module, `app/copy.py`, Routing → Copy Trading). Mirror one
   leader trade account onto any number of follower accounts (own or third-party logins) in

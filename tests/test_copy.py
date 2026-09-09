@@ -37,6 +37,10 @@ class Sess:
             return {"name": {901: "MNQZ6", 902: "ESZ6"}.get(kw["params"]["id"], "?")}
         if path == "/user/list":
             return [{"id": 77}]
+        if path == "/auth/me":
+            return {"userId": 77, "name": "leader"}
+        if path == "/account/list":
+            return getattr(self, "account_list", None) or [{"id": a.get("id"), "name": a["spec"]} for a in self.accounts]
         raise AssertionError(path)
 
 
@@ -452,3 +456,61 @@ async def test_reconnect_mirrors_changes_made_during_the_outage(world):
         assert 902 not in r.baseline
     finally:
         await r.stop()
+
+
+async def test_backstop_poll_mirrors_what_the_socket_missed(world):
+    r = cp.GroupRunner(1, _group(feed="websocket"))
+    lead, ex = world["leader"], world["execs"]["F1"]
+    await r._seed_followers()
+    await r._seed_leader(lead, 1)
+    r._mark_feed(True)
+    lead.positions = [{"accountId": 1, "contractId": 901, "netPos": 2}]      # no props event arrives
+    assert await r._poll_once(lead, 1, source="backstop") == 1
+    assert _placed(ex) == [("Buy", 2, "MNQZ6")]
+    kinds = [e["kind"] for e in db.list_copy_events(1)]
+    assert "ws_miss" in kinds and "mirror" in kinds
+    assert await r._poll_once(lead, 1, source="backstop") == 0                # nothing new
+
+
+async def test_reconcile_fills_a_follower_that_was_never_mirrored(world):
+    r = cp.GroupRunner(1, _group(feed="websocket"))
+    lead, ex = world["leader"], world["execs"]["F1"]
+    await r._seed_followers()
+    await r._seed_leader(lead, 1)
+    r._mark_feed(True)
+    r.leader_net[901], r.unit[901] = 2, 2          # leader change known, follower order never happened
+    r.contract_names[901] = "MNQZ6"
+    assert await r.reconcile() == 1
+    assert _placed(ex) == [("Buy", 2, "MNQZ6")]
+    # a follower that just rejected is left alone for a while
+    ex.fail_place = True
+    r.leader_net[901] = 3
+    assert await r.reconcile() == 1 and r.follower_err["F1"]
+    assert await r.reconcile() == 0                # hold-off after the reject
+
+
+async def test_leader_account_id_falls_back_to_the_account_list(world):
+    lead = world["leader"]
+    lead.accounts = [{"spec": "LEAD"}]             # discovered without an id
+    lead.account_list = [{"id": 1, "name": "LEAD"}]
+    r = cp.GroupRunner(1, _group(leader={"token_idx": 0, "spec": "LEAD", "account_id": 0}))
+    assert await r._leader_account_id(lead) == 1
+    lead.accounts, lead.account_list = [], []
+    assert await r._leader_account_id(lead) == 0
+
+
+async def test_symbol_filter_is_reported_and_ws_diag_is_collected(world):
+    r = cp.GroupRunner(1, _group(feed="websocket", symbols=["ES"]))
+    lead = world["leader"]
+    await r._seed_followers()
+    await r._seed_leader(lead, 1)
+    await r._on_ws_message(lead, 1, {"i": 2, "s": 200, "d": {"positions": [], "accounts": [{"id": 1}], "orders": []}})
+    await r._on_ws_message(lead, 1, {"e": "props", "d": {"entityType": "Position", "eventType": "Created", "entity": {"accountId": 1, "contractId": 901, "netPos": 1}}})
+    await r._on_ws_message(lead, 1, {"e": "props", "d": {"entityType": "order", "entity": {"accountId": 1}}})
+    ev = db.list_copy_events(1, limit=1)[0]
+    assert ev["kind"] == "filtered" and "MNQ" in ev["detail"]
+    d = r.status()["diag"]
+    assert d["sync"]["accounts"] == [1] and d["props"] == {"position": 1, "order": 1}
+    assert d["last_position_event"]["contractId"] == 901 and d["leader_account_id"] == 0
+    with pytest.raises(tradovate.TradovateError, match="sync failed"):
+        await r._on_ws_message(lead, 1, {"i": 2, "s": 400, "d": "bad request"})
