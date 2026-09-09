@@ -4,6 +4,18 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.32
+- **Trailing drawdown done properly** (`app/drawdown.py`). Tradovate's risk record only
+  carries the drawdown *size* and the *cap* at which trailing stops — not the threshold.
+  The bridge now tracks the account's **peak** itself: for **Intraday** accounts the
+  highest equity incl. open P&L, tick by tick; for **EOD** accounts the highest session
+  close (17:00 New York), seeded from the journal's daily balances where history exists.
+  Threshold = min(peak, cap) − size; room = equity − threshold. Peaks only ratchet up and
+  are persisted per account. Because the bridge can only know peaks from the moment it
+  watches an account, each row has a ✎ to **pin the threshold your prop firm shows** —
+  from then on the figures are exact; an ≈ marks rows that are tracked but not pinned.
+  Hover the cell for peak, size, cap and since-when.
+
 ## 5.0.0-alpha.31
 - **Max trailing drawdown on the Today's P&L card.** Each account row shows the room left
   to Tradovate's trailing-drawdown liquidation level (equity = balance + open P&L, minus

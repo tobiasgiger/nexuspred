@@ -422,9 +422,14 @@ Eleven triggers, each independently toggled (push devices receive every trigger)
 | Daily summary | all channels | once a day at a configurable local time: realised P&L per account, trades closed, wins / losses |
 
 The Overview's **Today's P&L** card lists every account with realised / open / weekly
-P&L, balance and the **max trailing drawdown**: room left to the liquidation level, the
-level, and EOD vs Intraday trailing (from Tradovate's auto-liquidation settings). Columns
-sort on click; *Hide idle* removes accounts that did nothing today.
+P&L, balance and the **max trailing drawdown**: room left to the liquidation threshold,
+the threshold, and EOD vs Intraday trailing. Tradovate only exposes the drawdown size and
+the cap, so the bridge tracks the account's peak itself — Intraday: highest equity incl.
+open P&L; EOD: highest session close, seeded from the journal's daily balances — and
+derives threshold = min(peak, cap) − size. Peaks before the bridge started watching are
+unknown, so use ✎ on the row to **pin the threshold your prop firm shows**; from then on
+the figures are exact (an ≈ marks unpinned rows). Columns sort on click; *Hide idle*
+removes accounts that did nothing today.
 
 **Accounts** on the same page picks which trade accounts may raise account-level alerts
 (position opened / closed, signal executed, daily summary) — leave *All accounts* on, or

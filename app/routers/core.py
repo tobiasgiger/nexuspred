@@ -149,6 +149,39 @@ async def api_save_settings(request: Request) -> dict[str, Any]:
     return config.public_settings()
 
 
+@router.post("/api/pnl/drawdown")
+async def api_pnl_drawdown(request: Request) -> dict[str, Any]:
+    """Pin the trailing-drawdown threshold the prop firm shows for one account
+    (``{"account_id", "level"}``), or clear the tracker (``level`` null). The
+    next poll re-derives peak / room from it; the response is that poll."""
+    from .. import drawdown
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="JSON object expected")
+    try:
+        account_id = int(body.get("account_id") or 0)
+    except (TypeError, ValueError):
+        account_id = 0
+    if account_id <= 0:
+        raise HTTPException(status_code=400, detail="account_id is required")
+    level = body.get("level")
+    if level not in (None, ""):
+        try:
+            level = float(level)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="level must be a number")
+        if not (0 < level < 1e9):
+            raise HTTPException(status_code=400, detail="level is out of range")
+    else:
+        level = None
+    known = {int(a["account_id"]) for a in (state.pnl().get("accounts") or [])}
+    if known and account_id not in known:
+        raise HTTPException(status_code=404, detail="Unknown trade account")
+    drawdown.set_seed(context.get_area(), account_id, level)
+    state.log_event("info", f"Drawdown threshold {'pinned at ' + format(level, '.2f') if level is not None else 'tracking reset'} for account #{account_id}")
+    return await pnl.refresh_area(context.get_area())
+
+
 @router.get("/api/pnl")
 async def api_pnl(refresh: bool = False) -> dict[str, Any]:
     """Live account P&L (today's realised, open, week, cash) — the last poll,

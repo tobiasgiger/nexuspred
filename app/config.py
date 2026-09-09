@@ -121,6 +121,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # Trade-account specs that may trigger account-level alerts (position
     # opened / closed, signal executed, daily summary). Empty = every account.
     "alert_accounts": [],
+    # Trailing-drawdown tracker state per trade account (peaks, EOD candidates,
+    # user-pinned thresholds) — maintained by app.drawdown, not user-editable.
+    "dd_state": {},
     "alert_on_trade_closed": True,
     # Execution agents (VPS helpers) going offline / back online.
     "alert_on_agent_lost": True,
@@ -394,6 +397,7 @@ SETTINGS_PROTECTED_KEYS = frozenset({
     "token_accounts", "webhooks", "webhooks_migrated", "webhook_secret",
     "discord_enabled", "discord_user_token", "discord_dry_run", "discord_channels",
     "rollover_notified", "journal_last_import", "journal_report_cursor", "journal_report_window",
+    "dd_state",
 })
 
 # Fields that must never be returned to the browser in plain text.

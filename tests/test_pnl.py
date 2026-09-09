@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timezone
 
-from app import config, context, pnl, state, tradovate
+from app import config, context, db, pnl, state, tradovate
 
 
 class Sess:
@@ -124,29 +125,95 @@ async def test_loop_respects_off_and_watchers(admin, monkeypatch):
     assert sleeps == [pnl.IDLE_INTERVAL_S]                          # nobody watching, no trade alerts → idle cadence
 
 
-async def test_trailing_drawdown_fields_from_auto_liq(admin, monkeypatch):
-    """Prop-firm trailing drawdown: level, size, mode and the room left (equity − level)."""
+async def test_intraday_drawdown_tracks_the_equity_peak(admin, monkeypatch):
+    """Intraday: threshold = highest equity seen (incl. open P&L) − size, capped."""
+    from app import drawdown
     with context.use_area(1):
-        sess = Sess(snap={11: {"totalCashValue": 51200.0, "realizedPnL": 300.0, "openPnL": -150.0, "weekRealizedPnL": 0},
-                          12: {"totalCashValue": 49000.0, "realizedPnL": 0, "openPnL": 0, "weekRealizedPnL": 0}})
-    sess.risk = [{"id": 11, "trailingMaxDrawdown": 2500, "trailingMaxDrawdownLimit": 50100.0, "trailingMaxDrawdownMode": "RealTime", "dailyLossAutoLiq": 1000},
-                 {"id": 99, "trailingMaxDrawdown": 1, "trailingMaxDrawdownLimit": 1}]   # unrelated account
+        sess = Sess(accounts=[{"id": 11, "spec": "APEX11"}],
+                    snap={11: {"totalCashValue": 50000.0, "realizedPnL": 0, "openPnL": 0, "weekRealizedPnL": 0}})
+    sess.risk = [{"id": 11, "trailingMaxDrawdown": 2500, "trailingMaxDrawdownLimit": 52600, "trailingMaxDrawdownMode": "RealTime"}]
     _install(monkeypatch, sess)
-    s = await pnl.refresh_area(1)
-    a11 = next(a for a in s["accounts"] if a["account_id"] == 11)
-    a12 = next(a for a in s["accounts"] if a["account_id"] == 12)
-    assert a11["dd_mode"] == "Intraday" and a11["dd_size"] == 2500.0 and a11["dd_limit"] == 50100.0
-    assert a11["dd_room"] == 950.0            # 51200 − 150 open − 50100
-    assert a11["daily_loss_limit"] == 1000.0
-    assert a12["dd_mode"] == "" and a12["dd_limit"] is None and a12["dd_room"] is None   # no risk record
+    a = (await pnl.refresh_area(1))["accounts"][0]
+    assert a["dd_mode"] == "Intraday" and a["dd_size"] == 2500.0 and a["dd_cap"] == 52600.0
+    assert a["dd_peak"] == 50000.0 and a["dd_level"] == 47500.0 and a["dd_room"] == 2500.0 and a["dd_seeded"] is False
+    # equity rises with an open position → peak and threshold ratchet up
+    sess.snap[11] = {"totalCashValue": 50000.0, "realizedPnL": 0, "openPnL": 800.0, "weekRealizedPnL": 0}
+    a = (await pnl.refresh_area(1))["accounts"][0]
+    assert a["dd_peak"] == 50800.0 and a["dd_level"] == 48300.0 and a["dd_room"] == 2500.0
+    # equity falls back → peak stays, room shrinks
+    sess.snap[11] = {"totalCashValue": 50000.0, "realizedPnL": 0, "openPnL": -900.0, "weekRealizedPnL": 0}
+    a = (await pnl.refresh_area(1))["accounts"][0]
+    assert a["dd_peak"] == 50800.0 and a["dd_level"] == 48300.0 and a["dd_room"] == 800.0
+    # the cap: beyond 52 600 the threshold no longer trails
+    sess.snap[11] = {"totalCashValue": 54000.0, "realizedPnL": 0, "openPnL": 0, "weekRealizedPnL": 0}
+    a = (await pnl.refresh_area(1))["accounts"][0]
+    assert a["dd_peak"] == 54000.0 and a["dd_level"] == 50100.0 and a["dd_room"] == 3900.0
+    # persisted: survives a process restart (state lives in the area settings)
+    st = config.load_settings(area_id=1)["dd_state"]["11"]
+    assert st["peak"] == 54000.0 and st["since"]
 
 
-def test_drawdown_fields_edge_cases():
-    assert pnl.drawdown_fields(None, 1, 1)["dd_room"] is None
-    d = pnl.drawdown_fields({"trailingMaxDrawdown": 3000, "trailingMaxDrawdownMode": "EOD"}, 50000, 0)
-    assert d["dd_mode"] == "EOD" and d["dd_size"] == 3000.0 and d["dd_limit"] is None and d["dd_room"] is None
-    d = pnl.drawdown_fields({"trailingMaxDrawdownLimit": "48500", "trailingMaxDrawdownMode": "real_time"}, 48400, 50)
-    assert d["dd_mode"] == "Intraday" and d["dd_room"] == -50.0
+async def test_eod_drawdown_uses_session_closes_and_journal_history(admin, monkeypatch):
+    from datetime import datetime, timezone
+    from app import drawdown
+    with context.use_area(1):
+        sess = Sess(accounts=[{"id": 11, "spec": "APEX11"}],
+                    snap={11: {"totalCashValue": 50400.0, "realizedPnL": 400.0, "openPnL": -300.0, "weekRealizedPnL": 0}})
+    sess.risk = [{"id": 11, "trailingMaxDrawdown": 3000, "trailingMaxDrawdownMode": "EOD"}]
+    _install(monkeypatch, sess)
+    # journal knows a higher close from last week → that is the peak, not today's balance
+    db.upsert_journal_snapshot(1, {"account_id": 11, "account_spec": "APEX11", "day": "2026-09-02", "total_cash": 51000.0,
+                                   "realized_pnl": 0, "open_pnl": 0, "week_realized_pnl": 0, "total_pnl": 0})
+    a = (await pnl.refresh_area(1))["accounts"][0]
+    assert a["dd_mode"] == "EOD" and a["dd_peak"] == 51000.0 and a["dd_level"] == 48000.0
+    assert a["dd_room"] == 2100.0                     # equity 50 100 − 48 000
+    # intraday equity highs do NOT move an EOD threshold …
+    sess.snap[11] = {"totalCashValue": 50400.0, "realizedPnL": 400.0, "openPnL": 2000.0, "weekRealizedPnL": 0}
+    a = (await pnl.refresh_area(1))["accounts"][0]
+    assert a["dd_peak"] == 51000.0
+    # … but the balance at the session close does, once the session has rolled (17:00 New York)
+    sess.snap[11] = {"totalCashValue": 52000.0, "realizedPnL": 2000.0, "openPnL": 0, "weekRealizedPnL": 0}
+    await pnl.refresh_area(1)                          # today's close candidate: 52 000
+    later = datetime.now(timezone.utc) + __import__("datetime").timedelta(days=1)
+    real_apply = drawdown.apply
+    monkeypatch.setattr(drawdown, "apply", lambda area, snap, rec, now=None: real_apply(area, snap, rec, now=later))
+    sess.snap[11] = {"totalCashValue": 51500.0, "realizedPnL": -500.0, "openPnL": 0, "weekRealizedPnL": 0}
+    a = (await pnl.refresh_area(1))["accounts"][0]
+    assert a["dd_peak"] == 52000.0 and a["dd_level"] == 49000.0 and a["dd_room"] == 2500.0
+
+
+async def test_pinning_the_prop_firm_threshold(client, admin, monkeypatch):
+    with context.use_area(1):
+        sess = Sess(accounts=[{"id": 11, "spec": "APEX11"}],
+                    snap={11: {"totalCashValue": 50000.0, "realizedPnL": 0, "openPnL": 0, "weekRealizedPnL": 0}})
+    sess.risk = [{"id": 11, "trailingMaxDrawdown": 2500, "trailingMaxDrawdownMode": "RealTime"}]
+    _install(monkeypatch, sess)
+    await pnl.refresh_area(1)
+    # the firm shows a higher threshold (the account peaked before the bridge watched it)
+    r = await client.post("/api/pnl/drawdown", json={"account_id": 11, "level": 48900})
+    assert r.status_code == 200
+    a = r.json()["accounts"][0]
+    assert a["dd_seeded"] is True and a["dd_peak"] == 51400.0 and a["dd_level"] == 48900.0 and a["dd_room"] == 1100.0
+    # a pinned threshold still ratchets up with new peaks, never down
+    sess.snap[11] = {"totalCashValue": 50000.0, "realizedPnL": 0, "openPnL": 2000.0, "weekRealizedPnL": 0}
+    a = (await pnl.refresh_area(1))["accounts"][0]
+    assert a["dd_peak"] == 52000.0 and a["dd_level"] == 49500.0
+    # reset → back to tracking from what is observed now
+    r = await client.post("/api/pnl/drawdown", json={"account_id": 11, "level": None})
+    a = r.json()["accounts"][0]
+    assert a["dd_seeded"] is False and a["dd_peak"] == 52000.0
+    # validation
+    assert (await client.post("/api/pnl/drawdown", json={"account_id": 11, "level": "abc"})).status_code == 400
+    assert (await client.post("/api/pnl/drawdown", json={"account_id": 999, "level": 1})).status_code == 404
+    assert (await client.post("/api/pnl/drawdown", json={"level": 1})).status_code == 400
+
+
+def test_session_day_rolls_at_17_new_york():
+    from datetime import datetime
+    from app import drawdown
+    assert drawdown.session_day(datetime(2026, 9, 9, 16, 59, tzinfo=drawdown.ET)) == "2026-09-09"
+    assert drawdown.session_day(datetime(2026, 9, 9, 21, 0, tzinfo=timezone.utc)) == "2026-09-10"   # 17:00 New York
+    assert drawdown.normalize_mode("RealTime") == "Intraday" and drawdown.normalize_mode("eod") == "EOD"
 
 
 async def test_risk_lookup_failure_never_breaks_pnl(admin, monkeypatch):

@@ -122,12 +122,27 @@ export default {
       if (size && a.dd_room < size * 0.5) return "warn";
       return "pos";
     };
+    async function pinThreshold(a) {
+      const cur = a.dd_level != null ? String(Math.round(a.dd_level)) : "";
+      const v = window.prompt(`Trailing threshold for ${a.spec} as shown by your prop firm / Tradovate (e.g. 48100).\nThe bridge trails it forward from there. Leave empty to reset the tracker.`, cur);
+      if (v === null) return;
+      try {
+        const r = await api.post("/api/pnl/drawdown", { account_id: a.account_id, level: v.trim() === "" ? null : Number(v.replace(/[^0-9.\-]/g, "")) });
+        paintPnl(r, true); toast(v.trim() === "" ? "Drawdown tracker reset" : "Threshold pinned", "success");
+      } catch (e) { toast(e.message, "error"); }
+    }
     const ddCell = (a) => {
       if (a.dd_room == null && a.dd_size == null) return h("span", { class: "muted" }, "—");
       const mode = a.dd_mode ? h("span", { class: `dd-mode${a.dd_mode === "Intraday" ? " intraday" : ""}` }, a.dd_mode) : null;
-      return h("span", null,
+      const since = a.dd_since ? fmtDateTime(a.dd_since) : "";
+      const tip = a.dd_level == null ? `Max drawdown ${fmtMoney(a.dd_size, 0)}`
+        : `Peak ${fmtMoney(a.dd_peak, 2)} − drawdown ${fmtMoney(a.dd_size, 0)}${a.dd_cap ? ` (trails up to ${fmtMoney(a.dd_cap, 0)})` : ""} = threshold ${fmtMoney(a.dd_level, 2)}. `
+          + (a.dd_seeded ? `Pinned from your prop firm's figure${since ? " on " + since : ""}.` : `Tracked by the bridge${since ? " since " + since : ""} — pin the exact threshold from your prop firm with ✎ if it differs.`);
+      const pin = h("button", { type: "button", class: "dd-pin", title: "Pin the threshold shown by your prop firm", onClick: () => pinThreshold(a) }, "✎");
+      return h("span", { title: tip },
         a.dd_room == null ? h("span", { class: "muted" }, fmtMoney(a.dd_size, 0)) : h("span", { class: `pnl ${ddTone(a)}` }, fmtSigned(a.dd_room, 2)),
-        h("span", { class: "sub" }, a.dd_limit != null ? ["level ", fmtMoney(a.dd_limit, 0), " "] : null, mode));
+        h("span", { class: "sub" }, a.dd_level != null ? ["level ", fmtMoney(a.dd_level, 0), " "] : null, mode, " ", pin,
+          a.dd_level != null && !a.dd_seeded ? h("span", { class: "dd-unpinned", title: "Peak tracked by the bridge only since it started watching — pin the prop firm's threshold for exact figures" }, "≈") : null));
     };
     let pnlSort = { key: "activity", dir: "desc" };
     let hideIdle = false;

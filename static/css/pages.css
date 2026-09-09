@@ -125,6 +125,9 @@
 .pnl-cell .sub { display: block; color: var(--text-dim); font-size: 10.5px; margin-top: 1px; white-space: nowrap; }
 .dd-mode { display: inline-block; padding: 0 5px; border-radius: 3px; background: var(--bg-hover, rgba(127,127,127,.15)); font-size: 9.5px; text-transform: uppercase; letter-spacing: .4px; }
 .dd-mode.intraday { background: rgba(217, 119, 6, .18); color: var(--amber, #d29922); }
+.dd-pin { all: unset; cursor: pointer; color: var(--text-dim); font-size: 11px; padding: 0 2px; border-radius: 3px; }
+.dd-pin:hover, .dd-pin:focus-visible { color: var(--accent); outline: none; }
+.dd-unpinned { color: var(--amber, #d29922); font-weight: 600; margin-left: 2px; }
 .pnl-row.idle { opacity: .55; }
 .pnl-row.idle:hover { opacity: 1; }
 .pnl-head { background: transparent; border-color: transparent; padding: 0 10px; }

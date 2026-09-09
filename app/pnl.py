@@ -19,7 +19,7 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from . import config, context, db, state, tradovate, watch
+from . import config, context, db, drawdown, state, tradovate, watch
 
 IDLE_INTERVAL_S = 60.0
 MAX_BACKOFF_S = 120.0
@@ -72,23 +72,6 @@ async def risk_settings(session: Any) -> dict[int, dict[str, Any]]:
     return out
 
 
-def drawdown_fields(rec: Optional[dict[str, Any]], cash: float, open_pnl: float) -> dict[str, Any]:
-    """Derived drawdown view for one account: mode, size, liquidation level and
-    the room left (equity = balance + open P&L, minus the level)."""
-    if not rec:
-        return {"dd_mode": "", "dd_size": None, "dd_limit": None, "dd_room": None, "daily_loss_limit": None}
-    size = rec.get("trailingMaxDrawdown")
-    limit = rec.get("trailingMaxDrawdownLimit")
-    mode = str(rec.get("trailingMaxDrawdownMode") or "")
-    size_f = _num(size) if size not in (None, "") else None
-    limit_f = _num(limit) if limit not in (None, "") else None
-    room = round(cash + open_pnl - limit_f, 2) if limit_f is not None else None
-    daily = rec.get("dailyLossAutoLiq")
-    return {"dd_mode": "Intraday" if mode.lower() in ("realtime", "real_time", "intraday") else ("EOD" if mode.upper() == "EOD" else mode),
-            "dd_size": size_f, "dd_limit": limit_f, "dd_room": room,
-            "daily_loss_limit": _num(daily) if daily not in (None, "", 0) else None}
-
-
 async def refresh_area(area_id: int) -> dict[str, Any]:
     """Poll every enabled account of an area once; store + broadcast the result."""
     with context.use_area(area_id):
@@ -106,7 +89,10 @@ async def refresh_area(area_id: int) -> dict[str, Any]:
                 except Exception as exc:  # noqa: BLE001 - one account failing must not hide the others
                     errors.append(f"{a.get('spec') or a.get('id')}: {exc}")
                     continue
-                snap.update(drawdown_fields(risk.get(int(a["id"])), snap["cash"], snap["open"]))
+                try:
+                    snap.update(drawdown.apply(area_id, snap, risk.get(int(a["id"]))))
+                except Exception as exc:  # noqa: BLE001 - the drawdown view must never break the P&L feed
+                    state.log_event("warn", f"drawdown tracking failed for {snap.get('spec')}: {exc}")
                 accounts.append(snap)
         summary = {
             "ts": datetime.now(timezone.utc).isoformat(),
