@@ -4,6 +4,15 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.31
+- **Max trailing drawdown on the Today's P&L card.** Each account row shows the room left
+  to Tradovate's trailing-drawdown liquidation level (equity = balance + open P&L, minus
+  the level), the level itself and whether the account trails **EOD** or **Intraday**
+  (Tradovate "RealTime"). Intraday is highlighted amber; the room turns amber below half
+  the drawdown and red below a quarter or once it is used up. Read from the login's
+  `userAccountAutoLiq` records (one call per login per poll); accounts without a record
+  show a dash. The column is sortable like the others.
+
 ## 5.0.0-alpha.30
 - **Passphrase is verified before the marketplace fan-out** (`app/signals.py`). The
   publisher's signal was forwarded to subscribers *in parallel* with the publisher's own

@@ -20,6 +20,8 @@ class Sess:
     async def _request(self, method, path, **kw):
         if path == "/position/list":
             return []
+        if path == "/userAccountAutoLiq/list":
+            return getattr(self, "risk", [])
         self.calls += 1
         assert path == "/cashBalance/getcashbalancesnapshot"
         aid = kw["json"]["accountId"]
@@ -120,3 +122,41 @@ async def test_loop_respects_off_and_watchers(admin, monkeypatch):
     except asyncio.CancelledError:
         pass
     assert sleeps == [pnl.IDLE_INTERVAL_S]                          # nobody watching, no trade alerts → idle cadence
+
+
+async def test_trailing_drawdown_fields_from_auto_liq(admin, monkeypatch):
+    """Prop-firm trailing drawdown: level, size, mode and the room left (equity − level)."""
+    with context.use_area(1):
+        sess = Sess(snap={11: {"totalCashValue": 51200.0, "realizedPnL": 300.0, "openPnL": -150.0, "weekRealizedPnL": 0},
+                          12: {"totalCashValue": 49000.0, "realizedPnL": 0, "openPnL": 0, "weekRealizedPnL": 0}})
+    sess.risk = [{"id": 11, "trailingMaxDrawdown": 2500, "trailingMaxDrawdownLimit": 50100.0, "trailingMaxDrawdownMode": "RealTime", "dailyLossAutoLiq": 1000},
+                 {"id": 99, "trailingMaxDrawdown": 1, "trailingMaxDrawdownLimit": 1}]   # unrelated account
+    _install(monkeypatch, sess)
+    s = await pnl.refresh_area(1)
+    a11 = next(a for a in s["accounts"] if a["account_id"] == 11)
+    a12 = next(a for a in s["accounts"] if a["account_id"] == 12)
+    assert a11["dd_mode"] == "Intraday" and a11["dd_size"] == 2500.0 and a11["dd_limit"] == 50100.0
+    assert a11["dd_room"] == 950.0            # 51200 − 150 open − 50100
+    assert a11["daily_loss_limit"] == 1000.0
+    assert a12["dd_mode"] == "" and a12["dd_limit"] is None and a12["dd_room"] is None   # no risk record
+
+
+def test_drawdown_fields_edge_cases():
+    assert pnl.drawdown_fields(None, 1, 1)["dd_room"] is None
+    d = pnl.drawdown_fields({"trailingMaxDrawdown": 3000, "trailingMaxDrawdownMode": "EOD"}, 50000, 0)
+    assert d["dd_mode"] == "EOD" and d["dd_size"] == 3000.0 and d["dd_limit"] is None and d["dd_room"] is None
+    d = pnl.drawdown_fields({"trailingMaxDrawdownLimit": "48500", "trailingMaxDrawdownMode": "real_time"}, 48400, 50)
+    assert d["dd_mode"] == "Intraday" and d["dd_room"] == -50.0
+
+
+async def test_risk_lookup_failure_never_breaks_pnl(admin, monkeypatch):
+    with context.use_area(1):
+        sess = Sess()
+    async def boom(method, path, **kw):
+        if path == "/userAccountAutoLiq/list":
+            raise tradovate.TradovateError("403")
+        return await Sess._request(sess, method, path, **kw)
+    monkeypatch.setattr(sess, "_request", boom)
+    _install(monkeypatch, sess)
+    s = await pnl.refresh_area(1)
+    assert len(s["accounts"]) == 2 and s["accounts"][0]["dd_room"] is None and s["error"] == ""

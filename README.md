@@ -421,6 +421,11 @@ Eleven triggers, each independently toggled (push devices receive every trigger)
 | Execution agent offline / back online | Discord + email + push | a paired VPS agent stopped or resumed polling |
 | Daily summary | all channels | once a day at a configurable local time: realised P&L per account, trades closed, wins / losses |
 
+The Overview's **Today's P&L** card lists every account with realised / open / weekly
+P&L, balance and the **max trailing drawdown**: room left to the liquidation level, the
+level, and EOD vs Intraday trailing (from Tradovate's auto-liquidation settings). Columns
+sort on click; *Hide idle* removes accounts that did nothing today.
+
 **Accounts** on the same page picks which trade accounts may raise account-level alerts
 (position opened / closed, signal executed, daily summary) — leave *All accounts* on, or
 tick a few when you mirror to many accounts and only want to hear about the leaders.

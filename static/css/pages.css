@@ -117,10 +117,14 @@
 /* ---- live P&L card (Overview) ---- */
 .pnl-card .journal-hero { margin-top: 2px; }
 .pnl-rows { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
-.pnl-row { display: grid; grid-template-columns: minmax(120px, 1.4fr) repeat(4, minmax(0, 1fr)); gap: 8px; align-items: center; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-inset); font-size: 13px; }
+.pnl-row { display: grid; grid-template-columns: minmax(120px, 1.3fr) repeat(5, minmax(0, 1fr)); gap: 8px; align-items: center; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-inset); font-size: 13px; }
 .pnl-acct { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pnl-cell { display: flex; flex-direction: column; gap: 1px; font-variant-numeric: tabular-nums; }
 .pnl-cell .k { color: var(--text-dim); font-size: 10.5px; text-transform: uppercase; letter-spacing: .4px; }
+.pnl.warn { color: var(--amber, #d29922); }
+.pnl-cell .sub { display: block; color: var(--text-dim); font-size: 10.5px; margin-top: 1px; white-space: nowrap; }
+.dd-mode { display: inline-block; padding: 0 5px; border-radius: 3px; background: var(--bg-hover, rgba(127,127,127,.15)); font-size: 9.5px; text-transform: uppercase; letter-spacing: .4px; }
+.dd-mode.intraday { background: rgba(217, 119, 6, .18); color: var(--amber, #d29922); }
 .pnl-row.idle { opacity: .55; }
 .pnl-row.idle:hover { opacity: 1; }
 .pnl-head { background: transparent; border-color: transparent; padding: 0 10px; }

@@ -110,7 +110,25 @@ export default {
 
     // Sort + idle filter, remembered per browser. "activity" = accounts that did
     // something today first (largest realised / open movement on top), idle last.
-    const PNL_COLS = [["spec", "Account"], ["realized", "Realised"], ["open", "Open"], ["week", "Week"], ["cash", "Balance"]];
+    const PNL_COLS = [["spec", "Account"], ["realized", "Realised"], ["open", "Open"], ["week", "Week"], ["cash", "Balance"], ["dd_room", "Drawdown"]];
+    // Room left to the trailing-drawdown liquidation level: tone by how much of the
+    // drawdown is used up. Intraday ("RealTime") trailing is the dangerous one —
+    // the level follows the open equity, so a red cell can be minutes from a liquidation.
+    const ddTone = (a) => {
+      if (a.dd_room == null) return "";
+      if (a.dd_room <= 0) return "neg";
+      const size = Number(a.dd_size) || 0;
+      if (size && a.dd_room < size * 0.25) return "neg";
+      if (size && a.dd_room < size * 0.5) return "warn";
+      return "pos";
+    };
+    const ddCell = (a) => {
+      if (a.dd_room == null && a.dd_size == null) return h("span", { class: "muted" }, "—");
+      const mode = a.dd_mode ? h("span", { class: `dd-mode${a.dd_mode === "Intraday" ? " intraday" : ""}` }, a.dd_mode) : null;
+      return h("span", null,
+        a.dd_room == null ? h("span", { class: "muted" }, fmtMoney(a.dd_size, 0)) : h("span", { class: `pnl ${ddTone(a)}` }, fmtSigned(a.dd_room, 2)),
+        h("span", { class: "sub" }, a.dd_limit != null ? ["level ", fmtMoney(a.dd_limit, 0), " "] : null, mode));
+    };
     let pnlSort = { key: "activity", dir: "desc" };
     let hideIdle = false;
     try {
@@ -129,7 +147,9 @@ export default {
           return (activity(b) - activity(a)) * (dir === "asc" ? -1 : 1) || String(a.spec).localeCompare(String(b.spec));
         }
         if (key === "spec") return String(a.spec || a.account_id).localeCompare(String(b.spec || b.account_id)) * sgn;
-        return ((Number(a[key]) || 0) - (Number(b[key]) || 0)) * sgn || String(a.spec).localeCompare(String(b.spec));
+        const va = a[key] == null ? (dir === "asc" ? Infinity : -Infinity) : Number(a[key]) || 0;   // no drawdown → last
+        const vb = b[key] == null ? (dir === "asc" ? Infinity : -Infinity) : Number(b[key]) || 0;
+        return (va - vb) * sgn || String(a.spec).localeCompare(String(b.spec));
       });
     }
     let lastPnl = null;
@@ -172,7 +192,7 @@ export default {
       for (const a of sortAccounts(accounts)) {
         const id = a.account_id;
         const was = keepPrev ? null : prevValues.get(id);
-        next.set(id, { realized: a.realized, open: a.open, week: a.week, cash: a.cash });
+        next.set(id, { realized: a.realized, open: a.open, week: a.week, cash: a.cash, dd_room: a.dd_room });
         const ch = (k) => !!was && Number(was[k]) !== Number(a[k]);
         if (hideIdle && isIdle(a)) continue;
         pnlRows.append(h("div", { class: `pnl-row${isIdle(a) ? " idle" : ""}` },
@@ -180,7 +200,8 @@ export default {
           cell("realised", money(a.realized), ch("realized")),
           cell("open", money(a.open), ch("open")),
           cell("week", money(a.week), ch("week")),
-          cell("balance", h("span", null, fmtMoney(a.cash, 2)), ch("cash"))));
+          cell("balance", h("span", null, fmtMoney(a.cash, 2)), ch("cash")),
+          cell("max drawdown", ddCell(a), ch("dd_room"))));
       }
       if (!keepPrev) prevValues = next;
       if (!accounts.length) pnlRows.append(h("div", { class: "muted" }, "No connected trade account — connect a login under Settings → Tradovate Accounts."));

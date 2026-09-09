@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 from . import config, context, db, state, tradovate, watch
 
@@ -52,6 +52,43 @@ async def snapshot_account(session: Any, account: dict[str, Any]) -> dict[str, A
     }
 
 
+async def risk_settings(session: Any) -> dict[int, dict[str, Any]]:
+    """Tradovate's auto-liquidation / risk record per account id (one call per
+    login). Prop-firm accounts carry the **trailing max drawdown** here:
+    ``trailingMaxDrawdown`` (its size), ``trailingMaxDrawdownLimit`` (the
+    balance level the account is liquidated at) and ``trailingMaxDrawdownMode``
+    (``EOD`` or ``RealTime`` = intraday). Never raises — an account without a
+    readable record simply shows no drawdown."""
+    try:
+        rows = await session._request("GET", "/userAccountAutoLiq/list") or []
+    except Exception:  # noqa: BLE001
+        return {}
+    out: dict[int, dict[str, Any]] = {}
+    for r in rows if isinstance(rows, list) else []:
+        try:
+            out[int(r.get("id") or r.get("accountId") or 0)] = r
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def drawdown_fields(rec: Optional[dict[str, Any]], cash: float, open_pnl: float) -> dict[str, Any]:
+    """Derived drawdown view for one account: mode, size, liquidation level and
+    the room left (equity = balance + open P&L, minus the level)."""
+    if not rec:
+        return {"dd_mode": "", "dd_size": None, "dd_limit": None, "dd_room": None, "daily_loss_limit": None}
+    size = rec.get("trailingMaxDrawdown")
+    limit = rec.get("trailingMaxDrawdownLimit")
+    mode = str(rec.get("trailingMaxDrawdownMode") or "")
+    size_f = _num(size) if size not in (None, "") else None
+    limit_f = _num(limit) if limit not in (None, "") else None
+    room = round(cash + open_pnl - limit_f, 2) if limit_f is not None else None
+    daily = rec.get("dailyLossAutoLiq")
+    return {"dd_mode": "Intraday" if mode.lower() in ("realtime", "real_time", "intraday") else ("EOD" if mode.upper() == "EOD" else mode),
+            "dd_size": size_f, "dd_limit": limit_f, "dd_room": room,
+            "daily_loss_limit": _num(daily) if daily not in (None, "", 0) else None}
+
+
 async def refresh_area(area_id: int) -> dict[str, Any]:
     """Poll every enabled account of an area once; store + broadcast the result."""
     with context.use_area(area_id):
@@ -60,13 +97,17 @@ async def refresh_area(area_id: int) -> dict[str, Any]:
         accounts: list[dict[str, Any]] = []
         errors: list[str] = []
         for s in sessions:
+            risk = await risk_settings(s)
             for a in s.accounts:
                 if not a.get("id"):
                     continue
                 try:
-                    accounts.append(await snapshot_account(s, a))
+                    snap = await snapshot_account(s, a)
                 except Exception as exc:  # noqa: BLE001 - one account failing must not hide the others
                     errors.append(f"{a.get('spec') or a.get('id')}: {exc}")
+                    continue
+                snap.update(drawdown_fields(risk.get(int(a["id"])), snap["cash"], snap["open"]))
+                accounts.append(snap)
         summary = {
             "ts": datetime.now(timezone.utc).isoformat(),
             "accounts": accounts,
