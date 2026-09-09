@@ -14,3 +14,4 @@ pywebpush>=2.0.0
 # Discord signal listener (self-bot). Imports as `discord`; the module imports
 # it lazily, so the bridge still boots if this fails to install.
 discord.py-self>=2.1.0
+websockets>=12,<16

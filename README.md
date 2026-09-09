@@ -54,6 +54,11 @@ access control, and a built-in GitHub auto-updater.
 - **Alerts** (Settings → Alerts): Discord webhook and/or email, each independently
   toggled, for connection lost/restored (which account + broker) and trade executed
   (which accounts + strategy, Discord only).
+- **Copy trading** (Routing → Copy Trading): mirror one leader trade account onto any
+  number of follower accounts in real time — entries, adds, reductions, closes and
+  reversals — sized by multiplier or a fixed number of contracts, with a symbol filter,
+  a direction filter, a per-follower cap and an automatic *flatten the followers* once
+  the leader feed has been lost for X seconds — see below.
 - **Discord signal listener** (configured under Settings → Discord Listener; live feed on
   the Discord tab): watches Discord channels over the
   Gateway with a personal user token (self-bot) and fans parsed trade signals out to
@@ -532,6 +537,49 @@ An admin can **publish** one of their webhooks; other users find it on the
 Subscriptions are stored in the `subscriptions` table; the sharing config lives on the
 webhook itself (`sharing` key), so v4 data stays compatible.
 
+---
+## Copy trading (mirror a leader account onto followers)
+
+**Routing → Copy Trading** mirrors the *positions* of one **leader** trade account onto
+any number of **follower** accounts — your own or third-party accounts whose login you
+hold. It works on the broker's position, not on signals, so it also copies trades the
+leader places by hand in the Tradovate UI, stop / target fills and manual closes.
+
+- **Group** = leader account + optional symbol filter (roots such as `MNQ, ES`) +
+  followers. Each follower has a **mode** — *multiplier* (leader size × factor, rounded,
+  never below 1 while the leader holds) or *fixed* (N contracts for the leader's entry;
+  with *Fixed mode follows adds* on, 2 fixed contracts become 4 when the leader doubles
+  up) — plus an optional **max** cap and a **direction** filter (both / long / short).
+- **Mirror rule**: on every leader position change the bridge computes each follower's
+  target net position and sends **one market order for the difference**. That one rule
+  covers opening, adding, reducing, closing and reversing, and it is self-healing: a
+  partial fill, a rejected order or a missed event is corrected on the next change or by
+  the 10-second **reconcile**, which compares the followers' broker positions with the
+  expected ones and fixes drift (the event log shows `drift`).
+- **Feed**: the leader login is watched over Tradovate's WebSocket **user sync**
+  (position updates ~100 ms after a fill, heartbeats every 2.5 s). A leader login that
+  executes through an **execution agent** is polled once a second through that agent, so
+  the login's IP rule is kept (*Feed: Auto*; *Poll* forces polling). The table shows the
+  feed state and the last mirror **latency** (leader change → follower order sent).
+- **Feed loss**: no frames for 12 s marks the feed lost; after *Flatten followers after
+  feed loss* seconds (default 30) every mirrored follower position is **closed at
+  market**, the group **pauses** and an alert goes out (Discord, push and email).
+  **Resume** clears the pause; **Sync now** copies the leader's current positions.
+- **Baseline**: a position the leader already holds when the group starts is *not*
+  copied — mirroring of that contract begins once the leader is flat again, or right away
+  with **Sync now**. **Flatten followers** closes every mirrored follower position and
+  pauses the group. Both are confirmed in the UI.
+- The global **Trading** switch applies (mirror orders are skipped while it is off), a
+  leader cannot follow itself and chains that would loop (A → B → A) are rejected.
+- Every action is written to the **event log** (`copy_events` table, kept 7 days):
+  `mirror` with latency, `reject`, `drift`, `feed up` / `feed lost`, `paused`, `resumed`,
+  `skipped` (trading off / paused) and `ignored` (baseline). Rejects and pauses raise the
+  *Copy trading* alert (Settings → Alerts).
+
+Latency matters: run the bridge close to Tradovate (Render **Virginia / US East**) and
+avoid the agent path for the leader where you can — polling adds up to a second.
+
+---
 ## Users, areas & login (multi-tenant)
 
 Fluxbridge is **multi-user**. Each user signs in with **email + password** and gets
@@ -616,6 +664,7 @@ the dashboard **Update** button works.
 | `POST` | `/api/agent/pair` | Exchange a one-time pairing code for an agent token (unauthenticated, rate-limited) |
 | `GET`  | `/api/agent/jobs` | Agent long-poll for relay jobs (agent token) · `POST /api/agent/jobs/{id}/result` delivers the answer |
 | `GET`  | `/api/agents` | Paired agents with online state · `POST /api/agents/pairing-code`, `PUT`/`DELETE /api/agents/{id}`, `GET /api/agents/download.zip` (admin) |
+| `GET/POST` | `/api/copy/groups` | Copy-trading groups with live status · `PUT`/`DELETE /api/copy/groups/{id}`, `POST …/{id}/enable|disable|resume|sync|flatten`, `GET /api/copy/status`, `GET /api/copy/events` |
 | `GET`  | `/api/pnl` | Live account P&L: today's realised, open, week, cash per account (`?refresh=1` polls Tradovate now) |
 | `GET`  | `/api/journal/overview` | Journal stats, per-period buckets, equity curve for a filter slice (`range`/`frm`/`to`, `account`, `symbol`, `side`, `period`) |
 | `GET`  | `/api/journal/calendar` | Daily net P&L for a month (`month=YYYY-MM`) |

@@ -5,6 +5,7 @@ import logs from "./logs.js";
 import journal from "./journal.js";
 import webhooks from "./webhooks.js";
 import marketplace from "./marketplace.js";
+import copyTrading from "./copy.js";
 import tools from "./tools.js";
 import simulator from "./simulator.js";
 import guide from "./guide.js";
@@ -22,6 +23,8 @@ export const ROUTES = [
   { path: "/webhooks", page: webhooks },
   { path: "/webhooks/:id", page: webhooks },
   { path: "/marketplace", page: marketplace },
+  { path: "/copy", page: copyTrading },
+  { path: "/copy/:id", page: copyTrading },
   { path: "/settings", redirect: "/settings/general" },
   { path: "/settings/general", page: general },
   { path: "/settings/accounts", page: accounts },

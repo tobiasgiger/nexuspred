@@ -297,6 +297,7 @@ export const alerts = {
           { name: "alert_on_trade_closed", type: "switch", label: "Position closed", hint: "Including stop / target fills: account, symbol, direction, size, realised P&L, duration — Discord + push. Partial closes are reported as 'reduced'." },
           { name: "alert_on_agent_lost", type: "switch", label: "Execution agent went offline", hint: "A paired VPS agent stopped polling — Discord + email + push" },
           { name: "alert_on_agent_restored", type: "switch", label: "Execution agent came back online", hint: "Discord + email + push" },
+          { name: "alert_on_copy", type: "switch", label: "Copy trading", hint: "A follower's mirror order was rejected (Discord + push) or a group paused itself after a feed loss (all channels)" },
           { name: "alert_daily_summary", type: "switch", label: "Daily summary", hint: "Once a day: realised P&L per account, trades closed, wins / losses — all channels" },
           { name: "daily_summary_time", type: "text", label: "Daily summary time (HH:MM)", placeholder: "22:05", width: "160px", hint: "Local time in the journal timezone (Settings → General → Trading journal)." },
           { name: "alert_on_webhook_failed", type: "switch", label: "Signal received but not executed", hint: "Webhook failure — Discord + email" },

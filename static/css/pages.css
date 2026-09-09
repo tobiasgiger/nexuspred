@@ -141,3 +141,9 @@
 @keyframes pnl-flash { 0% { background: color-mix(in srgb, var(--accent) 28%, transparent); } 100% { background: transparent; } }
 @media (prefers-reduced-motion: reduce) { .pnl-cell.flash { animation: none; } }
 @media (max-width: 720px) { .pnl-row { grid-template-columns: 1fr 1fr; } .pnl-acct { grid-column: 1 / -1; } .pnl-head { display: none; } }
+
+/* Copy Trading */
+.cp-note { font-size: 12px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: bottom; }
+.cp-detail { font-size: 12px; color: var(--text-dim); }
+.cp-pos { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.cp-pos:last-child { border-bottom: none; }

@@ -245,6 +245,18 @@ async def agent_restored(name: str) -> None:
                          _send_push(f"Agent online: {name}", message, url="/#/settings/agents"))
 
 
+async def copy_alert(title: str, message: str, *, email: bool = False) -> None:
+    """Copy trading: a follower order was rejected or a group paused itself."""
+    s = config.load_settings()
+    if not s.get("alert_on_copy", True):
+        return
+    body = f"📋 **Copy trading** — {message}"
+    sends = [_send_discord(body), _send_push(title, message, url="/#/copy")]
+    if email:
+        sends.append(_send_email(f"Fluxbridge: {title}", body))
+    await asyncio.gather(*sends)
+
+
 async def daily_summary(pnl: dict[str, Any], closes: list[dict[str, Any]], day: str) -> None:
     """End-of-day recap: realised P&L per account plus the day's closed trades."""
     s = config.load_settings()

@@ -317,6 +317,19 @@ def init() -> None:
                     failures INTEGER NOT NULL DEFAULT 0,
                     last_error TEXT NOT NULL DEFAULT ''
                 );
+                CREATE TABLE IF NOT EXISTS copy_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    area_id INTEGER NOT NULL,
+                    group_id TEXT NOT NULL,
+                    ts TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    leader TEXT NOT NULL DEFAULT '',
+                    follower TEXT NOT NULL DEFAULT '',
+                    symbol TEXT NOT NULL DEFAULT '',
+                    detail TEXT NOT NULL DEFAULT '',
+                    latency_ms INTEGER
+                );
+                CREATE INDEX IF NOT EXISTS copy_events_area ON copy_events(area_id, group_id, id);
                 CREATE TABLE IF NOT EXISTS subscriptions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     area_id INTEGER NOT NULL,
@@ -1036,6 +1049,40 @@ def history_stats(area_id: int, since_ts: str) -> dict[str, Any]:
     totals = {k: sum(d.get(k, 0) for d in days.values()) for k in keys}
     return {"since": since_ts, "totals": totals,
             "days": [{"day": d, **{k: v.get(k, 0) for k in keys}} for d, v in sorted(days.items())]}
+
+
+# ------------------------------------------------------------ copy trading
+def insert_copy_event(area_id: int, rec: dict[str, Any]) -> int:
+    """Append one copy-trading event (mirror, reject, drift, feed up/lost …)."""
+    init()
+    with _connect() as c:
+        cur = c.execute(
+            "INSERT INTO copy_events(area_id, group_id, ts, kind, leader, follower, symbol, detail, latency_ms) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            (area_id, str(rec.get("group_id") or ""), rec.get("ts") or _now(), str(rec.get("kind") or ""),
+             str(rec.get("leader") or ""), str(rec.get("follower") or ""), str(rec.get("symbol") or ""),
+             str(rec.get("detail") or "")[:400], rec.get("latency_ms")))
+        return int(cur.lastrowid or 0)
+
+
+def list_copy_events(area_id: int, group_id: str = "", limit: int = 100) -> list[dict[str, Any]]:
+    init()
+    limit = max(1, min(int(limit), 1000))
+    with _connect() as c:
+        if group_id:
+            rows = c.execute("SELECT * FROM copy_events WHERE area_id=? AND group_id=? ORDER BY id DESC LIMIT ?",
+                             (area_id, group_id, limit)).fetchall()
+        else:
+            rows = c.execute("SELECT * FROM copy_events WHERE area_id=? ORDER BY id DESC LIMIT ?",
+                             (area_id, limit)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def prune_copy_events(days: int = 7) -> int:
+    init()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    with _connect() as c:
+        return int(c.execute("DELETE FROM copy_events WHERE ts<?", (cutoff,)).rowcount or 0)
 
 
 def prune_history(cutoff_ts: str) -> int:

@@ -4,6 +4,22 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.33
+- **Copy Trading** (new Routing module, `app/copy.py`, Routing → Copy Trading). Mirror one
+  leader trade account onto any number of follower accounts (own or third-party logins) in
+  real time: entries, adds, reductions, closes and reversals — sized per follower by
+  **multiplier** or **fixed** contracts (fixed follows the leader's adds proportionally,
+  switchable), with a **symbol** filter, **direction** filter and **max** cap. The engine is
+  a position mirror: on every leader change one market order for the difference, self-healing
+  through a 10-second reconcile against the followers' broker positions. Leader feed over
+  Tradovate's WebSocket **user sync** (~100 ms), polling once a second for logins that execute
+  through an agent. A feed lost for longer than the configured seconds **flattens the
+  followers** at market and pauses the group (resume / sync now / flatten by hand from the
+  drawer). Existing leader positions are baseline (not copied until flat or synced), loops
+  between groups are rejected, the global Trading switch applies. Event log with per-mirror
+  latency (`copy_events`, 7 days), *Copy trading* alert trigger for rejects and pauses,
+  `/api/copy/*` endpoints, 16 tests. New dependency: `websockets`.
+
 ## 5.0.0-alpha.32
 - **Trailing drawdown done properly** (`app/drawdown.py`). Tradovate's risk record only
   carries the drawdown *size* and the *cap* at which trailing stops — not the threshold.
