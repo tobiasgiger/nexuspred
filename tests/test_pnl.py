@@ -23,6 +23,8 @@ class Sess:
             return []
         if path == "/userAccountAutoLiq/list":
             return getattr(self, "risk", [])
+        if path == "/contract/item":
+            return {"name": "MNQZ6"}
         self.calls += 1
         assert path == "/cashBalance/getcashbalancesnapshot"
         aid = kw["json"]["accountId"]
@@ -126,6 +128,7 @@ async def test_loop_respects_off_and_watchers(admin, monkeypatch):
 
 
 async def test_intraday_drawdown_tracks_the_equity_peak(admin, monkeypatch):
+    monkeypatch.setattr(pnl, "IDLE_SNAPSHOT_EVERY", 1)   # every tick refreshes flat accounts here
     """Intraday: threshold = highest equity seen (incl. open P&L) − size, capped."""
     from app import drawdown
     with context.use_area(1):
@@ -154,6 +157,7 @@ async def test_intraday_drawdown_tracks_the_equity_peak(admin, monkeypatch):
 
 
 async def test_eod_drawdown_uses_session_closes_and_journal_history(admin, monkeypatch):
+    monkeypatch.setattr(pnl, "IDLE_SNAPSHOT_EVERY", 1)   # every tick refreshes flat accounts here
     from datetime import datetime, timezone
     from app import drawdown
     with context.use_area(1):
@@ -183,6 +187,7 @@ async def test_eod_drawdown_uses_session_closes_and_journal_history(admin, monke
 
 
 async def test_pinning_the_prop_firm_threshold(client, admin, monkeypatch):
+    monkeypatch.setattr(pnl, "IDLE_SNAPSHOT_EVERY", 1)   # every tick refreshes flat accounts here
     with context.use_area(1):
         sess = Sess(accounts=[{"id": 11, "spec": "APEX11"}],
                     snap={11: {"totalCashValue": 50000.0, "realizedPnL": 0, "openPnL": 0, "weekRealizedPnL": 0}})
@@ -227,3 +232,36 @@ async def test_risk_lookup_failure_never_breaks_pnl(admin, monkeypatch):
     _install(monkeypatch, sess)
     s = await pnl.refresh_area(1)
     assert len(s["accounts"]) == 2 and s["accounts"][0]["dd_room"] is None and s["error"] == ""
+
+
+async def test_flat_accounts_are_snapshotted_only_every_nth_tick(admin, monkeypatch):
+    """Accounts without a position cost one cash snapshot every n-th tick; the
+    risk record is fetched once per cache window; positions once per login."""
+    with context.use_area(1):
+        sess = Sess(snap={aid: {"totalCashValue": 50000, "realizedPnL": 10.0, "openPnL": 0.0, "weekRealizedPnL": 0.0} for aid in (11, 12)})
+    sess.risk_calls = 0
+    orig = sess._request
+
+    async def counting(method, path, **kw):
+        if path == "/userAccountAutoLiq/list":
+            sess.risk_calls += 1
+        return await orig(method, path, **kw)
+    sess._request = counting
+    _install(monkeypatch, sess)
+    monkeypatch.setattr(pnl, "IDLE_SNAPSHOT_EVERY", 3)
+    await pnl.refresh_area(1)                       # tick 1: everything fresh
+    assert sess.calls == 2 and sess.risk_calls == 1
+    s2 = await pnl.refresh_area(1)                  # tick 2: flat → reused
+    assert sess.calls == 2 and sess.risk_calls == 1 and len(s2["accounts"]) == 2
+    await pnl.refresh_area(1)                       # tick 3: n-th tick → refreshed
+    assert sess.calls == 4
+    # an account with an open position is refreshed every tick
+    sess._request_positions = [{"accountId": 11, "contractId": 901, "netPos": 1}]
+
+    async def with_pos(method, path, **kw):
+        if path == "/position/list":
+            return list(sess._request_positions)
+        return await counting(method, path, **kw)
+    sess._request = with_pos
+    await pnl.refresh_area(1)                       # tick 4: only DEMO11 (open) is fetched
+    assert sess.calls == 5

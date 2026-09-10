@@ -393,6 +393,23 @@ Token lifecycle:
 - Configure the loop with *health-check interval* (default 60s; `0` disables). Trigger a
   check on demand with **Check now** or `GET /api/health`.
 
+## Tradovate request budget
+
+Tradovate rate-limits the API per login (HTTP 429 with a penalty time). Everything the
+bridge asks a login for goes through one paced channel per login (at most 5 requests/s,
+one at a time) that also honours a running penalty, so no loop can get a login banned on
+its own. Who asks what:
+
+| Loop | Calls per login | Cadence |
+|---|---|---|
+| Live P&L (`app/pnl.py`) | positions ×1, cash snapshot per account **with a position** (flat accounts every 6th tick), risk record (cached 5 min) | `pnl_poll_seconds` (default 5 s) while a dashboard is open, trade alerts or a risk rule are on; else 60 s |
+| Health (`app/health.py`) | `/auth/me` ×1 | `health_check_interval` (60 s) |
+| Copy trading (`app/copy.py`) | positions ×1 (+ orders every 2nd poll) on the **leader** login | 10 s while the socket is synced, 2 s while it is down; slower after a 429 |
+| Journal import | fills / orders / cash per account | nightly + the Performance report |
+| Rollover | contract lookups | once a day |
+| Signals, risk guard, flatten | orders, cancels, liquidations | on demand |
+
+---
 ## Alerts
 
 **Settings → Alerts** — three channels, each with its own on/off switch:

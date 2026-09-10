@@ -16,6 +16,7 @@ from typing import Any
 
 from . import alerts, config, context, http, risk, state
 
+REQUEST_SPACING_S = 0.2   # minimum gap between two requests of one login (5/s)
 LIVE_BASE = "https://live.tradovateapi.com/v1"
 DEMO_BASE = "https://demo.tradovateapi.com/v1"
 
@@ -138,6 +139,10 @@ class TradovateSession:
         self._token_expires = _parse_iso(entry.get("token_expires")) or _decode_jwt_exp(self._token)
         self._lock = asyncio.Lock()
         self._contract_cache: dict[str, tuple[str, datetime]] = {}
+        self._pace_lock = asyncio.Lock()          # one request at a time per login
+        self._last_sent: float = 0.0
+        self.penalty_until: float = 0.0           # monotonic; set by a 429
+        self.rate_limits = 0
         self._contract_id_cache: dict[str, tuple[int, datetime]] = {}
         self.fingerprint = _fingerprint(entry)
         if self._token_expires:
@@ -191,6 +196,25 @@ class TradovateSession:
         return LIVE_BASE if self.environment == "live" else DEMO_BASE
 
     async def _request(self, method: str, path: str, *, auth: bool = True, **kwargs: Any) -> Any:
+        """One paced request: at most one every ``REQUEST_SPACING_S`` per login,
+        and nothing at all while a 429 penalty is running — every loop that
+        uses this login shares that budget, so one busy loop cannot get the
+        whole login banned."""
+        import time as _time
+        async with self._pace_lock:
+            now = _time.monotonic()
+            wait = max(self.penalty_until - now, self._last_sent + REQUEST_SPACING_S - now)
+            if wait > 0:
+                await asyncio.sleep(min(wait, 120.0))
+            self._last_sent = _time.monotonic()
+        try:
+            return await self._request_raw(method, path, auth=auth, **kwargs)
+        except RateLimited as exc:
+            self.rate_limits += 1
+            self.penalty_until = _time.monotonic() + exc.retry_after
+            raise
+
+    async def _request_raw(self, method: str, path: str, *, auth: bool = True, **kwargs: Any) -> Any:
         headers = kwargs.pop("headers", {})
         if auth:
             token = await self._get_token()

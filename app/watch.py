@@ -78,18 +78,26 @@ async def _symbol(session: Any, area_id: int, cid: int) -> str:
     return name
 
 
-async def _current_positions(area_id: int, sessions: list[Any]) -> tuple[dict[tuple[int, int], dict[str, Any]], set[int]]:
-    """(positions keyed by (account, contract), account ids that were polled OK)."""
+async def _current_positions(area_id: int, sessions: list[Any],
+                             positions: Optional[dict[str, Optional[list[dict[str, Any]]]]] = None) -> tuple[dict[tuple[int, int], dict[str, Any]], set[int]]:
+    """(positions keyed by (account, contract), account ids that were polled OK).
+    ``positions`` may carry the raw ``/position/list`` per login already fetched
+    by the P&L poll (None for a login that failed) so it is not read twice."""
     current: dict[tuple[int, int], dict[str, Any]] = {}
     polled: set[int] = set()
     for s in sessions:
         ids = {int(a["id"]): (a.get("spec") or str(a["id"])) for a in s.accounts if a.get("id")}
         if not ids:
             continue
-        try:
-            raw = await s._request("GET", "/position/list") or []
-        except Exception:  # noqa: BLE001 - an unreachable login must not look like "everything closed"
-            continue
+        if positions is not None and s.name in positions:
+            raw = positions[s.name]
+            if raw is None:
+                continue
+        else:
+            try:
+                raw = await s._request("GET", "/position/list") or []
+            except Exception:  # noqa: BLE001 - an unreachable login must not look like "everything closed"
+                continue
         polled.update(ids)
         for p in raw if isinstance(raw, list) else []:
             aid = p.get("accountId")
@@ -104,7 +112,8 @@ async def _current_positions(area_id: int, sessions: list[Any]) -> tuple[dict[tu
     return current, polled
 
 
-async def observe_area(area_id: int, sessions: list[Any], snapshots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+async def observe_area(area_id: int, sessions: list[Any], snapshots: list[dict[str, Any]], *,
+                       positions: Optional[dict[str, Optional[list[dict[str, Any]]]]] = None) -> list[dict[str, Any]]:
     """One tick: diff positions against the last tick, fire trade alerts.
     Returns the list of events (also used by tests)."""
     s = config.load_settings(area_id=area_id)
@@ -112,7 +121,7 @@ async def observe_area(area_id: int, sessions: list[Any], snapshots: list[dict[s
     want_close = bool(s.get("alert_on_trade_closed", True))
     if not (want_open or want_close):
         return []
-    current, polled = await _current_positions(area_id, sessions)
+    current, polled = await _current_positions(area_id, sessions, positions)
     prev = _positions.setdefault(area_id, {})
     now = datetime.now(timezone.utc).isoformat()
 

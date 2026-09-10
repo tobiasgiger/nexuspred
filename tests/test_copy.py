@@ -634,6 +634,14 @@ async def test_session_request_maps_429(admin):
         with pytest.raises(tradovate.RateLimited) as ei:
             await sess._request("GET", "/position/list")
         assert ei.value.retry_after == 7.0
+        # the login remembers the penalty: every loop sharing it waits
+        import time
+        assert sess.penalty_until > time.monotonic() + 5 and sess.rate_limits == 1
+        sess.penalty_until = time.monotonic() + 0.1
+        t0 = time.monotonic()
+        with pytest.raises(tradovate.RateLimited):
+            await sess._request("GET", "/order/list")
+        assert time.monotonic() - t0 >= 0.09
     finally:
         http.client = orig
 

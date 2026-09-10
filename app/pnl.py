@@ -17,11 +17,13 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Optional, Optional
 
 from . import risk, config, context, db, drawdown, state, tradovate, watch
 
 IDLE_INTERVAL_S = 60.0
+RISK_CACHE_S = 300.0          # /userAccountAutoLiq/list per login at most this often
+IDLE_SNAPSHOT_EVERY = 6       # flat accounts get a fresh cash snapshot every n-th tick
 MAX_BACKOFF_S = 120.0
 _backoff: dict[int, float] = {}
 
@@ -52,6 +54,39 @@ async def snapshot_account(session: Any, account: dict[str, Any]) -> dict[str, A
     }
 
 
+_risk_cache: dict[tuple[int, str], tuple[float, dict[int, dict[str, Any]]]] = {}
+_last_snap: dict[tuple[int, int], dict[str, Any]] = {}      # (area, account) → last snapshot
+_tick: dict[int, int] = {}
+
+
+def reset() -> None:
+    _risk_cache.clear()
+    _last_snap.clear()
+    _tick.clear()
+
+
+async def risk_settings_cached(area_id: int, session: Any) -> dict[int, dict[str, Any]]:
+    """The risk record changes rarely — fetch it every few minutes per login."""
+    import time
+    key = (area_id, session.name)
+    hit = _risk_cache.get(key)
+    if hit and time.monotonic() - hit[0] < RISK_CACHE_S:
+        return hit[1]
+    recs = await risk_settings(session)
+    if recs or not hit:
+        _risk_cache[key] = (time.monotonic(), recs)
+    return _risk_cache[key][1]
+
+
+async def leader_positions(session: Any) -> Optional[list[dict[str, Any]]]:
+    """``/position/list`` of a login (None when unreachable)."""
+    try:
+        raw = await session._request("GET", "/position/list") or []
+    except Exception:  # noqa: BLE001
+        return None
+    return raw if isinstance(raw, list) else []
+
+
 async def risk_settings(session: Any) -> dict[int, dict[str, Any]]:
     """Tradovate's auto-liquidation / risk record per account id (one call per
     login). Prop-firm accounts carry the **trailing max drawdown** here:
@@ -79,16 +114,31 @@ async def refresh_area(area_id: int) -> dict[str, Any]:
                     if s.enabled and s.has_token() and state.session_status(s.name).get("connected")]
         accounts: list[dict[str, Any]] = []
         errors: list[str] = []
+        tick = _tick[area_id] = _tick.get(area_id, 0) + 1
+        positions_by_login: dict[str, Optional[list[dict[str, Any]]]] = {}
         for s in sessions:
-            risk_recs = await risk_settings(s)
+            risk_recs = await risk_settings_cached(area_id, s)
+            raw_positions = await leader_positions(s)
+            positions_by_login[s.name] = raw_positions
+            open_accounts = {int(p.get("accountId") or 0) for p in (raw_positions or []) if p.get("netPos")}
             for a in s.accounts:
                 if not a.get("id"):
                     continue
-                try:
-                    snap = await snapshot_account(s, a)
-                except Exception as exc:  # noqa: BLE001 - one account failing must not hide the others
-                    errors.append(f"{a.get('spec') or a.get('id')}: {exc}")
-                    continue
+                aid = int(a["id"])
+                prev = _last_snap.get((area_id, aid))
+                # a flat account's figures only move when something fills: refresh
+                # it every few ticks, accounts with a position (or unknown) every tick
+                due = (aid in open_accounts or raw_positions is None or prev is None
+                       or (prev.get("open") or 0) != 0 or tick % IDLE_SNAPSHOT_EVERY == 0)
+                if not due:
+                    snap = dict(prev)
+                else:
+                    try:
+                        snap = await snapshot_account(s, a)
+                        _last_snap[(area_id, aid)] = dict(snap)
+                    except Exception as exc:  # noqa: BLE001 - one account failing must not hide the others
+                        errors.append(f"{a.get('spec') or a.get('id')}: {exc}")
+                        continue
                 try:
                     snap.update(drawdown.apply(area_id, snap, risk_recs.get(int(a["id"]))))
                 except Exception as exc:  # noqa: BLE001 - the drawdown view must never break the P&L feed
@@ -112,7 +162,7 @@ async def refresh_area(area_id: int) -> dict[str, Any]:
         if changed:
             state.publish("pnl", summary, area_id)
         try:
-            await watch.observe_area(area_id, sessions, accounts)
+            await watch.observe_area(area_id, sessions, accounts, positions=positions_by_login)
         except Exception as exc:  # noqa: BLE001 - alerts must never break the P&L feed
             state.log_event("warn", f"position watch failed: {exc}")
         return summary

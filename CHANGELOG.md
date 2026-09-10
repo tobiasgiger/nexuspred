@@ -4,6 +4,19 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.42
+- **Far fewer Tradovate requests.** The live P&L poll fetched, every 5 s per login, the
+  risk record, the position list and one cash snapshot **per account** — with a dozen
+  accounts that alone was ~2.5 requests/s per login and the real reason for the 429s.
+  Now: the risk record is cached for 5 minutes, positions are read once per login and
+  handed to the position watcher (no second read), and a flat account gets a fresh cash
+  snapshot only every 6th tick (accounts with a position, or just closed, every tick). A
+  login with 12 idle accounts drops from ~14 to ~1 request per tick.
+- **One request budget per login.** `TradovateSession` paces every request (at most 5/s
+  per login, one at a time) and remembers a 429 penalty, so every loop that shares the
+  login — P&L, health, copy trading, journal, orders — waits it out together instead of
+  piling on.
+
 ## 5.0.0-alpha.41
 - **Copy trading: orders over the socket, REST only as a safety net.** With the user sync
   now answering, the leader's orders are maintained from the sync snapshot and the
