@@ -44,6 +44,8 @@ def _apply(g: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
         g["copy_adds"] = bool(body["copy_adds"])
     if "copy_orders" in body:
         g["copy_orders"] = bool(body["copy_orders"])
+    if "on_feed_loss" in body:
+        g["on_feed_loss"] = "pause" if body["on_feed_loss"] == "pause" else "flatten"
     return g
 
 
@@ -99,6 +101,8 @@ async def api_delete_group(group_id: str) -> dict[str, Any]:
     removed = groups.pop(i)
     copy.save_groups(groups)
     await copy.sync_area(context.get_area())
+    db.delete_copy_state(context.get_area(), group_id)
+    db.delete_copy_twin_group(context.get_area(), group_id) if hasattr(db, "delete_copy_twin_group") else None
     state.log_event("info", f"Copy group '{removed.get('name')}' deleted")
     return {"status": "deleted", "id": group_id}
 
@@ -115,6 +119,8 @@ async def _set_enabled(group_id: str, enabled: bool) -> dict[str, Any]:
     groups[i] = g
     copy.save_groups(groups)
     await copy.sync_area(context.get_area())
+    if not enabled:
+        db.delete_copy_state(context.get_area(), group_id)     # a re-enable starts from a clean baseline
     state.log_event("info", f"Copy group '{g['name']}' {'enabled' if enabled else 'disabled'}")
     return _with_status(g, copy.statuses(context.get_area()))
 

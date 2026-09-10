@@ -4,6 +4,16 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.47
+- **Audit fixes, part 3: copy trading.** The mirror state (which contracts are mirrored,
+  the leader's last known size) is persisted, so a restart — every deploy is one — carries
+  on where it left off: adds during the downtime are mirrored, a leader that went flat is
+  closed on the followers, and a running trade is no longer demoted to *baseline*. A
+  leader closing a position that was never copied (baseline) is not mirrored any more,
+  so a follower's own position in that contract is left alone. A follower account may
+  follow one leader only (validated across groups). New per-group choice after a feed
+  loss: *flatten followers, then pause* (as before) or *pause only*.
+
 ## 5.0.0-alpha.46
 - **Audit fixes, part 2: stable login ids.** Every Tradovate login now carries a permanent
   id (`lid`), assigned automatically on the first load after the update. Webhook routes,

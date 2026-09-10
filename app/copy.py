@@ -67,6 +67,7 @@ def new_group(name: str = "Copy group") -> dict[str, Any]:
         "feed_loss_flatten_s": 30,
         "copy_adds": True,                   # fixed mode: scale with the leader's adds
         "copy_orders": True,                 # mirror the leader's working limit / stop orders
+        "on_feed_loss": "flatten",           # flatten | pause — what to do after feed_loss_flatten_s
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -129,6 +130,16 @@ def validate_group(g: dict[str, Any], all_groups: list[dict[str, Any]], accounts
         seen.add(k)
     if not (5 <= int(g.get("feed_loss_flatten_s") or 30) <= 600):
         raise ValueError("feed-loss flatten must be between 5 and 600 seconds")
+    if str(g.get("on_feed_loss") or "flatten") not in ("flatten", "pause"):
+        raise ValueError("on_feed_loss must be flatten or pause")
+    # a follower account belongs to one group only: two mirrors on one account fight each other
+    for og in all_groups:
+        if og.get("id") == g.get("id"):
+            continue
+        theirs = {key(f) for f in og.get("followers", []) if f.get("enabled", True)}
+        clash = [f["spec"] for f in g["followers"] if f.get("enabled", True) and key(f) in theirs]
+        if clash:
+            raise ValueError(f"Follower {clash[0]} already follows {og.get('leader', {}).get('spec', '?')} in group '{og.get('name', '?')}' — an account can follow one leader only")
     # cycle check across groups: leader → followers edges
     edges: dict[tuple[int, str], set[tuple[int, str]]] = {}
     for og in [*(x for x in all_groups if x.get("id") != g.get("id")), g]:
@@ -341,11 +352,25 @@ class GroupRunner:
         except Exception as exc:  # noqa: BLE001
             self.orders.error = f"twins: {exc}"[:200]
 
+    def _persist(self, cid: int) -> None:
+        """Keep the mirrored contracts' leader picture in the database so a
+        restart (every deploy is one) carries on instead of starting a baseline."""
+        try:
+            net = self.leader_net.get(cid, 0)
+            if net and cid not in self.baseline:
+                db.save_copy_state(self.area_id, self.id, cid, self.contract_names.get(cid, str(cid)), net, self.unit.get(cid) or abs(net))
+            else:
+                db.delete_copy_state(self.area_id, self.id, cid)
+        except Exception as exc:  # noqa: BLE001
+            self.error = f"state: {exc}"[:200]
+
     async def _seed_leader(self, session: Any, account_id: int) -> None:
-        """Read the leader's positions. At the first start every open position
-        becomes *baseline* (not copied). After a feed reconnect the picture is
-        diffed against what we knew, so changes made during the outage are
-        mirrored (or recorded as skipped while the group is paused)."""
+        """Read the leader's positions. At the first start an open position is
+        *baseline* (not copied) — unless the database remembers it as mirrored
+        from before a restart, in which case the change since then is mirrored
+        like after a reconnect. After a feed reconnect the picture is diffed
+        against what we knew, so changes made during the outage are mirrored
+        (or recorded as skipped while the group is paused)."""
         raw = await session._request("GET", "/position/list") or []
         seen: dict[int, int] = {}
         for p in raw if isinstance(raw, list) else []:
@@ -356,11 +381,24 @@ class GroupRunner:
                 seen[cid] = net
         if not self._leader_seeded:
             self._leader_seeded = True
+            remembered = {int(r["contract_id"]): r for r in db.list_copy_state(self.area_id, self.id)}
+            for cid, r in remembered.items():
+                # mirrored before the restart: pick up where we left off
+                self.leader_net[cid] = int(r["leader_net"])
+                self.unit[cid] = int(r["unit"] or abs(int(r["leader_net"])) or 1)
+                if r.get("symbol"):
+                    self.contract_names[cid] = str(r["symbol"])
             for cid, net in seen.items():
+                if cid in remembered:
+                    continue
                 await self._contract_name(session, cid)
                 self.leader_net[cid] = net
                 self.unit[cid] = abs(net)
                 self.baseline.add(cid)      # existing position: not copied until flat / sync
+            if remembered:
+                self._record("resumed", detail=f"restart: {len(remembered)} mirrored contract(s) restored from the database")
+                for cid in remembered:
+                    await self._on_position(session, cid, seen.get(cid, 0))
             return
         for cid, net in seen.items():
             if cid not in self.leader_net:
@@ -653,12 +691,17 @@ class GroupRunner:
         if prev == 0 and net != 0:
             self.unit[cid] = abs(net)
         name = await self._contract_name(session, cid)
-        if net == 0:
-            self.baseline.discard(cid)     # from now on this contract is mirrored
         self.last_event_ts = datetime.now(timezone.utc).isoformat()
         if cid in self.baseline:
-            self._record("ignored", symbol=name, detail=f"leader {prev:+d} → {net:+d}: existing position, not copied until flat or synced")
+            if net == 0:
+                # the leader closed a position we never copied: nothing to mirror —
+                # the followers may hold their own position in this contract
+                self.baseline.discard(cid)
+                self._record("ignored", symbol=name, detail=f"leader {prev:+d} → 0: existing position closed, not copied; mirroring starts with the next entry")
+            else:
+                self._record("ignored", symbol=name, detail=f"leader {prev:+d} → {net:+d}: existing position, not copied until flat or synced")
             return
+        self._persist(cid)
         if not self._wanted(cid):
             if cid not in self._filtered:
                 self._filtered.add(cid)
@@ -819,8 +862,11 @@ class GroupRunner:
             self.error = self.error or "poll stalled"
             self._mark_feed(False)
         if not self.feed_ok and self.last_frame and lost_for > limit:
-            n = await self.flatten_followers(reason=f"feed lost for {int(lost_for)} s")
-            self.paused, self.pause_reason = True, f"feed lost for {int(lost_for)} s — followers flattened ({n} order(s)); resume when the leader feed is back"
+            if str(self.group.get("on_feed_loss") or "flatten") == "pause":
+                self.paused, self.pause_reason = True, f"feed lost for {int(lost_for)} s — mirroring paused (followers keep their positions); resume when the leader feed is back"
+            else:
+                n = await self.flatten_followers(reason=f"feed lost for {int(lost_for)} s")
+                self.paused, self.pause_reason = True, f"feed lost for {int(lost_for)} s — followers flattened ({n} order(s)); resume when the leader feed is back"
             self._record("paused", detail=self.pause_reason)
             await alerts.copy_alert(f"Copy group paused: {self.group['name']}", self.pause_reason, email=True)
 
@@ -856,6 +902,7 @@ class GroupRunner:
         self.paused, self.pause_reason = False, ""
         n = 0
         for cid, net in list(self.leader_net.items()):
+            self._persist(cid)
             if not self._wanted(cid):
                 continue
             await self._mirror_contract(cid, self.contract_names.get(cid, str(cid)), net, reason="sync")

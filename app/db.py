@@ -330,6 +330,16 @@ def init() -> None:
                     latency_ms INTEGER
                 );
                 CREATE INDEX IF NOT EXISTS copy_events_area ON copy_events(area_id, group_id, id);
+                CREATE TABLE IF NOT EXISTS copy_state (
+                    area_id INTEGER NOT NULL,
+                    group_id TEXT NOT NULL,
+                    contract_id INTEGER NOT NULL,
+                    symbol TEXT NOT NULL DEFAULT '',
+                    leader_net INTEGER NOT NULL DEFAULT 0,
+                    unit INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(area_id, group_id, contract_id)
+                );
                 CREATE TABLE IF NOT EXISTS copy_twins (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     area_id INTEGER NOT NULL,
@@ -1129,6 +1139,31 @@ def list_copy_twins(area_id: int, group_id: str) -> list[dict[str, Any]]:
     with _connect() as c:
         return [dict(r) for r in c.execute("SELECT * FROM copy_twins WHERE area_id=? AND group_id=? ORDER BY id",
                                            (area_id, group_id)).fetchall()]
+
+
+def save_copy_state(area_id: int, group_id: str, contract_id: int, symbol: str, leader_net: int, unit: int) -> None:
+    """Remember a mirrored contract's leader position (survives a restart)."""
+    init()
+    with _connect() as c:
+        c.execute("INSERT INTO copy_state(area_id, group_id, contract_id, symbol, leader_net, unit, updated_at) VALUES(?,?,?,?,?,?,?) "
+                  "ON CONFLICT(area_id, group_id, contract_id) DO UPDATE SET symbol=excluded.symbol, leader_net=excluded.leader_net, "
+                  "unit=excluded.unit, updated_at=excluded.updated_at",
+                  (area_id, group_id, int(contract_id), str(symbol or ""), int(leader_net), int(unit), _now()))
+
+
+def delete_copy_state(area_id: int, group_id: str, contract_id: int | None = None) -> None:
+    init()
+    with _connect() as c:
+        if contract_id is None:
+            c.execute("DELETE FROM copy_state WHERE area_id=? AND group_id=?", (area_id, group_id))
+        else:
+            c.execute("DELETE FROM copy_state WHERE area_id=? AND group_id=? AND contract_id=?", (area_id, group_id, int(contract_id)))
+
+
+def list_copy_state(area_id: int, group_id: str) -> list[dict[str, Any]]:
+    init()
+    with _connect() as c:
+        return [dict(r) for r in c.execute("SELECT * FROM copy_state WHERE area_id=? AND group_id=?", (area_id, group_id)).fetchall()]
 
 
 def prune_copy_events(days: int = 7) -> int:

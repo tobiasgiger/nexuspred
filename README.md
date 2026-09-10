@@ -659,8 +659,14 @@ leader places by hand in the Tradovate UI, stop / target fills and manual closes
   (Discord, push and email).
   **Resume** clears the pause; **Sync now** copies the leader's current positions.
 - **Baseline**: a position the leader already holds when the group starts is *not*
-  copied — mirroring of that contract begins once the leader is flat again, or right away
-  with **Sync now**. **Flatten followers** closes every mirrored follower position and
+  copied — mirroring of that contract begins with the leader's next entry after it is
+  flat, or right away with **Sync now**; the leader closing that baseline position is
+  not mirrored either. Mirrored contracts are remembered in the database, so a restart
+  (every deploy is one) continues the mirror instead of starting a new baseline.
+- **Exclusive followers**: the mirror treats a follower's whole position in a contract as
+  its own — do not trade a follower by hand or through another route, and an account can
+  follow one leader only (enforced across groups). *After feed loss* is a per-group choice:
+  flatten the followers and pause, or pause only. **Flatten followers** closes every mirrored follower position and
   pauses the group. Both are confirmed in the UI.
 - The global **Trading** switch applies (mirror orders are skipped while it is off), a
   leader cannot follow itself and chains that would loop (A → B → A) are rejected.

@@ -76,6 +76,8 @@ function groupDrawer(group, { reload, onClose = null }) {
   const lossInp = h("input", { type: "number", min: 5, max: 600, value: g.feed_loss_flatten_s ?? 30, style: "width:120px" });
   const addsSw = h("input", { type: "checkbox", class: "switch", checked: g.copy_adds !== false });
   const ordersSw = h("input", { type: "checkbox", class: "switch", checked: !!g.copy_orders });
+  const lossSel = h("select", null, h("option", { value: "flatten", selected: (g.on_feed_loss || "flatten") === "flatten" }, "Flatten followers, then pause"),
+    h("option", { value: "pause", selected: g.on_feed_loss === "pause" }, "Pause only (followers keep their positions)"));
 
   // --- Followers
   const selected = new Map((g.followers || []).map((f) => [accountKey(f.token_idx, f.spec), f]));
@@ -114,7 +116,7 @@ function groupDrawer(group, { reload, onClose = null }) {
       name: nameInp.value.trim() || g.name, enabled: enabledSw.checked,
       leader: lead ? { token_idx: lead.token_idx, lid: lead.lid || "", spec: lead.spec, account_id: lead.id } : undefined,
       symbols: collectSymbols(), followers: collectFollowers(), feed: feedSel.value,
-      feed_loss_flatten_s: Number(lossInp.value) || 30, copy_adds: addsSw.checked, copy_orders: ordersSw.checked,
+      feed_loss_flatten_s: Number(lossInp.value) || 30, on_feed_loss: lossSel.value, copy_adds: addsSw.checked, copy_orders: ordersSw.checked,
     };
   };
 
@@ -218,11 +220,11 @@ function groupDrawer(group, { reload, onClose = null }) {
           symBox,
           h("div", { class: "field-hint" }, "Roots from Settings → Symbol Mapping; a dated contract such as MNQU6 counts as MNQ."))),
       h("div", { class: "grid grid-2" },
-        h("div", { class: "field" }, h("label", null, "Flatten followers after feed loss (seconds)"), lossInp, h("div", { class: "field-hint" }, "No leader feed for this long → every follower's mirrored position is closed at market and the group pauses.")),
+        h("div", { class: "field" }, h("label", null, "After feed loss of (seconds)"), h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, lossInp, lossSel), h("div", { class: "field-hint" }, "No leader feed (Tradovate unreachable, token dead, agent offline) for this long → the chosen action. Flatten closes every mirrored follower position at market.")),
         h("label", { class: "switch-row" }, h("span", null, "Fixed mode follows adds / reductions", h("small", null, "On: 2 fixed contracts become 4 when the leader doubles up. Off: always the fixed size.")), addsSw)),
       h("label", { class: "switch-row" }, h("span", null, "Mirror working orders (limits, stops, brackets)", h("small", null, "Every working limit / stop order of the leader gets a twin on each follower, sized by the same rule, following the leader's modifications and cancelled when the leader's order is gone. A stop / target pair becomes an OCO pair on the follower. When a leader order fills, the follower's twin is cancelled first and the follower's real broker position decides the market order — a twin that already filled is never doubled.")), ordersSw),
       h("h3", null, "Followers"),
-      h("p", { class: "hint" }, "Multiplier: leader size × factor (rounded, never below 1 while the leader holds). Fixed: this many contracts for the leader's entry. Max caps the size; Direction copies only longs or only shorts."),
+      h("p", { class: "hint" }, "Multiplier: leader size × factor (rounded, never below 1 while the leader holds). Fixed: this many contracts for the leader's entry. Max caps the size; Direction copies only longs or only shorts. A follower account is exclusive: the mirror treats its whole position in a contract as its own, so do not trade a follower by hand or through another route, and an account can follow one leader only."),
       fTable.el,
       h("div", { class: "callout", style: "margin-top:10px" }, "Positions the leader already holds when the group starts are not copied (baseline). Mirroring of such a contract begins once the leader is flat again — or right away with Sync now."),
       h("h3", null, "Live"),

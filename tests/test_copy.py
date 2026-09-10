@@ -648,3 +648,86 @@ async def test_session_request_maps_429(admin):
 
 async def _tok():
     return "t"
+
+
+async def test_mirrored_state_survives_a_restart(world):
+    lead, ex = world["leader"], world["execs"]["F1"]
+    g = _group()
+    r = cp.GroupRunner(1, g)
+    r.start()
+    try:
+        assert await _wait(lambda: r.feed_ok)
+        lead.positions = [{"accountId": 1, "contractId": 901, "netPos": 2}]
+        assert await _wait(lambda: len(ex.of("place")) == 1)
+        assert db.list_copy_state(1, g["id"])[0]["leader_net"] == 2
+    finally:
+        await r.stop()
+    # the bridge restarts while the leader adds one contract (the follower holds its 2 at the broker)
+    lead.positions[0]["netPos"] = 3
+    world["follower"].positions = [{"accountId": 2, "contractId": 901, "netPos": 2}]
+    r2 = cp.GroupRunner(1, g)
+    r2.start()
+    try:
+        assert await _wait(lambda: len(ex.of("place")) == 2)        # not baseline: the add is mirrored
+        assert _placed(ex)[-1] == ("Buy", 1, "MNQZ6") and 901 not in r2.baseline
+        assert any(e["kind"] == "resumed" and "restart" in e["detail"] for e in db.list_copy_events(1))
+    finally:
+        await r2.stop()
+    # …and a leader that went flat during the downtime is closed on the followers
+    lead.positions = []
+    world["follower"].positions = [{"accountId": 2, "contractId": 901, "netPos": 3}]
+    r3 = cp.GroupRunner(1, g)
+    r3.start()
+    try:
+        assert await _wait(lambda: len(ex.of("place")) == 3)
+        assert _placed(ex)[-1] == ("Sell", 3, "MNQZ6") and db.list_copy_state(1, g["id"]) == []
+    finally:
+        await r3.stop()
+
+
+async def test_baseline_flat_is_not_mirrored(world):
+    lead, ex = world["leader"], world["execs"]["F1"]
+    lead.positions = [{"accountId": 1, "contractId": 901, "netPos": 2}]
+    world["follower"].positions = [{"accountId": 2, "contractId": 901, "netPos": 5}]   # the follower's own trade
+    r = cp.GroupRunner(1, _group())
+    r.start()
+    try:
+        assert await _wait(lambda: r.feed_ok and 901 in r.baseline)
+        lead.positions = []                                          # leader closes its pre-existing position
+        assert await _wait(lambda: 901 not in r.baseline)
+        await asyncio.sleep(0.05)
+        assert not ex.of("place")                                    # the follower's 5 are left alone
+        assert any(e["kind"] == "ignored" and "closed" in e["detail"] for e in db.list_copy_events(1))
+        lead.positions = [{"accountId": 1, "contractId": 901, "netPos": 1}]   # next entry: mirrored (broker truth → 5 → target 1)
+        assert await _wait(lambda: len(ex.of("place")) == 1)
+    finally:
+        await r.stop()
+
+
+def test_a_follower_belongs_to_one_group_only():
+    g1 = _group(id="cg_1")
+    g2 = _group(id="cg_2", leader={"token_idx": 1, "spec": "F2", "account_id": 3},
+                followers=[cp.normalize_follower({"token_idx": 1, "spec": "F1"})])
+    with pytest.raises(ValueError, match="already follows"):
+        cp.validate_group(g2, [g1], _accounts())
+    g1["followers"][0]["enabled"] = False                            # a disabled follower does not block
+    cp.validate_group(g2, [g1], _accounts())
+
+
+async def test_feed_loss_can_pause_without_flattening(world, monkeypatch):
+    monkeypatch.setattr(cp, "FEED_STALE_S", 0.05)
+    r = cp.GroupRunner(1, _group(feed_loss_flatten_s=5, on_feed_loss="pause"))
+    r.start()
+    try:
+        assert await _wait(lambda: r.feed_ok)
+        world["leader"].positions = [{"accountId": 1, "contractId": 901, "netPos": 2}]
+        ex = world["execs"]["F1"]
+        assert await _wait(lambda: len(ex.of("place")) == 1)
+        world["leader"].fail = True
+        assert await _wait(lambda: not r.feed_ok)
+        r.last_frame = time.monotonic() - 6
+        await r.watchdog()
+        assert r.paused and "keep their positions" in r.pause_reason
+        assert len(ex.of("place")) == 1 and r.follower_pos[("F1", 901)] == 2      # nothing closed
+    finally:
+        await r.stop()
