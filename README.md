@@ -588,11 +588,13 @@ leader places by hand in the Tradovate UI, stop / target fills and manual closes
   partial fill, a rejected order or a missed event is corrected on the next change or by
   the 10-second **reconcile**, which compares the followers' broker positions with the
   expected ones and fixes drift (the event log shows `drift`).
-- **Feed**: the leader login is watched over Tradovate's WebSocket **user sync**
-  (position updates ~100 ms after a fill, heartbeats every 2.5 s). A leader login that
-  executes through an **execution agent** is polled once a second through that agent, so
-  the login's IP rule is kept (*Feed: Auto*; *Poll* forces polling). The table shows the
-  feed state and the last mirror **latency** (leader change → follower order sent).
+- **Feed**: the leader's orders and positions are read over REST **once a second** —
+  through the execution agent where the login uses one — and that poll alone decides
+  whether the feed is up. Where possible (*Feed: Auto* / *WebSocket*, direct logins)
+  Tradovate's WebSocket **user sync** runs beside it as an accelerator: its position events
+  are applied the moment they arrive (~100 ms after a fill), but losing the socket is only
+  logged (`ws_lost` / `ws_up`), never treated as a lost feed. The table shows the feed state
+  (*socket + poll* or *poll*) and the last mirror **latency**.
 - **Working orders** (*Mirror working orders*, on by default for new groups): every
   working **limit / stop / stop-limit** order of the leader gets a twin on each follower,
   sized by the same rule (proportional to the leader's position when one exists), following
@@ -606,13 +608,14 @@ leader places by hand in the Tradovate UI, stop / target fills and manual closes
   no longer holds. Not mirrored: market orders, trailing stops and other exotic types,
   orders outside the symbol filter and orders on baseline contracts (`order_skip` in the
   log). Events: `order_mirror`, `order_modify`, `order_cancel`, `order_done`, `order_reject`.
-- **Backstop**: on the WebSocket feed the leader's positions are also read over REST every
-  second; a change the socket did not deliver is mirrored right away and logged as `ws_miss`.
-  The drawer's **Diagnostics** block shows the leader account id, the sync response and
-  event counts — the first place to look when a group does not copy.
-- **Feed loss**: no frames for 12 s marks the feed lost; after *Flatten followers after
-  feed loss* seconds (default 30) every mirrored follower position is **closed at
-  market**, the group **pauses** and an alert goes out (Discord, push and email).
+- **Diagnostics**: a change the poll finds before the socket delivered it is logged as
+  `ws_miss`; the drawer's **Diagnostics** block shows the leader account id, the sync
+  response, event counts and the last raw socket messages — the first place to look when a
+  group does not copy.
+- **Feed loss**: when the REST poll fails (Tradovate unreachable, token dead) the feed is
+  lost; after *Flatten followers after feed loss* seconds (default 30) every mirrored
+  follower position is **closed at market**, the group **pauses** and an alert goes out
+  (Discord, push and email).
   **Resume** clears the pause; **Sync now** copies the leader's current positions.
 - **Baseline**: a position the leader already holds when the group starts is *not*
   copied — mirroring of that contract begins once the leader is flat again, or right away

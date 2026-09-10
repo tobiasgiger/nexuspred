@@ -45,7 +45,8 @@ RECONCILE_INTERVAL_S = 10.0
 HEARTBEAT_S = 2.5
 RECONNECT_BACKOFF_S = 2.0   # first retry delay after a feed error (doubles up to 30 s)
 FEED_STALE_S = 12.0          # no frame for this long → the WebSocket is considered lost
-WS_BACKSTOP_S = 1.0          # on the WebSocket feed: REST position check this often (belt and braces)
+POLL_ERROR_SLEEP_S = 2.0     # retry delay of the REST poll after an error
+WS_SYNC_TIMEOUT_S = 15.0     # no answer to user/syncrequest → reconnect the socket
 WS_RECENT_MAX = 20           # raw socket messages kept for the diagnostics block
 REJECT_HOLDOFF_S = 30.0      # reconcile leaves a follower alone this long after a rejected order
 MAX_EVENTS_MEMORY = 200
@@ -191,6 +192,9 @@ class GroupRunner:
         self.tasks: list[asyncio.Task] = []
         self.feed_kind = ""
         self.feed_ok = False
+        self.ws_ok = False                     # the WebSocket accelerator is connected and synced
+        self.ws_error = ""
+        self.ws_last_frame: float = 0.0
         self.feed_since: float = 0.0          # monotonic when the feed last became ok
         self.last_frame: float = 0.0
         self.last_event_ts: Optional[str] = None
@@ -339,19 +343,23 @@ class GroupRunner:
 
     # ---- feed
     async def _feed_main(self) -> None:
-        backoff = RECONNECT_BACKOFF_S
+        """The REST poll of the leader's orders and positions (once a second) is
+        the feed: it decides ``feed_ok`` and therefore the feed-loss watchdog.
+        Where possible the Tradovate WebSocket runs alongside as an accelerator —
+        its events are applied the moment they arrive, but losing the socket
+        never counts as losing the feed."""
         while not self._stop.is_set():
             session = self._leader_session()
             if session is None or not session.has_token():
                 self.error = "leader login disabled or without token"
-                self.feed_ok = False
+                self._mark_feed(False)
                 await asyncio.sleep(5)
                 continue
             account_id = await self._leader_account_id(session)
             self.leader_account_id = account_id
             if not account_id:
                 self.error = f"leader account {self.group['leader']['spec']} has no Tradovate id — run Connect & Verify on the login"
-                self.feed_ok = False
+                self._mark_feed(False)
                 await asyncio.sleep(10)
                 continue
             kind = self.group.get("feed") or "auto"
@@ -360,30 +368,73 @@ class GroupRunner:
             try:
                 await self._seed_followers()
                 await self._seed_leader(session, account_id)
-                if use_ws:
-                    await self._run_ws(session, account_id)
-                else:
-                    await self._run_poll(session, account_id)
-                backoff = RECONNECT_BACKOFF_S
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001
                 self.error = f"{type(exc).__name__}: {exc}"[:200]
-                if self.feed_ok:
-                    self._mark_feed(False)
-                elif self.error != self._last_error:
-                    self._record("feed_lost", detail=self.error)   # first failure, or a new reason
-                self._last_error = self.error
+                self._mark_feed(False)
+                await asyncio.sleep(POLL_ERROR_SLEEP_S)
+                continue
+            ws_task = asyncio.create_task(self._ws_accelerator(session, account_id), name=f"copy-ws-{self.id}") if use_ws else None
+            try:
+                await self._run_poll(session, account_id)
+            finally:
+                if ws_task is not None:
+                    ws_task.cancel()
+                    try:
+                        await ws_task
+                    except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                        pass
+                self.ws_ok = False
+
+    async def _run_poll(self, session: Any, account_id: int) -> None:
+        """Poll until stopped or until the login must be re-resolved."""
+        while not self._stop.is_set():
+            if not session.enabled or not session.has_token():
+                self.error = "leader login disabled or without token"
+                self._mark_feed(False)
+                return
+            try:
+                await self._poll_once(session, account_id)
+                self._mark_feed(True)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                self.error = f"{type(exc).__name__}: {exc}"[:200]
+                self._mark_feed(False)
+                await asyncio.sleep(POLL_ERROR_SLEEP_S)
+                continue
+            await asyncio.sleep(POLL_INTERVAL_S)
+
+    async def _ws_accelerator(self, session: Any, account_id: int) -> None:
+        backoff = RECONNECT_BACKOFF_S
+        while not self._stop.is_set():
+            try:
+                await self._run_ws(session, account_id)
+                backoff = RECONNECT_BACKOFF_S
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                err = f"{type(exc).__name__}: {exc}"[:200]
+                if self.ws_ok or err != self.ws_error:
+                    self._record("ws_lost", detail=err)
+                self.ws_error = err
+                self.ws_ok = False
                 await asyncio.sleep(backoff)
-                backoff = min(30.0, backoff * 2)
+                backoff = min(60.0, backoff * 2)
 
     def _mark_feed(self, ok: bool) -> None:
         if ok and not self.feed_ok:
             self.feed_since = time.monotonic()
             self._record("feed_up", detail=self.feed_kind)
             self.error = ""
+            self._last_error = ""
         elif not ok and self.feed_ok:
             self._record("feed_lost", detail=self.error or "connection closed")
+            self._last_error = self.error
+        elif not ok and self.error and self.error != self._last_error:
+            self._record("feed_lost", detail=self.error)      # still down, new reason
+            self._last_error = self.error
         self.feed_ok = ok
         if ok:
             self.last_frame = time.monotonic()
@@ -410,28 +461,23 @@ class GroupRunner:
             if not str(first).startswith("o"):
                 raise TradovateError(f"unexpected opening frame {str(first)[:20]!r}")
             await ws.send(f"authorize\n1\n\n{token}")
-            await ws.send("user/syncrequest\n2\n\n" + json.dumps({"users": [user_id]} if user_id else {}))
-            self._mark_feed(True)
-            last_beat = last_poll = time.monotonic()
+            self.ws_last_frame = time.monotonic()
+            sync_sent_at: Optional[float] = None
+            last_beat = time.monotonic()
             while not self._stop.is_set():
                 now = time.monotonic()
                 if now - last_beat >= HEARTBEAT_S:
                     await ws.send("[]")
                     last_beat = now
-                if now - last_poll >= WS_BACKSTOP_S:
-                    # REST check of the leader's positions: catches anything the
-                    # socket did not deliver (or delivered in a shape we don't parse)
-                    last_poll = now
-                    caught = await self._poll_once(session, account_id, source="backstop")
-                    if caught:
-                        self.diag["backstop_catches"] = int(self.diag.get("backstop_catches") or 0) + caught
+                if sync_sent_at is not None and not self.ws_ok and now - sync_sent_at > WS_SYNC_TIMEOUT_S:
+                    raise TradovateError("no answer to user/syncrequest")
                 try:
-                    raw = await asyncio.wait_for(ws.recv(), timeout=min(HEARTBEAT_S, 1.0))
+                    raw = await asyncio.wait_for(ws.recv(), timeout=1.0)
                 except asyncio.TimeoutError:
-                    if time.monotonic() - self.last_frame > FEED_STALE_S:
+                    if time.monotonic() - self.ws_last_frame > FEED_STALE_S:
                         raise TradovateError("no frames from Tradovate")
                     continue
-                self.last_frame = time.monotonic()
+                self.ws_last_frame = time.monotonic()
                 self.diag["frames"] = int(self.diag.get("frames") or 0) + 1
                 text = str(raw)
                 if text and text[0] not in ("h", "o"):
@@ -439,6 +485,12 @@ class GroupRunner:
                     recent.append(f"{datetime.now(timezone.utc).strftime('%H:%M:%S')} {text[:600]}")
                     del recent[:-WS_RECENT_MAX]
                 for msg in parse_frames(text):
+                    if msg.get("i") == 1 and msg.get("s") == 200 and sync_sent_at is None:
+                        # authorised: only now ask for the user sync (requests sent
+                        # before the authorize answer are dropped by Tradovate)
+                        await ws.send("user/syncrequest\n2\n\n" + json.dumps({"users": [user_id]} if user_id else {}))
+                        sync_sent_at = time.monotonic()
+                        continue
                     await self._on_ws_message(session, account_id, msg)
 
     async def _on_ws_message(self, session: Any, account_id: int, msg: dict[str, Any]) -> None:
@@ -457,6 +509,9 @@ class GroupRunner:
             positions = d.get("positions") or []
             self.diag["sync"] = {"status": msg.get("s"), "keys": sorted(d.keys())[:20], "positions": len(positions),
                                  "accounts": [a.get("id") for a in (d.get("accounts") or []) if isinstance(a, dict)][:20]}
+            if not self.ws_ok:
+                self.ws_ok, self.ws_error = True, ""
+                self._record("ws_up", detail=f"user sync: {len(positions)} position(s)")
             for p in positions:
                 if int(p.get("accountId") or 0) == account_id:
                     await self._on_position(session, int(p.get("contractId") or 0), int(p.get("netPos") or 0),
@@ -474,11 +529,14 @@ class GroupRunner:
             if int(ent.get("accountId") or 0) == account_id and "netPos" in ent:
                 await self._on_position(session, int(ent.get("contractId") or 0), int(ent.get("netPos") or 0))
 
-    async def _poll_once(self, session: Any, account_id: int, *, source: str = "poll") -> int:
+    async def _poll_once(self, session: Any, account_id: int, *, source: str = "") -> int:
         """One REST look at the leader's orders and positions; mirrors every
         change found. Orders go first so the twins of a just-filled leader order
         are cancelled before the position mirror sizes the follower. Returns how
-        many contracts changed position."""
+        many contracts changed position. While the socket is synced, a change
+        the poll finds first is logged as ``ws_miss``."""
+        if not source:
+            source = "backstop" if self.ws_ok else "poll"
         await self.orders.poll(session, account_id)
         raw = await session._request("GET", "/position/list") or []
         self.last_frame = time.monotonic()
@@ -492,6 +550,7 @@ class GroupRunner:
             if self.leader_net.get(cid, 0) != net:
                 changed += 1
                 if source != "poll":
+                    self.diag["backstop_catches"] = int(self.diag.get("backstop_catches") or 0) + 1
                     self._record("ws_miss", symbol=await self._contract_name(session, cid),
                                  detail=f"{source}: leader {self.leader_net.get(cid, 0):+d} → {net:+d} not delivered by the socket")
                 await self._on_position(session, cid, net)
@@ -502,12 +561,6 @@ class GroupRunner:
                              detail=f"{source}: leader {self.leader_net.get(cid, 0):+d} → 0 not delivered by the socket")
             await self._on_position(session, cid, 0)
         return changed
-
-    async def _run_poll(self, session: Any, account_id: int) -> None:
-        self._mark_feed(True)
-        while not self._stop.is_set():
-            await self._poll_once(session, account_id)
-            await asyncio.sleep(POLL_INTERVAL_S)
 
     # ---- mirror
     async def _on_position(self, session: Any, cid: int, net: int, *, snapshot: bool = False) -> None:
@@ -522,10 +575,10 @@ class GroupRunner:
             return
         if net == prev:
             return
-        name = await self._contract_name(session, cid)
-        self.leader_net[cid] = net
+        self.leader_net[cid] = net             # claimed before any await: socket and poll never mirror twice
         if prev == 0 and net != 0:
             self.unit[cid] = abs(net)
+        name = await self._contract_name(session, cid)
         if net == 0:
             self.baseline.discard(cid)     # from now on this contract is mirrored
         self.last_event_ts = datetime.now(timezone.utc).isoformat()
@@ -686,8 +739,8 @@ class GroupRunner:
             return
         limit = float(self.group.get("feed_loss_flatten_s") or 30)
         lost_for = (time.monotonic() - self.last_frame) if self.last_frame else 0.0
-        if self.feed_ok and lost_for > FEED_STALE_S:
-            self.error = self.error or "feed stale"
+        if self.feed_ok and lost_for > max(FEED_STALE_S, 3 * POLL_ERROR_SLEEP_S):
+            self.error = self.error or "poll stalled"
             self._mark_feed(False)
         if not self.feed_ok and self.last_frame and lost_for > limit:
             n = await self.flatten_followers(reason=f"feed lost for {int(lost_for)} s")
@@ -748,6 +801,7 @@ class GroupRunner:
             followers.append({"spec": f["spec"], "enabled": f.get("enabled", True), "error": self.follower_err.get(f["spec"], ""),
                               "positions": rows, "orders": self.orders.status(f["spec"])})
         return {"id": self.id, "running": bool(self.tasks), "feed": self.feed_kind, "feed_ok": self.feed_ok,
+                "ws_ok": self.ws_ok, "ws_error": self.ws_error,
                 "paused": self.paused, "pause_reason": self.pause_reason, "error": self.error,
                 "last_event_ts": self.last_event_ts, "latency_ms": self.last_latency_ms,
                 "diag": {**self.diag, "leader_account_id": self.leader_account_id, "baseline": sorted(self.contract_names.get(c, str(c)) for c in self.baseline)},

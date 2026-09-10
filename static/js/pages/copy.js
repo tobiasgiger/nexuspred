@@ -25,7 +25,7 @@ function knownRoots(settings) {
   return [...out].filter(Boolean).sort();
 }
 const KIND_TONE = { mirror: "on", feed_up: "on", resumed: "on", reject: "off", feed_lost: "warn", paused: "warn", drift: "warn", flatten: "warn", ws_miss: "warn", filtered: "", skipped: "", ignored: "",
-  order_mirror: "on", order_modify: "accent", order_cancel: "", order_done: "", order_skip: "", order_reject: "off" };
+  order_mirror: "on", order_modify: "accent", order_cancel: "", order_done: "", order_skip: "", order_reject: "off", ws_up: "", ws_lost: "" };
 const orderText = (o) => `${o.action} ${o.qty} ${o.type}${o.price != null ? ` @ ${o.price}` : ""}${o.stop != null ? ` stop ${o.stop}` : ""}${o.oco ? " · OCO" : ""}`;
 
 function feedTag(g) {
@@ -33,8 +33,9 @@ function feedTag(g) {
   if (!g.enabled) return tag("off", "off");
   if (!s) return tag("starting…", "");
   if (s.paused) return tag("paused", "warn");
-  if (!s.feed_ok) return tag(`${s.feed || "feed"} lost`, "off");
-  return tag(`${s.feed} · live`, "on");
+  if (!s.feed_ok) return tag("feed lost", "off");
+  if (s.feed === "websocket") return tag(s.ws_ok ? "socket + poll · live" : "poll · live (socket down)", "on");
+  return tag("poll · live", "on");
 }
 
 function latencyText(s) {
@@ -122,12 +123,13 @@ function groupDrawer(group, { reload, onClose = null }) {
     clear(liveBox);
     if (!st) { liveBox.append(h("p", { class: "hint" }, g.enabled ? "Starting…" : "Group is off — enable it to start mirroring.")); return; }
     const head = h("div", { class: "inline-actions", style: "flex-wrap:wrap;margin-bottom:8px" },
-      st.paused ? tag("paused", "warn") : st.feed_ok ? tag(`${st.feed} · live`, "on") : tag(`${st.feed || "feed"} lost`, "off"),
+      st.paused ? tag("paused", "warn") : !st.feed_ok ? tag("feed lost", "off") : st.feed === "websocket" ? tag(st.ws_ok ? "socket + poll · live" : "poll · live (socket down)", "on") : tag("poll · live", "on"),
       h("span", { class: "muted" }, `latency ${latencyText(st)}`),
       st.last_event_ts ? h("span", { class: "muted" }, `last leader change ${fmtTime(st.last_event_ts)}`) : null);
     const notes = [];
     if (st.pause_reason) notes.push(h("div", { class: "callout warn" }, st.pause_reason));
     if (st.error) notes.push(h("div", { class: "callout danger" }, st.error));
+    if (st.feed === "websocket" && !st.ws_ok && st.ws_error) notes.push(h("div", { class: "hint" }, "Socket accelerator down (the 1-second poll carries the feed): ", st.ws_error));
     const rows = [];
     if (st.orders_error) notes.push(h("div", { class: "callout danger" }, "Orders: ", st.orders_error));
     for (const f of st.followers || []) {
@@ -153,11 +155,11 @@ function groupDrawer(group, { reload, onClose = null }) {
     ].filter(Boolean);
     const recent = (diag.recent || []).length ? h("pre", { class: "code cp-diag-pre" }, "recent socket messages (newest last):\n" + diag.recent.join("\n")) : null;
     const diagBox = h("details", { class: "cp-diag" }, h("summary", null, "Diagnostics"), h("pre", { class: "code cp-diag-pre" }, diagLines.join("\n")), recent);
-    liveBox.append(head, notes, (st.leader_positions || []).length
+    liveBox.append(...[head, ...notes, (st.leader_positions || []).length
       ? h("div", { class: "muted", style: "font-size:12px;margin-bottom:6px" }, "Leader: ", st.leader_positions.map((p) => `${p.symbol} ${signed(p.net)}${p.baseline ? " (baseline)" : ""}`).join(" · "))
       : h("div", { class: "muted", style: "font-size:12px;margin-bottom:6px" }, "Leader is flat."),
       (st.leader_orders || []).length ? h("div", { class: "muted", style: "font-size:12px;margin-bottom:6px" }, "Leader working orders: ", st.leader_orders.map((o) => `${o.symbol} ${orderText(o)}`).join(" · ")) : null,
-      rows.length ? rows : null, diagBox);
+      ...rows, diagBox].filter(Boolean));
   }
   paintLive(g.status);
 

@@ -79,6 +79,7 @@ def world(monkeypatch, admin):
     monkeypatch.setattr(cp, "POLL_INTERVAL_S", 0.01)
     monkeypatch.setattr(cp, "RECONCILE_INTERVAL_S", 3600)
     monkeypatch.setattr(cp, "RECONNECT_BACKOFF_S", 0.02)
+    monkeypatch.setattr(cp, "POLL_ERROR_SLEEP_S", 0.02)
     sent = []
 
     async def rec(title, message, **kw):
@@ -516,3 +517,64 @@ async def test_symbol_filter_is_reported_and_ws_diag_is_collected(world):
     assert d["last_position_event"]["contractId"] == 901 and d["leader_account_id"] == 0
     with pytest.raises(tradovate.TradovateError, match="sync failed"):
         await r._on_ws_message(lead, 1, {"i": 2, "s": 400, "d": "bad request"})
+
+
+class _FakeWs:
+    """A scripted Tradovate socket: frames to deliver, sends recorded."""
+    def __init__(self, frames):
+        self.frames = list(frames)
+        self.sent: list[str] = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def send(self, text):
+        self.sent.append(text)
+        if text.startswith("authorize"):
+            self.frames.insert(0, 'a[{"s":200,"i":1}]')
+        if text.startswith("user/syncrequest"):
+            self.frames.insert(0, 'a[{"s":200,"i":2,"d":{"positions":[],"accounts":[{"id":1}]}}]')
+
+    async def recv(self):
+        if not self.frames:
+            await asyncio.sleep(0.05)
+            raise RuntimeError("socket closed by the fake")
+        f = self.frames.pop(0)
+        if f == "<wait>":
+            await asyncio.sleep(0.2)
+            return "h"
+        return f
+
+
+async def test_socket_accelerates_but_never_counts_as_the_feed(world, monkeypatch):
+    import sys, types
+    ws = _FakeWs(["o", "<wait>", 'a[{"e":"props","d":{"entityType":"position","eventType":"Updated","entity":{"accountId":1,"contractId":901,"netPos":2}}}]', "<wait>"])
+    fake_mod = types.SimpleNamespace(connect=lambda *a, **k: ws)
+    monkeypatch.setitem(sys.modules, "websockets", fake_mod)
+    monkeypatch.setattr(cp, "RECONNECT_BACKOFF_S", 5.0)          # no reconnect during the test
+    r = cp.GroupRunner(1, _group(feed="websocket"))
+    r.start()
+    try:
+        assert await _wait(lambda: r.feed_ok and r.ws_ok)
+        # the sync request went out only after the authorize answer
+        assert [s.split("\n")[0] for s in ws.sent if not s.startswith("[")][:2] == ["authorize", "user/syncrequest"]
+        assert r.diag["sync"]["accounts"] == [1]
+        ex = world["execs"]["F1"]
+        assert await _wait(lambda: len(ex.of("place")) == 1)       # the socket event was mirrored
+        assert _placed(ex) == [("Buy", 2, "MNQZ6")]
+        # the socket dies: the feed stays up (the poll carries it), the event is logged once
+        assert await _wait(lambda: not r.ws_ok)
+        assert r.feed_ok and not r.paused
+        assert [e["kind"] for e in db.list_copy_events(1)].count("ws_lost") == 1
+        await r.watchdog()
+        assert not r.paused
+        st = r.status()
+        assert st["feed"] == "websocket" and st["feed_ok"] and not st["ws_ok"] and "socket closed" in st["ws_error"]
+        # the poll keeps mirroring while the socket is down
+        world["leader"].positions = [{"accountId": 1, "contractId": 901, "netPos": 3}]
+        assert await _wait(lambda: len(ex.of("place")) == 2)
+    finally:
+        await r.stop()

@@ -4,6 +4,19 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.39
+- **Copy trading: the socket can no longer flatten your followers.** Tradovate's WebSocket
+  answered `authorize` but never the sync request and dropped the connection every few
+  minutes; each drop counted as a lost feed, so after the grace period the followers were
+  flattened and the group paused although the REST backstop was healthy all along. The feed
+  is now the 1-second REST poll of the leader's orders and positions — it alone decides
+  *feed lost* and the flatten watchdog — and the WebSocket runs beside it purely as an
+  accelerator: its events are applied the moment they arrive, and losing it is logged
+  (`ws_lost` / `ws_up`) but never counts as losing the feed. The sync request is sent only
+  after the authorize answer (Tradovate drops requests sent earlier) and a sync without
+  answer reconnects the socket. The feed tag shows *socket + poll* or *poll (socket down)*.
+  Fixed the `[object HTMLDivElement]` lines in the drawer's Live block.
+
 ## 5.0.0-alpha.38
 - **Copy trading stage 2: working orders are mirrored** (`app/copy_orders.py`, group switch
   *Mirror working orders*, on for new groups — switch it on for existing ones). Every working
