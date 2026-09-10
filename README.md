@@ -596,7 +596,9 @@ account, a **daily loss limit**, a **daily profit target** and a **flatten time*
 guard rides on the live P&L poll (a few seconds while a rule is set) and uses the
 broker's own figures — today's realised + open P&L. When a rule fires the account is
 **flattened** (every working order cancelled, every position closed at market) and
-**locked** for the rest of the local day (journal timezone): the bridge refuses every
+**locked** for the rest of the Tradovate trading day (rolls at 17:00 New York, like the
+broker's daily P&L); the flatten time is read in the journal timezone or, per account,
+in New York time: the bridge refuses every
 order for it — webhooks, Discord signals, marketplace subscriptions and copy-trading
 mirrors alike, because the check sits in the one place all of them place orders — and a
 position that reappears (a manual trade) is closed again on the next poll. The lock

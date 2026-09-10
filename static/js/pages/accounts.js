@@ -76,7 +76,7 @@ export default {
       const parts = [];
       if (Number(r.loss_limit)) parts.push(`−${money(r.loss_limit)}`);
       if (Number(r.profit_limit)) parts.push(`+${money(r.profit_limit)}`);
-      if (r.flatten_at) parts.push(`⏰ ${r.flatten_at}`);
+      if (r.flatten_at) parts.push(`⏰ ${r.flatten_at}${r.flatten_tz === "ny" ? " NY" : ""}`);
       return parts.length ? parts.join(" · ") : "";
     };
     /** Drawer: daily loss / profit limit, flatten time and today's lock for one account. */
@@ -85,9 +85,10 @@ export default {
       const lossInp = h("input", { type: "number", min: 0, step: 1, value: r.loss_limit || "", placeholder: "off" });
       const profitInp = h("input", { type: "number", min: 0, step: 1, value: r.profit_limit || "", placeholder: "off" });
       const timeInp = h("input", { type: "time", value: r.flatten_at || "" });
+      const tzSel = h("select", null, h("option", { value: "local", selected: (r.flatten_tz || "local") === "local" }, "Journal timezone"), h("option", { value: "ny", selected: r.flatten_tz === "ny" }, "New York (exchange time)"));
       const lock = a.locked;
       const lockBox = lock
-        ? h("div", { class: "callout warn" }, h("strong", null, "Locked for today: "), lock.reason, h("div", { class: "hint", style: "margin-top:4px" }, `Since ${new Date(lock.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · P&L at trigger ${Number(lock.pnl).toLocaleString([], { maximumFractionDigits: 2 })}. Bridge orders for this account are refused; a position that reappears is closed again.`))
+        ? h("div", { class: "callout warn" }, h("strong", null, "Locked for today: "), lock.reason, h("div", { class: "hint", style: "margin-top:4px" }, `Since ${new Date(lock.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · P&L at trigger ${Number(lock.pnl).toLocaleString([], { maximumFractionDigits: 2 })}. Bridge orders for this account are refused; a position that reappears is closed again. The lock ends with the Tradovate trading day (17:00 New York).`))
         : h("div", { class: "callout" }, "Not locked. When a rule fires, every working order is cancelled, every position closed at market and the account locked until the next local day.");
       const unlockBtn = lock ? h("button", { type: "button", class: "btn btn-ghost btn-danger", onClick: async () => {
         if (!(await confirmDialog({ title: `Unlock ${maskAccount(a.spec)}?`, body: "Bridge orders are accepted again today. The rules stay in place and can fire again.", confirmText: "Unlock", danger: true }))) return;
@@ -98,7 +99,7 @@ export default {
         saveRisk.disabled = true;
         try {
           const list = await api.post("/api/trade-accounts", [{ token_idx: a.token_idx, spec: a.spec, id: a.id, enabled: a.enabled, qty_multiplier: a.qty_multiplier,
-            risk: { loss_limit: Number(lossInp.value) || 0, profit_limit: Number(profitInp.value) || 0, flatten_at: timeInp.value || "" } }]);
+            risk: { loss_limit: Number(lossInp.value) || 0, profit_limit: Number(profitInp.value) || 0, flatten_at: timeInp.value || "", flatten_tz: tzSel.value } }]);
           store.set("tradeAccounts", list);
           toast("Risk rules saved", "success");
           closeDrawer();
@@ -111,7 +112,7 @@ export default {
           lockBox,
           h("div", { class: "field" }, h("label", null, "Daily loss limit"), lossInp, h("div", { class: "field-hint" }, "Account currency. Fires when today's P&L (realised + open, the broker's figures) reaches −limit. 0 = off.")),
           h("div", { class: "field" }, h("label", null, "Daily profit target"), profitInp, h("div", { class: "field-hint" }, "Fires when today's P&L reaches +target — locks in the day. 0 = off.")),
-          h("div", { class: "field" }, h("label", null, "Flatten at"), timeInp, h("div", { class: "field-hint" }, "Local time (Settings → General → journal timezone). Everything on this account is closed at that time and the account is locked for the rest of the day. Empty = off.")),
+          h("div", { class: "field" }, h("label", null, "Flatten at"), h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, timeInp, tzSel), h("div", { class: "field-hint" }, "Everything on this account is closed at that time and the account is locked for the rest of the trading day. New York time follows the exchange through the daylight-saving weeks; the journal timezone is your own clock. Empty = off.")),
           h("p", { class: "hint" }, "Checked on every live P&L poll (Settings → General → Live P&L refresh, at least every few seconds while a rule is set). Applies to every path that trades this account: webhooks, Discord signals, marketplace subscriptions and copy trading."),
         ],
         foot: [saveRisk, h("button", { type: "button", class: "btn btn-ghost", onClick: () => closeDrawer() }, "Close"), h("span", { style: "flex:1" }), unlockBtn],

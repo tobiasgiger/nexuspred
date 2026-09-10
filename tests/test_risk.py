@@ -58,8 +58,10 @@ def sent(monkeypatch):
 
 def test_normalize_and_evaluate():
     r = risk.normalize({"loss_limit": "500", "profit_limit": 0, "flatten_at": "15:55"})
-    assert r == {"loss_limit": 500.0, "profit_limit": 0.0, "flatten_at": "15:55"}
-    assert risk.normalize({}) == {"loss_limit": 0.0, "profit_limit": 0.0, "flatten_at": ""}
+    assert r == {"loss_limit": 500.0, "profit_limit": 0.0, "flatten_at": "15:55", "flatten_tz": "local"}
+    assert risk.normalize({}) == {"loss_limit": 0.0, "profit_limit": 0.0, "flatten_at": "", "flatten_tz": "local"}
+    with pytest.raises(ValueError):
+        risk.normalize({"flatten_tz": "mars"})
     for bad in ({"loss_limit": -1}, {"flatten_at": "25:00"}, {"flatten_at": "abc"}):
         with pytest.raises(ValueError):
             risk.normalize(bad)
@@ -70,6 +72,11 @@ def test_normalize_and_evaluate():
     assert risk.evaluate({"profit_limit": 1000}, 1000, noon)[0] == "profit"
     assert risk.evaluate(r, 10, noon.replace(hour=15, minute=55))[0] == "time"
     assert risk.evaluate(r, 10, noon.replace(hour=15, minute=54)) is None
+    # New York clock: 15:55 NY = 21:55 Zurich in September
+    ny = risk.normalize({"flatten_at": "15:55", "flatten_tz": "ny"})
+    assert risk.evaluate(ny, 10, noon.replace(hour=21, minute=54)) is None
+    hit = risk.evaluate(ny, 10, noon.replace(hour=21, minute=55))
+    assert hit and hit[0] == "time" and "New York" in hit[1]
 
 
 async def test_loss_limit_flattens_locks_and_blocks_orders(admin, sent):
@@ -113,9 +120,11 @@ async def test_locked_account_is_flattened_again_and_unlocks_next_day(admin, sen
     sess.pos = [{"accountId": 11, "contractId": 901, "netPos": 1}]
     await risk.check_area(1, [sess], [_snap(-600, 25)])
     assert sess.pos != []                       # within the 30 s re-flatten hold-off
-    # next local day: the lock is gone and rules apply afresh
-    tomorrow = datetime.now(timezone.utc) + timedelta(days=1)
-    monkeypatch.setattr(risk, "local_now", lambda area_id, settings=None: tomorrow.astimezone(ZoneInfo("Europe/Zurich")))
+    # the lock lasts the Tradovate trading day (17:00 New York roll), not a Zurich calendar day
+    day = risk.trading_day()
+    monkeypatch.setattr(risk, "trading_day", lambda now=None: day)
+    assert risk.is_locked(1, "DEMO11")
+    monkeypatch.setattr(risk, "trading_day", lambda now=None: "2099-01-01")
     assert risk.is_locked(1, "DEMO11") is None
     fired = await risk.check_area(1, [sess], [_snap(-10)])
     assert fired == [] and sess.pos != []
@@ -143,7 +152,7 @@ async def test_api_saves_rules_lists_and_unlocks(client, admin):
                                                   "accounts": [{"spec": "DEMO11", "id": 11, "enabled": True}]}]})
     r = await client.post("/api/trade-accounts", json=[{"token_idx": 0, "spec": "DEMO11", "enabled": True, "qty_multiplier": 1,
                                                         "risk": {"loss_limit": 400, "profit_limit": 800, "flatten_at": "21:30"}}])
-    assert r.status_code == 200 and r.json()[0]["risk"] == {"loss_limit": 400.0, "profit_limit": 800.0, "flatten_at": "21:30"}
+    assert r.status_code == 200 and r.json()[0]["risk"] == {"loss_limit": 400.0, "profit_limit": 800.0, "flatten_at": "21:30", "flatten_tz": "local"}
     r = await client.post("/api/trade-accounts", json=[{"token_idx": 0, "spec": "DEMO11", "enabled": True, "risk": {"flatten_at": "99:00"}}])
     assert r.status_code == 400
     with context.use_area(1):
@@ -162,3 +171,13 @@ async def test_api_saves_rules_lists_and_unlocks(client, admin):
     assert r.status_code == 200
     with context.use_area(1):
         assert config.load_settings().get("risk_state") == {}
+
+
+def test_trading_day_rolls_at_17_new_york():
+    from zoneinfo import ZoneInfo as Z
+    before = datetime(2026, 9, 10, 16, 59, tzinfo=Z("America/New_York"))
+    after = datetime(2026, 9, 10, 17, 0, tzinfo=Z("America/New_York"))
+    assert risk.trading_day(before) == "2026-09-10" and risk.trading_day(after) == "2026-09-11"
+    # Zurich midnight does not end the trading day: 00:30 Zurich = 18:30 NY the evening before
+    zh = datetime(2026, 9, 11, 0, 30, tzinfo=Z("Europe/Zurich"))
+    assert risk.trading_day(zh) == "2026-09-11" == risk.trading_day(after)

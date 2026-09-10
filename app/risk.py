@@ -26,6 +26,7 @@ from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
 from . import alerts, config, context, state
+from .drawdown import ET, session_day
 
 _bypass: ContextVar[bool] = ContextVar("risk_bypass", default=False)
 _flatten_lock: dict[tuple[int, str], asyncio.Lock] = {}
@@ -62,6 +63,10 @@ def normalize(raw: Any) -> dict[str, Any]:
         if v < 0 or v > 1e7:
             raise ValueError(f"{key} must be between 0 and 10,000,000")
         out[key] = round(v, 2)
+    tz = str(r.get("flatten_tz") or "local")
+    if tz not in ("local", "ny"):
+        raise ValueError("flatten_tz must be local or ny")
+    out["flatten_tz"] = tz
     t = str(r.get("flatten_at") or "").strip()
     if t:
         try:
@@ -109,6 +114,13 @@ def local_now(area_id: int, settings: Optional[dict[str, Any]] = None) -> dateti
     return datetime.now(timezone.utc).astimezone(_zone(s))
 
 
+def trading_day(now: Optional[datetime] = None) -> str:
+    """The Tradovate trading day a lock belongs to: rolls at 17:00 New York,
+    like the broker's own daily P&L (a Zurich-midnight day would unlock an
+    account while Tradovate still counts the loss as today's)."""
+    return session_day(now or datetime.now(timezone.utc))
+
+
 def _state(area_id: int) -> dict[str, Any]:
     st = config.load_settings(area_id=area_id).get("risk_state")
     return dict(st) if isinstance(st, dict) else {}
@@ -121,7 +133,7 @@ def lock_of(area_id: int, spec: str, *, settings: Optional[dict[str, Any]] = Non
     rec = st.get(spec)
     if not isinstance(rec, dict):
         return None
-    if rec.get("day") != local_now(area_id, s).date().isoformat():
+    if rec.get("day") != trading_day():
         return None
     return dict(rec)
 
@@ -143,14 +155,17 @@ def unlock(area_id: int, spec: str) -> bool:
 
 def _lock(area_id: int, spec: str, kind: str, reason: str, total: float) -> None:
     st = _state(area_id)
-    st[spec] = {"day": local_now(area_id).date().isoformat(), "kind": kind, "reason": reason,
+    st[spec] = {"day": trading_day(), "kind": kind, "reason": reason,
                 "pnl": round(total, 2), "at": datetime.now(timezone.utc).isoformat()}
     config.save_settings({"risk_state": st}, area_id=area_id)
 
 
 # ----------------------------------------------------------------- engine
-def evaluate(r: dict[str, Any], total: float, now_local: datetime) -> Optional[tuple[str, str]]:
-    """(kind, reason) when a rule is hit for today's P&L ``total``."""
+def evaluate(r: dict[str, Any], total: float, now_local: datetime, now_ny: Optional[datetime] = None) -> Optional[tuple[str, str]]:
+    """(kind, reason) when a rule is hit for today's P&L ``total``. The flatten
+    time is read in the journal timezone, or in New York time when the rule
+    says so (``flatten_tz: ny``) — the exchange's clock, unaffected by the two
+    weeks a year Europe and the US disagree on daylight saving."""
     loss = float(r.get("loss_limit") or 0)
     profit = float(r.get("profit_limit") or 0)
     if loss and total <= -loss:
@@ -160,8 +175,9 @@ def evaluate(r: dict[str, Any], total: float, now_local: datetime) -> Optional[t
     t = str(r.get("flatten_at") or "")
     if t:
         hh, mm = (int(x) for x in t.split(":")[:2])
-        if (now_local.hour, now_local.minute) >= (hh, mm):
-            return "time", f"flatten time {t} reached (P&L {total:+,.2f})"
+        clock = (now_ny or now_local.astimezone(ET)) if str(r.get("flatten_tz") or "local") == "ny" else now_local
+        if (clock.hour, clock.minute) >= (hh, mm):
+            return "time", f"flatten time {t}{' New York' if clock is not now_local else ''} reached (P&L {total:+,.2f})"
     return None
 
 
@@ -212,7 +228,7 @@ async def check_area(area_id: int, sessions: list[Any], snapshots: list[dict[str
         r = acc.get("risk") or {}
         lock = lock_of(area_id, spec, settings=s)
         snap["risk"] = {"loss_limit": r.get("loss_limit") or 0, "profit_limit": r.get("profit_limit") or 0,
-                        "flatten_at": r.get("flatten_at") or "", "locked": bool(lock),
+                        "flatten_at": r.get("flatten_at") or "", "flatten_tz": r.get("flatten_tz") or "local", "locked": bool(lock),
                         "reason": (lock or {}).get("reason", ""), "kind": (lock or {}).get("kind", "")}
         total = float(snap.get("realized") or 0) + float(snap.get("open") or 0)
         if lock:
@@ -225,7 +241,7 @@ async def check_area(area_id: int, sessions: list[Any], snapshots: list[dict[str
             continue
         if not active(r):
             continue
-        hit = evaluate(r, total, now_local)
+        hit = evaluate(r, total, now_local, now_local.astimezone(ET))
         if not hit:
             continue
         kind, reason = hit

@@ -4,6 +4,14 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.48
+- **Risk guard on the exchange's clock.** A lock now lasts the Tradovate trading day
+  (rolls at 17:00 New York), the same day the broker's daily P&L uses — a Zurich-midnight
+  day could unlock an account while Tradovate still counted the loss as today's and fire
+  again. The flatten time can be set in **New York time** per account (exchange clock,
+  unaffected by the weeks Europe and the US disagree on daylight saving) or, as before,
+  in the journal timezone.
+
 ## 5.0.0-alpha.47
 - **Audit fixes, part 3: copy trading.** The mirror state (which contracts are mirrored,
   the leader's last known size) is persisted, so a restart — every deploy is one — carries
