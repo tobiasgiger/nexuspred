@@ -14,6 +14,7 @@ Everything is in-memory and single-process, matching the rest of the runtime
 """
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import os
 import secrets
@@ -32,6 +33,7 @@ MAX_BODY_BYTES = 256 * 1024  # generous for any alert / settings payload
 BODY_LIMITS: dict[str, int] = {
     "/api/journal/import-csv": 16 * 1024 * 1024,
     "/api/agent/jobs/": 16 * 1024 * 1024,   # relayed Tradovate answers (prefix)
+    "/webhook/": 64 * 1024,                 # a TradingView / Discord alert is a few hundred bytes
 }
 
 
@@ -50,13 +52,28 @@ def body_limit_for(path: str, default: int) -> int:
 PROXY_HOPS = max(0, int(os.environ.get("NEXUSPRED_PROXY_HOPS", "1") or 1))
 
 
+def _from_trusted_proxy(request: Request) -> bool:
+    """Only a peer on a private / loopback address can be our reverse proxy; a
+    request that reaches the app directly from the internet carries whatever
+    ``X-Forwarded-For`` its sender chose, so that header is ignored."""
+    host = request.client.host if request.client else ""
+    if not host or host in ("testclient", "unknown"):
+        return True
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return True                                     # unix socket / named peer: local
+    return not addr.is_global                            # private, loopback, link-local, CGNAT, documentation ranges
+
+
 def client_ip(request: Request) -> str:
     """The client address as seen by the *trusted* proxy (see ``PROXY_HOPS``).
 
     Taking the first ``X-Forwarded-For`` hop would let any caller pick its own
     bucket for the rate limiter and its own address in the audit log — the
-    proxy appends, it does not overwrite."""
-    xff = request.headers.get("x-forwarded-for", "") if PROXY_HOPS else ""
+    proxy appends, it does not overwrite. The header only counts when the
+    direct peer can be our proxy at all."""
+    xff = request.headers.get("x-forwarded-for", "") if PROXY_HOPS and _from_trusted_proxy(request) else ""
     if xff:
         hops = [h.strip() for h in xff.split(",") if h.strip()]
         if hops:
@@ -133,12 +150,18 @@ LOGIN_FAILS_PER_EMAIL = RateLimiter(20, 600.0)
 LOGIN_FAILS_TOTAL = RateLimiter(300, 60.0)
 
 
+def _login_key(email: str) -> str:
+    """The brake is keyed by a hash: the in-memory table never holds the raw
+    addresses attackers tried (they show up in a memory dump otherwise)."""
+    return hashlib.sha256(email.strip().lower().encode("utf-8")).hexdigest()[:24]
+
+
 def login_allowed(email: str) -> bool:
-    return LOGIN_FAILS_PER_EMAIL.peek(email.lower()) and LOGIN_FAILS_TOTAL.peek("*")
+    return LOGIN_FAILS_PER_EMAIL.peek(_login_key(email)) and LOGIN_FAILS_TOTAL.peek("*")
 
 
 def login_failed(email: str) -> None:
-    LOGIN_FAILS_PER_EMAIL.hit(email.lower())
+    LOGIN_FAILS_PER_EMAIL.hit(_login_key(email))
     LOGIN_FAILS_TOTAL.hit("*")
 
 # Auth form pages redirect back to themselves with ``?error=rate`` so the user
@@ -332,8 +355,9 @@ def _is_public_ip(ip: str) -> bool:
         addr = ipaddress.ip_address(ip)
     except ValueError:
         return False
-    return not (addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_multicast
-                or addr.is_reserved or addr.is_unspecified)
+    # is_global covers private, loopback, link-local, reserved, unspecified,
+    # carrier-grade NAT and the documentation ranges; multicast is never a POST target
+    return addr.is_global and not addr.is_multicast
 
 
 def check_outbound_url(url: str) -> str | None:

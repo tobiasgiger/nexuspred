@@ -8,11 +8,13 @@ never collide and the Monitor's Active Trades table shows both kinds for free.
 """
 from __future__ import annotations
 
+import time
+
 import asyncio
 from typing import Any
 
 from .. import alerts, config, state
-from ..tradovate import TradovateError
+from ..tradovate import TradovateError, _fire
 from .common import _close_contract, _place_stop_with_retry, SignalError, _cancel_working, _lock, _opposite
 from ..sizing import account_qty
 
@@ -83,7 +85,7 @@ async def handle_entry(payload, side, root, target, trade_id, executors, active_
             active_map[trade_id] = {
                 "webhook_id": webhook["id"], "webhook_name": webhook.get("name", ""),
                 "root": root, "contract": contract, "side": side, "trade_id": trade_id,
-                "accounts": acct_state,
+                "accounts": acct_state, "ts": time.time(),
             }
 
     state.log_event(
@@ -91,7 +93,7 @@ async def handle_entry(payload, side, root, target, trade_id, executors, active_
         f"(trade {trade_id}) on {len(acct_state)}/{len(executors)} account(s): {', '.join(acct_state)}"
     )
     if acct_state and not tag:
-        await alerts.trade_executed(webhook.get("name", "?"), side, contract, list(acct_state))
+        _fire(alerts.trade_executed(webhook.get("name", "?"), side, contract, list(acct_state)))   # never wait for SMTP
     return {"status": "ok", "action": "signal", "contract": contract, "trade_id": trade_id,
             "accounts": summary, "orders": orders, "simulated": tag != ""}
 

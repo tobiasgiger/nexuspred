@@ -108,7 +108,7 @@ export function settingsForm({ sections, values, onSave, saveLabel = "Save chang
       const all = getValues(form, specs);
       const changed = {};
       for (const [k, v] of Object.entries(all)) if (JSON.stringify(v) !== JSON.stringify(saved ? saved[k] : undefined)) changed[k] = v;
-      const next = await onSave(Object.keys(changed).length ? changed : all);
+      const next = await onSave(changed);      // nothing changed → an empty post just refreshes the form
       apply(next || all);
       toast("Settings saved", "success");
     } catch (err) {

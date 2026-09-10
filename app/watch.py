@@ -29,6 +29,7 @@ _names: dict[tuple[int, int], str] = {}               # (area, contract_id) → 
 _agents: dict[int, dict[int, bool]] = {}              # area → agent_id → online?
 _summary_sent: dict[int, str] = {}                    # area → local date of the last summary
 _closed_today: dict[int, list[dict[str, Any]]] = {}   # area → closes since the last summary
+CLOSES_KEPT = 500
 
 
 def reset() -> None:
@@ -177,7 +178,10 @@ async def observe_area(area_id: int, sessions: list[Any], snapshots: list[dict[s
                 await alerts.trade_closed(ev["account"], ev["symbol"], _direction(ev["qty"]), abs(ev["qty"]) - ev["remaining"],
                                           ev.get("pnl"), ev.get("duration", ""), remaining=ev["remaining"])
             elif ev["kind"] == "closed":
-                _closed_today.setdefault(area_id, []).append({"account": ev["account"], "symbol": ev["symbol"], "pnl": ev.get("pnl")})
+                closes = _closed_today.setdefault(area_id, [])
+                closes.append({"account": ev["account"], "symbol": ev["symbol"], "pnl": ev.get("pnl")})
+                if len(closes) > CLOSES_KEPT:
+                    del closes[:-CLOSES_KEPT]           # no daily summary configured: never grow without bound
                 if want_close:
                     await alerts.trade_closed(ev["account"], ev["symbol"], _direction(ev["qty"]), abs(ev["qty"]),
                                               ev.get("pnl"), ev.get("duration", ""))

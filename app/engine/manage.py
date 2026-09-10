@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 
 from .. import config, state
@@ -138,7 +139,7 @@ async def handle_set_sl_tp(payload, root, target, executors, active_map, tag, we
             cur = active_map.get(key) or {
                 "webhook_id": webhook["id"], "webhook_name": webhook.get("name", ""),
                 "root": root, "contract": target, "side": (active or {}).get("side"),
-                "accounts": {},
+                "accounts": {}, "ts": time.time(),
             }
             cur.setdefault("accounts", {}).update(acct_state)
             active_map[key] = cur

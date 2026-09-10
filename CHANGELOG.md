@@ -4,6 +4,39 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.50
+- **Code review, part 2: persistence, security, background loops.**
+  - *Settings can no longer be wiped.* A settings save that starts from an unreadable
+    database read (disk error, corrupt row) is refused with a 503 instead of writing the
+    defaults over the real configuration; a corrupt settings row is an error, not an empty
+    area. A stored token the current encryption key cannot read is kept as it is on every
+    save (until the key is corrected or the token re-entered) rather than being replaced by
+    the empty placeholder. Writes start from the in-memory copy, and the webhook token index
+    is rebuilt only when a webhook list actually changed.
+  - *Single-use codes are single use under load:* invite codes, agent pairing codes and
+    password-reset links are burned atomically, so two racing submits can never both
+    succeed. Deleting a user now also removes the workspace's history, journal and
+    copy-trading rows. Journal lookups by fill id and by account/date have indexes; SQLite
+    runs WAL with `synchronous=NORMAL` (no fsync per commit).
+  - *Security:* `X-Forwarded-For` is honoured only when the direct peer can be our reverse
+    proxy (private / loopback address); the outbound-URL guard uses the global-address test
+    (carrier-grade NAT and documentation ranges are internal too); the login brake keys by
+    a hash of the address; a cross-site `GET /logout` signs nobody out; changing your
+    password re-issues this session's cookie (other sessions are still signed out).
+    Webhook alerts are capped at 64 KB.
+  - *Loops:* the P&L poll runs areas in parallel, each with its own 90 s timeout, so one
+    slow broker no longer holds another workspace's risk guard; trade-executed alerts are
+    sent off the request path (a slow SMTP server no longer delays the webhook answer);
+    liquidations reuse the cached contract id; abandoned relay jobs are pruned from an
+    offline agent's queue; the push diagnostic runs in a worker thread; drawdown state is
+    written to the settings at most every 30 s (flushed at shutdown) instead of on every
+    up-tick; a rollover check that failed is retried the same day; webhook edits are atomic
+    read-modify-write; stale active-trade records are swept after 14 days; the closed-trades
+    list for the daily summary is capped; history write failures are logged; Discord
+    listeners start at startup (the call was unreachable).
+  - *Dashboard:* the settings form posts nothing but the changed fields (an unchanged
+    submit no longer re-posts every value).
+
 ## 5.0.0-alpha.49
 - **Code review, part 1: the money paths.** A full review of the order, copy-trading,
   risk and P&L code; everything that could place a wrong order, miss one, or double one

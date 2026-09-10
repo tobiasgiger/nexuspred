@@ -151,7 +151,10 @@ async def test_intraday_drawdown_tracks_the_equity_peak(admin, monkeypatch):
     sess.snap[11] = {"totalCashValue": 54000.0, "realizedPnL": 0, "openPnL": 0, "weekRealizedPnL": 0}
     a = (await pnl.refresh_area(1))["accounts"][0]
     assert a["dd_peak"] == 54000.0 and a["dd_level"] == 50100.0 and a["dd_room"] == 3900.0
-    # persisted: survives a process restart (state lives in the area settings)
+    # persisted: survives a process restart (state lives in the area settings;
+    # writes are batched every 30 s and flushed at shutdown)
+    assert "dd_state" not in config.load_settings(area_id=1) or config.load_settings(area_id=1)["dd_state"].get("11", {}).get("peak") != 54000.0
+    drawdown.flush()
     st = config.load_settings(area_id=1)["dd_state"]["11"]
     assert st["peak"] == 54000.0 and st["since"]
 

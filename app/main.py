@@ -13,7 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, config, context, copy, crypto, db, health, history, http, journal, pnl, push, security, state
+from . import auth, config, context, copy, crypto, db, drawdown, health, history, http, journal, pnl, push, security, state
 from .discord_signals.routes import router as discord_router
 from .routers import ROUTERS
 from .web import BASE_DIR, is_auth_exempt, wants_html
@@ -73,6 +73,7 @@ async def _startup() -> None:
                       asyncio.create_task(journal.scheduler_loop(), name="journal-import-loop"),
                       asyncio.create_task(pnl.pnl_loop(), name="pnl-loop"),
                       asyncio.create_task(copy.copy_loop(), name="copy-loop")]
+    health.start_discord_listeners()     # the health loop keeps them alive from here on
 
 
 async def _history_prune_loop() -> None:
@@ -80,9 +81,8 @@ async def _history_prune_loop() -> None:
         await asyncio.sleep(24 * 3600)
         try:
             await asyncio.to_thread(history.prune)
-        except Exception:  # noqa: BLE001
-            pass
-    health.start_discord_listeners()
+        except Exception as exc:  # noqa: BLE001
+            state.log_event("warn", f"history prune failed: {exc}")
 
 
 async def _shutdown() -> None:
@@ -94,6 +94,8 @@ async def _shutdown() -> None:
             await t
     _loop_tasks.clear()
     await copy.stop_all()
+    with contextlib.suppress(Exception):
+        await asyncio.to_thread(drawdown.flush)   # batched drawdown state → settings
     await health.stop_discord_listeners()
     await http.aclose_all()
     await asyncio.to_thread(history.stop)  # drain queued history writes
@@ -164,3 +166,9 @@ async def _auth_middleware(request: Request, call_next):
 # ``@app.middleware`` decorators innermost-last, so this one wraps the auth one.)
 app.middleware("http")(security.security_middleware)
 app.add_middleware(security.BodyLimitMiddleware)
+
+
+@app.exception_handler(config.SettingsUnavailable)
+async def _settings_unavailable(_request: Request, exc: config.SettingsUnavailable) -> JSONResponse:
+    """A save that would have written defaults over unreadable settings was refused."""
+    return JSONResponse({"detail": f"{exc} — check the database and try again"}, status_code=503)

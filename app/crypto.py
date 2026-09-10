@@ -191,6 +191,53 @@ def decrypt_settings(settings: dict[str, Any]) -> dict[str, Any]:
     return _map_settings(settings, decrypt)
 
 
+def _undecryptable(value: Any) -> bool:
+    return is_encrypted(value) and decrypt(value) == ""
+
+
+def keep_undecryptable(settings: dict[str, Any], previous: dict[str, Any]) -> dict[str, Any]:
+    """``settings`` (plain text, about to be saved) with every *empty* secret
+    field replaced by the stored cipher text of ``previous`` when that cipher
+    text cannot be decrypted with the current key — the value the caller got
+    was the empty placeholder, not a deliberate clearing. Logins are matched by
+    their stable id (``lid``), falling back to the list position; Discord
+    targets by position within a channel of the same id."""
+    if not isinstance(previous, dict) or not previous:
+        return settings
+    out = dict(settings)
+    for key in SECRET_KEYS:
+        if key in out and not out[key] and _undecryptable(previous.get(key)):
+            out[key] = previous[key]
+    prev_logins = [a for a in (previous.get("token_accounts") or []) if isinstance(a, dict)]
+    by_lid = {a.get("lid"): a for a in prev_logins if a.get("lid")}
+    if isinstance(out.get("token_accounts"), list):
+        merged = []
+        for i, a in enumerate(out["token_accounts"]):
+            if isinstance(a, dict):
+                old = by_lid.get(a.get("lid")) if a.get("lid") else (prev_logins[i] if i < len(prev_logins) else None)
+                if old:
+                    a = {**a, **{k: old[k] for k in TOKEN_ACCOUNT_KEYS if k in a and not a[k] and _undecryptable(old.get(k))}}
+            merged.append(a)
+        out["token_accounts"] = merged
+    prev_channels = {c.get("id"): c for c in (previous.get("discord_channels") or []) if isinstance(c, dict) and c.get("id")}
+    if isinstance(out.get("discord_channels"), list):
+        channels = []
+        for c in out["discord_channels"]:
+            old = prev_channels.get(c.get("id")) if isinstance(c, dict) else None
+            if old and isinstance(c.get("targets"), list):
+                old_targets = old.get("targets") or []
+                targets = []
+                for j, t in enumerate(c["targets"]):
+                    ot = old_targets[j] if j < len(old_targets) and isinstance(old_targets[j], dict) else None
+                    if isinstance(t, dict) and "secret" in t and not t["secret"] and ot and _undecryptable(ot.get("secret")):
+                        t = {**t, "secret": ot["secret"]}
+                    targets.append(t)
+                c = {**c, "targets": targets}
+            channels.append(c)
+        out["discord_channels"] = channels
+    return out
+
+
 def has_plaintext_secret(settings: dict[str, Any]) -> bool:
     """True when at least one secret field holds a non-empty, unencrypted value."""
     found = False

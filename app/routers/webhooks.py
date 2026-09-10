@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import secrets
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -82,6 +82,24 @@ def _webhook_or_404(webhook_id: str) -> tuple[list[dict[str, Any]], int]:
     raise HTTPException(status_code=404, detail="Webhook not found")
 
 
+def _edit_webhook(webhook_id: str, fn: Callable[[list[dict[str, Any]], int], Any]) -> Any:
+    """Atomic read-modify-write of one webhook: ``fn(webhooks, index)`` runs on
+    a fresh copy under the settings lock, so two concurrent edits (a rename and
+    a token regenerate, say) can never overwrite each other. Returns fn's result."""
+    out: dict[str, Any] = {}
+
+    def mutate(s: dict[str, Any]) -> None:
+        webhooks = list(s.get("webhooks") or [])
+        for i, wh in enumerate(webhooks):
+            if wh.get("id") == webhook_id:
+                out["result"] = fn(webhooks, i)
+                s["webhooks"] = webhooks
+                return
+        raise HTTPException(status_code=404, detail="Webhook not found")
+    config.update(mutate)
+    return out.get("result")
+
+
 @router.get("/api/webhooks")
 async def api_list_webhooks() -> list[dict[str, Any]]:
     """The area's webhooks, each with its marketplace subscriber count."""
@@ -110,8 +128,13 @@ async def api_create_webhook(request: Request) -> dict[str, Any]:
 @router.put("/api/webhooks/{webhook_id}")
 async def api_update_webhook(webhook_id: str, request: Request) -> dict[str, Any]:
     body = await request.json()
-    webhooks, i = _webhook_or_404(webhook_id)
-    wh = webhooks[i]
+    wh = _edit_webhook(webhook_id, lambda webhooks, i: _apply_webhook_edit(webhooks, i, body))
+    state.log_event("info", f"Webhook '{wh['name']}' updated")
+    return wh
+
+
+def _apply_webhook_edit(webhooks: list[dict[str, Any]], i: int, body: dict[str, Any]) -> dict[str, Any]:
+    wh = dict(webhooks[i])
     try:
         if "name" in body:
             wh["name"] = str(body["name"]) or wh["name"]
@@ -128,16 +151,12 @@ async def api_update_webhook(webhook_id: str, request: Request) -> dict[str, Any
     except (TypeError, ValueError, KeyError, AttributeError) as exc:
         raise HTTPException(status_code=400, detail=f"Invalid webhook payload: {exc}") from exc
     webhooks[i] = wh
-    config.save_settings({"webhooks": webhooks})
-    state.log_event("info", f"Webhook '{wh['name']}' updated")
     return wh
 
 
 @router.delete("/api/webhooks/{webhook_id}")
 async def api_delete_webhook(webhook_id: str) -> dict[str, Any]:
-    webhooks, i = _webhook_or_404(webhook_id)
-    removed = webhooks.pop(i)
-    config.save_settings({"webhooks": webhooks})
+    removed = _edit_webhook(webhook_id, lambda webhooks, i: webhooks.pop(i))
     dropped = db.delete_subscriptions_for_webhook(context.get_area(), webhook_id)
     state.log_event("info", f"Webhook '{removed.get('name')}' deleted"
                     + (f" ({dropped} subscription(s) removed)" if dropped else ""))
@@ -151,13 +170,16 @@ async def api_update_sharing(webhook_id: str, request: Request) -> dict[str, Any
     subscriptions are kept but paused while it's unpublished."""
     user = require_admin(request)
     body = await request.json()
-    webhooks, i = _webhook_or_404(webhook_id)
-    wh = webhooks[i]
-    before = marketplace.sharing_of(wh)
-    wh["sharing"] = marketplace.normalize_sharing(body, wh.get("sharing"))
-    webhooks[i] = wh
-    config.save_settings({"webhooks": webhooks})
-    after = wh["sharing"]
+    edited: dict[str, Any] = {}
+
+    def apply(webhooks: list[dict[str, Any]], i: int) -> dict[str, Any]:
+        wh = dict(webhooks[i])
+        edited["before"] = marketplace.sharing_of(wh)
+        wh["sharing"] = marketplace.normalize_sharing(body, wh.get("sharing"))
+        webhooks[i] = wh
+        return wh
+    wh = _edit_webhook(webhook_id, apply)
+    before, after = edited["before"], wh["sharing"]
     if before["enabled"] != after["enabled"]:
         db.log_action(user["id"], user["email"], "webhook_share", after["title"] or wh.get("name", ""),
                       "published" if after["enabled"] else "unpublished")
@@ -188,11 +210,12 @@ async def api_remove_subscriber(webhook_id: str, sub_id: int, request: Request) 
 
 @router.post("/api/webhooks/{webhook_id}/regenerate-token")
 async def api_regenerate_webhook_token(webhook_id: str) -> dict[str, Any]:
-    webhooks, i = _webhook_or_404(webhook_id)
-    webhooks[i]["token"] = secrets.token_urlsafe(16)
-    config.save_settings({"webhooks": webhooks})
-    state.log_event("info", f"Webhook '{webhooks[i]['name']}' token regenerated")
-    return webhooks[i]
+    def apply(webhooks: list[dict[str, Any]], i: int) -> dict[str, Any]:
+        webhooks[i] = {**webhooks[i], "token": secrets.token_urlsafe(16)}
+        return webhooks[i]
+    wh = _edit_webhook(webhook_id, apply)
+    state.log_event("info", f"Webhook '{wh['name']}' token regenerated")
+    return wh
 
 
 @router.post("/api/webhooks/{webhook_id}/test")

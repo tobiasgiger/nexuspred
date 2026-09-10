@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
-from typing import Any, Optional, Optional
+from typing import Any, Optional
 
 from . import risk, config, context, db, drawdown, state, tradovate, watch
 
@@ -172,31 +172,48 @@ async def refresh_area(area_id: int) -> dict[str, Any]:
         return summary
 
 
+AREA_TIMEOUT_S = 90.0        # one slow broker must not hold every other area's risk guard
+
+
+async def _poll_area(aid: int) -> Optional[float]:
+    """One area's tick + P&L refresh. Returns the delay it wants before the next
+    look, or None when the area is switched off."""
+    s = config.load_settings(area_id=aid)
+    await watch.tick(aid)   # agent transitions + daily summary (no broker calls)
+    fast = float(s.get("pnl_poll_seconds", 5) or 0)
+    if fast <= 0 and not risk.any_active(s):
+        return None  # switched off for this area (a risk rule keeps it running regardless)
+    fast = max(2.0, fast if fast > 0 else 5.0)
+    # Fast while a dashboard is open — or while trade alerts need a
+    # timely view of the broker's positions.
+    watched = state.subscriber_count(aid) or watch.trade_alerts_enabled(s) or risk.any_active(s)
+    interval = fast if watched else IDLE_INTERVAL_S
+    try:
+        summary = await asyncio.wait_for(refresh_area(aid), timeout=AREA_TIMEOUT_S)
+        if summary["error"] and not summary["accounts"]:
+            _backoff[aid] = min(MAX_BACKOFF_S, max(interval, _backoff.get(aid, interval) * 2))
+        else:
+            _backoff.pop(aid, None)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        _backoff[aid] = min(MAX_BACKOFF_S, max(interval, _backoff.get(aid, interval) * 2))
+        if isinstance(exc, asyncio.TimeoutError):
+            state.log_event("warn", f"P&L refresh for area {aid} timed out after {int(AREA_TIMEOUT_S)} s")
+    return _backoff.get(aid, interval)
+
+
 async def pnl_loop() -> None:
-    """Poll all areas; fast while watched, slow while idle, backing off on errors."""
+    """Poll all areas — in parallel, each with its own timeout — fast while
+    watched, slow while idle, backing off on errors."""
     while True:
         delay = IDLE_INTERVAL_S
         try:
-            for aid in db.all_area_ids():
-                s = config.load_settings(area_id=aid)
-                await watch.tick(aid)   # agent transitions + daily summary (no broker calls)
-                fast = float(s.get("pnl_poll_seconds", 5) or 0)
-                if fast <= 0 and not risk.any_active(s):
-                    continue  # switched off for this area (a risk rule keeps it running regardless)
-                fast = max(2.0, fast if fast > 0 else 5.0)
-                # Fast while a dashboard is open — or while trade alerts need a
-                # timely view of the broker's positions.
-                watched = state.subscriber_count(aid) or watch.trade_alerts_enabled(s) or risk.any_active(s)
-                interval = fast if watched else IDLE_INTERVAL_S
-                try:
-                    summary = await refresh_area(aid)
-                    if summary["error"] and not summary["accounts"]:
-                        _backoff[aid] = min(MAX_BACKOFF_S, max(interval, _backoff.get(aid, interval) * 2))
-                    else:
-                        _backoff.pop(aid, None)
-                except Exception:  # noqa: BLE001
-                    _backoff[aid] = min(MAX_BACKOFF_S, max(interval, _backoff.get(aid, interval) * 2))
-                delay = min(delay, _backoff.get(aid, interval))
+            area_ids = db.all_area_ids()
+            results = await asyncio.gather(*(_poll_area(a) for a in area_ids), return_exceptions=True)
+            for r in results:
+                if isinstance(r, (int, float)):
+                    delay = min(delay, float(r))
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - the loop must survive anything

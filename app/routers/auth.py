@@ -55,7 +55,9 @@ async def login_submit(request: Request):
 
 @router.get("/logout")
 @router.post("/logout")
-async def logout() -> RedirectResponse:
+async def logout(request: Request) -> RedirectResponse:
+    if request.method == "GET" and request.headers.get("sec-fetch-site", "").lower() == "cross-site":
+        return RedirectResponse("/", status_code=302)    # an <img src="/logout"> on another site signs nobody out
     resp = RedirectResponse("/login", status_code=302)
     resp.delete_cookie(auth.COOKIE, path="/")
     return resp

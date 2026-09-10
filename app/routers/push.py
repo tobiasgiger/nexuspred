@@ -90,7 +90,7 @@ async def api_push_diag(request: Request) -> dict[str, Any]:
     """Admin: server push identity + a live, non-pruning send to every device."""
     from ..web import require_admin
     require_admin(request)
-    return push.diagnose(context.get_area())
+    return await asyncio.to_thread(push.diagnose, context.get_area())   # live sends: never on the event loop
 
 
 @router.post("/api/push/test")

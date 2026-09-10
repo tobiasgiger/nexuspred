@@ -119,6 +119,7 @@ async def test_simple_qty_and_multiplier_rounding(live):
     assert t["side"] == "buy" and t["root"] == "MNQ" and t["webhook_id"] == "wh_s"
     assert t["accounts"]["A"] == {"name": "A", "contract": "MNQU6", "qty": 2, "entry_qty": 2,
                                   "sl_order_id": None, "tp_order_ids": []}
+    await settle()                        # trade alerts are sent off the request path
     assert live.alerts == [("simple-wh", "buy", "MNQU6", ["A", "B"])]
 
 
@@ -172,6 +173,7 @@ async def test_entry_failure_on_one_account_is_isolated(live):
     r = await signals.process({"action": "buy", "symbol": "MNQ1!", "qty": 1}, wh(id="wh_x"))
     assert r["status"] == "ok" and r["accounts"] == [{"account": "A", "qty": 1}]
     assert list(active("wh_x:MNQ")["accounts"]) == ["A"]
+    await settle()                        # trade alerts are sent off the request path
     assert live.alerts[-1][3] == ["A"]
 
 
@@ -179,6 +181,7 @@ async def test_all_accounts_failing_tracks_nothing_and_alerts_nothing(live):
     live.use(FakeExecutor("A", fail_place=True))
     r = await signals.process({"action": "buy", "symbol": "MNQ1!", "qty": 1}, wh(id="wh_x"))
     assert r["status"] == "ok" and r["accounts"] == [] and r["orders"] == []
+    await settle()                        # trade alerts are sent off the request path
     assert "wh_x:MNQ" not in active() and live.alerts == []
 
 
@@ -218,6 +221,7 @@ async def test_bracket_entry_places_entry_tps_and_stop(live):
     assert info["entry_price"] == 100.0 and info["sl_stop"] == 110.0 and info["sl_type"] == "Stop"
     assert info["sl_order_id"] == sl["order_id"] and info["tp_order_ids"] == [tp1["order_id"], tp2["order_id"], tp3["order_id"]]
     assert r["accounts"] == [{"account": "A", "qty": 3}]
+    await settle()                        # trade alerts are sent off the request path
     assert live.alerts == [("bracket-wh", "sell", "MNQU6", ["A"])]
 
 
@@ -424,6 +428,7 @@ async def test_ts_hunter_full_lifecycle_from_real_payloads(live):
     t = active(tid)
     assert t["side"] == "sell" and t["root"] == "MNQ" and t["trade_id"] == tid
     assert t["accounts"]["A"]["remaining_qty"] == 4 and t["accounts"]["A"]["entry_price"] == 29329.0
+    await settle()                        # trade alerts are sent off the request path
     assert live.alerts == [("ts_hunter-wh", "sell", "MNQ", ["A", "B"])]
 
     for payload, rem_a, rem_b, closed_a, closed_b in ((tp1, 3, 6, 1, 2), (tp2, 2, 4, 1, 2), (tp3, 1, 2, 1, 2)):

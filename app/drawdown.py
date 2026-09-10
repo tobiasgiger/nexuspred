@@ -19,6 +19,7 @@ that moment on. A peak only ever ratchets up.
 """
 from __future__ import annotations
 
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
@@ -57,13 +58,43 @@ def _empty() -> dict[str, Any]:
             "dd_room": None, "dd_seeded": False, "dd_since": None, "daily_loss_limit": None}
 
 
+PERSIST_EVERY_S = 30.0          # the peak moves on every up-tick: batch the settings writes
+_mem: dict[int, dict[str, Any]] = {}          # area → latest state (authoritative once loaded)
+_saved_at: dict[int, float] = {}              # area → monotonic of the last settings write
+
+
 def _load(area_id: int) -> dict[str, Any]:
-    st = config.load_settings(area_id=area_id).get("dd_state")
-    return dict(st) if isinstance(st, dict) else {}
+    st = _mem.get(area_id)
+    if st is None:
+        raw = config.load_settings(area_id=area_id).get("dd_state")
+        st = _mem[area_id] = dict(raw) if isinstance(raw, dict) else {}
+    return dict(st)
 
 
-def _save(area_id: int, st: dict[str, Any]) -> None:
+def _save(area_id: int, st: dict[str, Any], *, force: bool = False) -> None:
+    """Keep the state in memory always; write it to the settings at most every
+    ``PERSIST_EVERY_S`` (a restart loses at most that much peak progression,
+    which the next poll re-derives) — ``force`` for user actions."""
+    _mem[area_id] = dict(st)
+    now = time.monotonic()
+    if not force and now - _saved_at.get(area_id, -1e9) < PERSIST_EVERY_S:
+        return
+    _saved_at[area_id] = now
     config.save_settings({"dd_state": st}, area_id=area_id)
+
+
+def flush(area_id: Optional[int] = None) -> None:
+    """Write the in-memory state now (shutdown, tests)."""
+    for aid in [area_id] if area_id is not None else list(_mem):
+        st = _mem.get(aid)
+        if st is not None:
+            _saved_at[aid] = time.monotonic()
+            config.save_settings({"dd_state": st}, area_id=aid)
+
+
+def reset() -> None:
+    _mem.clear()
+    _saved_at.clear()
 
 
 def _journal_eod_peak(area_id: int, account_id: int, spec: str) -> Optional[float]:
@@ -145,7 +176,7 @@ def set_seed(area_id: int, account_id: int, level: Optional[float]) -> dict[str,
     key = str(account_id)
     if level is None:
         st.pop(key, None)
-        _save(area_id, st)
+        _save(area_id, st, force=True)
         return {}
     a = dict(st.get(key) or {})
     a["seed_level"] = round(float(level), 2)
@@ -153,5 +184,5 @@ def set_seed(area_id: int, account_id: int, level: Optional[float]) -> dict[str,
     a.pop("peak", None)            # re-derived from the seed on the next poll
     a["since"] = a["seed_at"]
     st[key] = a
-    _save(area_id, st)
+    _save(area_id, st, force=True)
     return a

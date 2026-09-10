@@ -92,6 +92,7 @@ def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(str(DB_FILE), timeout=10.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")   # WAL + NORMAL: durable across crashes, no fsync per commit
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
     _local.conn = conn
@@ -122,6 +123,8 @@ def reset_caches() -> None:
 
 def init() -> None:
     global _initialized
+    if _initialized:
+        return                                  # hot path: no lock once the schema is in place
     with _init_lock:
         if _initialized:
             return
@@ -247,6 +250,8 @@ def init() -> None:
                     UNIQUE(area_id, pair_id)
                 );
                 CREATE INDEX IF NOT EXISTS ix_journal_trades_exit ON journal_trades(area_id, exit_ts);
+                CREATE INDEX IF NOT EXISTS ix_journal_trades_acct_exit ON journal_trades(area_id, account_id, exit_ts);
+                CREATE INDEX IF NOT EXISTS ix_journal_trades_fills ON journal_trades(area_id, account_id, entry_fill_id, exit_fill_id);
                 CREATE TABLE IF NOT EXISTS journal_snapshots (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     area_id INTEGER NOT NULL,
@@ -598,7 +603,13 @@ def delete_user(user_id: int) -> None:
             c.execute("DELETE FROM agents WHERE area_id=?", (aid,))
             c.execute("DELETE FROM agent_pairings WHERE area_id=?", (aid,))
             c.execute("DELETE FROM push_subscriptions WHERE area_id=?", (aid,))
+            # Their history, journal and copy-trading state: nothing of a deleted
+            # workspace stays behind in the database.
+            for table in ("signal_log", "order_log", "journal_fills", "journal_trades", "journal_snapshots",
+                          "journal_seen", "journal_imports", "copy_events", "copy_state", "copy_twins"):
+                c.execute(f"DELETE FROM {table} WHERE area_id=?", (aid,))
         c.execute("DELETE FROM push_subscriptions WHERE user_id=?", (user_id,))
+        c.execute("DELETE FROM password_resets WHERE user_id=?", (user_id,))
         c.execute("DELETE FROM users WHERE id=?", (user_id,))
     _areas_generation += 1
     _agents_by_hash.clear()
@@ -659,9 +670,11 @@ def get_area_settings_raw(area_id: int) -> dict[str, Any]:
     if not row:
         return {}
     try:
-        return json.loads(row["settings"] or "{}")
-    except json.JSONDecodeError:
-        return {}
+        data = json.loads(row["settings"] or "{}")
+    except json.JSONDecodeError as exc:
+        # corrupt JSON must surface: returning {} would let the next save wipe the area
+        raise ValueError(f"settings of area {area_id} are not valid JSON: {exc}") from exc
+    return data if isinstance(data, dict) else {}
 
 
 def get_area_settings(area_id: int) -> dict[str, Any]:
@@ -670,11 +683,24 @@ def get_area_settings(area_id: int) -> dict[str, Any]:
 
 
 def save_area_settings(area_id: int, settings: dict[str, Any]) -> None:
-    """Persist an area's settings; secret fields are encrypted on the way in."""
+    """Persist an area's settings; secret fields are encrypted on the way in.
+
+    A secret the current key cannot decrypt reads as an empty string; when the
+    caller hands such an empty value back for a field whose stored cipher text
+    is undecryptable, the stored cipher text is kept — a settings save must
+    never destroy a token that a corrected key could still recover."""
     init()
     with _connect() as c:
+        row = c.execute("SELECT settings FROM areas WHERE id=?", (area_id,)).fetchone()
+        previous: dict[str, Any] = {}
+        if row:
+            try:
+                loaded = json.loads(row["settings"] or "{}")
+                previous = loaded if isinstance(loaded, dict) else {}
+            except json.JSONDecodeError:
+                previous = {}
         c.execute("UPDATE areas SET settings=? WHERE id=?",
-                  (json.dumps(crypto.encrypt_settings(settings)), area_id))
+                  (json.dumps(crypto.encrypt_settings(crypto.keep_undecryptable(settings, previous))), area_id))
 
 
 def encrypt_existing_settings() -> int:
@@ -683,7 +709,10 @@ def encrypt_existing_settings() -> int:
     init()
     rewritten = 0
     for aid in all_area_ids():
-        raw = get_area_settings_raw(aid)
+        try:
+            raw = get_area_settings_raw(aid)
+        except ValueError:
+            continue                                # corrupt row: leave it for the operator
         if crypto.needs_reencrypt(raw):  # plain text, or readable only with a previous key
             save_area_settings(aid, crypto.decrypt_settings(raw))
             rewritten += 1
@@ -946,13 +975,13 @@ def list_invites() -> list[dict[str, Any]]:
 
 
 def consume_invite(code: str, user_id: int) -> bool:
+    """Mark an invite used — atomically, so two racing registrations with the
+    same code can never both succeed."""
     init()
     with _connect() as c:
-        row = c.execute("SELECT * FROM invites WHERE code=? AND used_by IS NULL", (code,)).fetchone()
-        if not row:
-            return False
-        c.execute("UPDATE invites SET used_by=?, used_at=? WHERE code=?", (user_id, _now(), code))
-        return True
+        cur = c.execute("UPDATE invites SET used_by=?, used_at=? WHERE code=? AND used_by IS NULL",
+                        (user_id, _now(), code))
+        return cur.rowcount == 1
 
 
 def delete_invite(code: str) -> None:
@@ -1489,7 +1518,11 @@ def consume_agent_pairing(code: str) -> Optional[dict[str, Any]]:
                       (code, now)).fetchone()
         if not r:
             return None
-        c.execute("UPDATE agent_pairings SET used_at=? WHERE code=?", (now, code))
+        # single use, atomically: a second caller with the same code loses the race
+        cur = c.execute("UPDATE agent_pairings SET used_at=? WHERE code=? AND used_at IS NULL AND expires_at>?",
+                        (now, code, now))
+        if cur.rowcount != 1:
+            return None
     return {"area_id": r["area_id"], "name": r["name"]}
 
 
@@ -1712,8 +1745,12 @@ def consume_password_reset(token: str, new_password: str) -> Optional[int]:
     if not rec:
         return None
     with _connect() as c:
+        # burn the token first, atomically: two racing submits set one password, not two
+        cur = c.execute("UPDATE password_resets SET used_at=? WHERE token=? AND used_at IS NULL AND expires_at>?",
+                        (_now(), token, _now()))
+        if cur.rowcount != 1:
+            return None
         c.execute("UPDATE users SET password_hash=? WHERE id=?",
                   (hash_password(new_password), rec["user_id"]))
-        c.execute("UPDATE password_resets SET used_at=? WHERE token=?", (_now(), token))
     _pw_versions.pop(rec["user_id"], None)
     return rec["user_id"]

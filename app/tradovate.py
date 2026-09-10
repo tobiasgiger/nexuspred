@@ -651,12 +651,9 @@ class TradovateSession:
     async def liquidate_position(self, symbol: str, *, account_id: int | None = None,
                                  account_name: str | None = None, account_spec: str | None = None) -> dict[str, Any]:
         _, aid = self._target(account_spec, account_id)
-        contract = await self._request("GET", "/contract/find", params={"name": symbol})
-        if not contract or not contract.get("id"):
-            raise TradovateError(f"Cannot resolve contract id for {symbol}")
+        cid = await self.contract_id(symbol)          # cached: no extra round trip on a close
         data = await self._request("POST", "/order/liquidateposition",
-                                   json={"accountId": aid,
-                                         "contractId": contract["id"], "admin": False})
+                                   json={"accountId": aid, "contractId": cid, "admin": False})
         failure = self._order_failure(data)
         state.log_order({"action": "Liquidate", "symbol": symbol,
                          "account": account_name or self.name, "account_id": aid,

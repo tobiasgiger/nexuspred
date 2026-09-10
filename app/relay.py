@@ -83,6 +83,23 @@ def _queue(agent_id: int) -> asyncio.Queue:
     return q
 
 
+def _prune(q: asyncio.Queue) -> None:
+    """Drop jobs their callers already gave up on (an agent that never polls
+    would otherwise accumulate every abandoned job until it comes back)."""
+    if q.empty():
+        return
+    keep: list[_Job] = []
+    while True:
+        try:
+            j = q.get_nowait()
+        except asyncio.QueueEmpty:
+            break
+        if not j.future.done():
+            keep.append(j)
+    for j in keep:
+        q.put_nowait(j)
+
+
 def touch(agent_id: int) -> None:
     _last_seen[agent_id] = time.monotonic()
 
@@ -118,7 +135,9 @@ async def request(agent_id: int, *, method: str, url: str, headers: dict[str, st
     job = _Job(agent_id, {"method": method, "url": url, "headers": headers,
                           "json": json_body, "params": params or None, "timeout": timeout}, loop)
     _inflight[job.id] = job
-    await _queue(agent_id).put(job)
+    q = _queue(agent_id)
+    _prune(q)
+    await q.put(job)
     try:
         # phase 1: the agent must pick the job up quickly — an agent that is not
         # polling is "offline" now, not after the whole HTTP timeout

@@ -28,6 +28,7 @@ from app import auth, config, context, crypto, db, history, http, push, relay, s
 from app import copy as copy_mod  # noqa: E402
 from app import risk  # noqa: E402
 from app import pnl as pnl_mod  # noqa: E402
+from app import drawdown as drawdown_mod  # noqa: E402
 from app.discord_signals import hub, listener  # noqa: E402
 from app.main import app  # noqa: E402
 
@@ -72,6 +73,7 @@ def _reset_runtime() -> None:
     copy_mod.reset()
     risk.reset()
     pnl_mod.reset()
+    drawdown_mod.reset()
 
 
 @pytest.fixture(autouse=True)

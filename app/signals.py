@@ -37,6 +37,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import threading
+import time
 from typing import Any
 
 from . import alerts, config, context, state
@@ -88,14 +89,26 @@ _active: dict[int, dict[str, dict[str, Any]]] = {}
 _sim_active: dict[int, dict[str, dict[str, Any]]] = {}
 
 
+ACTIVE_TTL_S = 14 * 24 * 3600     # a record whose position closed without a signal (stop hit) is forgotten after this
+_sweep_n = 0
+
+
 def _map_for(simulate: bool) -> dict[str, dict[str, Any]]:
     """The active-trade map for the current area (live or simulated)."""
+    global _sweep_n
     reg = _sim_active if simulate else _active
     aid = context.get_area()
     with _lock:
         m = reg.get(aid)
         if m is None:
             m = reg[aid] = {}
+        _sweep_n += 1
+        if _sweep_n % 200 == 0 and len(m) > 50:
+            # TS-Hunter keys every trade by its own id: records whose position
+            # was closed at the broker (stop / target hit) would otherwise stay forever
+            cutoff = time.time() - ACTIVE_TTL_S
+            for key in [k for k, rec in m.items() if 0 < float(rec.get("ts") or 0) < cutoff]:
+                m.pop(key, None)
         return m
 
 

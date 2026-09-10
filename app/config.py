@@ -14,6 +14,8 @@ import threading
 from pathlib import Path
 from typing import Any, Callable
 
+log = logging.getLogger(__name__)
+
 # Repository root (one level up from the ``app`` package).
 ROOT_DIR = Path(__file__).resolve().parent.parent
 # Where runtime settings live. On hosts with an ephemeral filesystem (e.g. Render)
@@ -194,6 +196,13 @@ LEGACY_SETTINGS_FILE = DATA_DIR / "settings.json"
 # Per-area settings cache. Reentrant lock: save_settings() calls load_settings().
 _lock = threading.RLock()
 _cache: dict[int, dict[str, Any]] = {}
+_degraded: set[int] = set()          # areas whose last database read failed: reads fall back to defaults, writes are refused
+_webhooks_generation = 0             # bumped only when an area's webhook list changes (find_webhook's index key)
+
+
+class SettingsUnavailable(RuntimeError):
+    """The area's settings could not be read from the database; nothing is
+    written on top of defaults — that would wipe the area's configuration."""
 # Bumped on every write / invalidation; derived caches (the webhook-token index)
 # compare against it instead of re-reading the DB.
 _generation = 0
@@ -313,28 +322,52 @@ def load_settings(area_id: int | None = None, force: bool = False) -> dict[str, 
         merged = copy.deepcopy(DEFAULT_SETTINGS)
         try:
             merged.update(db.get_area_settings(aid) or {})
-        except Exception:  # noqa: BLE001 - a DB hiccup shouldn't crash a read
-            pass
+        except Exception as exc:  # noqa: BLE001 - a DB hiccup shouldn't crash a read
+            # defaults for this read only: not cached (the next read retries) and
+            # never written back (see _persist)
+            if aid not in _degraded:
+                log.error("settings of area %s could not be read (%s); serving defaults, writes refused until the read succeeds", aid, exc)
+            _degraded.add(aid)
+            return merged
+        _degraded.discard(aid)
         try:
             if ensure_login_ids(merged) | stamp_routes(merged):
                 _persist(aid, merged)       # self-healing: ids and indices stay consistent
-        except Exception:  # noqa: BLE001 - never let the migration break a read
-            pass
+        except Exception as exc:  # noqa: BLE001 - never let the migration break a read
+            log.error("settings migration for area %s failed: %s", aid, exc)
         _cache[aid] = merged
         return copy.deepcopy(merged)
 
 
+def _load_for_write(aid: int) -> dict[str, Any]:
+    """The settings a write starts from: the cache when it is current (every
+    write goes through _persist, which refreshes it), else a fresh read. Lock
+    held by caller. Raises :class:`SettingsUnavailable` instead of handing out
+    defaults that a save would write over the real configuration."""
+    if aid in _cache and aid not in _degraded:
+        return copy.deepcopy(_cache[aid])
+    current = load_settings(area_id=aid, force=True)
+    if aid in _degraded:
+        raise SettingsUnavailable(f"settings of area {aid} could not be read — nothing saved")
+    return current
+
+
 def _persist(aid: int, current: dict[str, Any]) -> None:
     """Write an area's full settings dict and refresh the cache. Lock held by caller."""
-    global _generation
+    global _generation, _webhooks_generation
     from . import db
 
+    if aid in _degraded:
+        raise SettingsUnavailable(f"settings of area {aid} could not be read — nothing saved")
     try:
         ensure_login_ids(current)
         stamp_routes(current)           # every write leaves ids and route indices consistent
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        log.error("route stamping for area %s failed: %s", aid, exc)
     db.save_area_settings(aid, current)
+    before = _cache.get(aid)
+    if before is None or before.get("webhooks") != current.get("webhooks"):
+        _webhooks_generation += 1       # the token index is rebuilt only when a webhook list changed
     _cache[aid] = current
     _generation += 1
 
@@ -344,7 +377,7 @@ def save_settings(updates: dict[str, Any], area_id: int | None = None) -> dict[s
     Unknown keys are dropped (the settings schema is ``DEFAULT_SETTINGS``)."""
     aid = _resolve_area(area_id)
     with _lock:
-        current = load_settings(area_id=aid, force=True)
+        current = _load_for_write(aid)
         for key, value in updates.items():
             if key in DEFAULT_SETTINGS:  # ignore unknown keys
                 current[key] = value
@@ -358,7 +391,7 @@ def update(mutator: Callable[[dict[str, Any]], Any], area_id: int | None = None)
     settings lock — so two concurrent edits can never clobber each other."""
     aid = _resolve_area(area_id)
     with _lock:
-        current = load_settings(area_id=aid, force=True)
+        current = _load_for_write(aid)
         mutator(current)
         current = {k: v for k, v in current.items() if k in DEFAULT_SETTINGS}
         _persist(aid, current)
@@ -367,13 +400,14 @@ def update(mutator: Callable[[dict[str, Any]], Any], area_id: int | None = None)
 
 def invalidate(area_id: int | None = None) -> None:
     """Drop an area's cached settings (or all) so the next read re-loads from DB."""
-    global _generation
+    global _generation, _webhooks_generation
     with _lock:
         if area_id is None:
             _cache.clear()
         else:
             _cache.pop(area_id, None)
         _generation += 1
+        _webhooks_generation += 1
 
 
 def find_webhook(token: str) -> tuple[int | None, dict[str, Any] | None]:
@@ -390,7 +424,7 @@ def find_webhook(token: str) -> tuple[int | None, dict[str, Any] | None]:
     if not token:
         return None, None
     with _lock:
-        key = (_generation, db.areas_generation())
+        key = (_webhooks_generation, db.areas_generation())
         idx = _webhook_index
         if idx is None or idx[0] != key:
             table: dict[str, tuple[int, dict[str, Any]]] = {}

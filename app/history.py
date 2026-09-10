@@ -15,6 +15,7 @@ at startup and once a day.
 """
 from __future__ import annotations
 
+import logging
 import os
 import queue
 import threading
@@ -23,6 +24,7 @@ from typing import Any, Optional
 
 from . import db
 
+log = logging.getLogger(__name__)
 RETENTION_DAYS = int(os.environ.get("NEXUSPRED_HISTORY_DAYS") or 90)
 HYDRATE_ROWS = 200  # matches state._MAX
 
@@ -50,8 +52,8 @@ def _worker() -> None:
         _idle.clear()
         try:
             _write(*item)
-        except Exception:  # noqa: BLE001 - history must never kill the writer
-            pass
+        except Exception as exc:  # noqa: BLE001 - history must never kill the writer
+            log.error("history write failed (%s row dropped): %s", item[0], exc)
         finally:
             if _q.empty():
                 _idle.set()
@@ -92,8 +94,8 @@ def _submit(kind: str, area_id: int, entry: dict[str, Any]) -> None:
     else:
         try:
             _write(kind, area_id, entry)
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            log.error("history write failed (%s row dropped): %s", kind, exc)
 
 
 def record_signal(area_id: int, entry: dict[str, Any]) -> None:

@@ -5,10 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from .. import alerts, context, db, state
 from ..discord_signals import listener as discord_listener
-from ..web import base_url, require_admin
+from ..web import base_url, require_admin, set_session_cookie
 
 router = APIRouter(prefix="/api", tags=["users"])
 
@@ -111,8 +112,10 @@ async def api_audit(request: Request, kind: str = "actions") -> list[dict[str, A
 
 
 @router.post("/account/password")
-async def api_change_password(request: Request) -> dict[str, Any]:
-    """Self-service password change: verify the current password, then set a new one."""
+async def api_change_password(request: Request) -> JSONResponse:
+    """Self-service password change: verify the current password, then set a
+    new one. Every other session of the user is signed out (the cookie carries
+    the password version); this session gets a fresh cookie so the user is not."""
     user = request.state.user
     body = await request.json()
     current = str(body.get("current", ""))
@@ -124,7 +127,9 @@ async def api_change_password(request: Request) -> dict[str, Any]:
     await db.set_password_async(user["id"], new)
     db.log_action(user["id"], user["email"], "password_change", user["email"])
     state.log_event("info", f"Password changed for {user['email']}")
-    return {"status": "ok"}
+    resp = JSONResponse({"status": "ok"})
+    set_session_cookie(resp, request, user["id"])
+    return resp
 
 
 @router.post("/users/{user_id}/reset")

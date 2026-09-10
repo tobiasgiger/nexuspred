@@ -307,7 +307,6 @@ async def check_area(area_id: int, *, force: bool = False, today: Optional[date]
     today = today or datetime.now(timezone.utc).date()
     if not force and _last_run.get(area_id) == today:
         return state.rollover_warnings(area_id)
-    _last_run[area_id] = today
     with context.use_area(area_id):
         s = config.load_settings()
         warn_days = int(s.get("rollover_warn_days", 10) or 0)
@@ -341,6 +340,7 @@ async def check_area(area_id: int, *, force: bool = False, today: Optional[date]
         notified = {k: v for k, v in notified.items() if k in keep}
         if notified != (s.get("rollover_notified") or {}):
             config.save_settings({"rollover_notified": notified})
+        _last_run[area_id] = today           # stamped only after a complete run: a failed one is retried
         return warnings
 
 
@@ -350,4 +350,7 @@ async def check_all(today: Optional[date] = None) -> None:
         area_ids = db.all_area_ids()
     except Exception:  # noqa: BLE001
         return
-    await asyncio.gather(*(check_area(a, today=today) for a in area_ids), return_exceptions=True)
+    results = await asyncio.gather(*(check_area(a, today=today) for a in area_ids), return_exceptions=True)
+    for aid, r in zip(area_ids, results):
+        if isinstance(r, Exception):
+            state.log_event("warn", f"rollover check failed for area {aid}: {r}")

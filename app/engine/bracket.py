@@ -2,10 +2,13 @@
 ``move_sl`` (break-even / trailing) and ``trail_active`` (stop resize)."""
 from __future__ import annotations
 
+import time
+
 import asyncio
 from typing import Any
 
 from .. import alerts, config, state
+from ..tradovate import _fire
 from .common import _place_stop_with_retry, SignalError, _lock, _opposite, _tp_index_from_event, _trade_key
 from ..sizing import account_qty
 
@@ -101,7 +104,7 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
             active_map[key] = {
                 "webhook_id": webhook["id"], "webhook_name": webhook.get("name", ""),
                 "root": root, "contract": contract, "side": action, "qty": base_qty,
-                "accounts": acct_state,
+                "accounts": acct_state, "ts": time.time(),
             }
 
     state.log_event(
@@ -109,7 +112,7 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
         f"placed on {len(acct_state)}/{len(executors)} account(s): {', '.join(acct_state)}"
     )
     if acct_state and not tag:
-        await alerts.trade_executed(webhook.get("name", "?"), action, contract, list(acct_state))
+        _fire(alerts.trade_executed(webhook.get("name", "?"), action, contract, list(acct_state)))   # never wait for SMTP
     return {"status": "ok", "action": action, "contract": contract,
             "accounts": summary, "orders": orders, "simulated": tag != ""}
 
