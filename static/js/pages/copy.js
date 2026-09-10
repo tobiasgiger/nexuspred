@@ -143,7 +143,8 @@ function groupDrawer(group, { reload, onClose = null }) {
       diag.last_position_event ? `last position event: ${JSON.stringify(diag.last_position_event)}` : null,
       (diag.baseline || []).length ? `baseline (not copied): ${diag.baseline.join(", ")}` : null,
     ].filter(Boolean);
-    const diagBox = h("details", { class: "cp-diag" }, h("summary", null, "Diagnostics"), h("pre", { class: "code cp-diag-pre" }, diagLines.join("\n")));
+    const recent = (diag.recent || []).length ? h("pre", { class: "code cp-diag-pre" }, "recent socket messages (newest last):\n" + diag.recent.join("\n")) : null;
+    const diagBox = h("details", { class: "cp-diag" }, h("summary", null, "Diagnostics"), h("pre", { class: "code cp-diag-pre" }, diagLines.join("\n")), recent);
     liveBox.append(head, notes, (st.leader_positions || []).length
       ? h("div", { class: "muted", style: "font-size:12px;margin-bottom:6px" }, "Leader: ", st.leader_positions.map((p) => `${p.symbol} ${signed(p.net)}${p.baseline ? " (baseline)" : ""}`).join(" · "))
       : h("div", { class: "muted", style: "font-size:12px;margin-bottom:6px" }, "Leader is flat."),

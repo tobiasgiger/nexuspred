@@ -44,7 +44,8 @@ RECONCILE_INTERVAL_S = 10.0
 HEARTBEAT_S = 2.5
 RECONNECT_BACKOFF_S = 2.0   # first retry delay after a feed error (doubles up to 30 s)
 FEED_STALE_S = 12.0          # no frame for this long → the WebSocket is considered lost
-WS_BACKSTOP_S = 5.0          # on the WebSocket feed: REST position check this often (belt and braces)
+WS_BACKSTOP_S = 1.0          # on the WebSocket feed: REST position check this often (belt and braces)
+WS_RECENT_MAX = 20           # raw socket messages kept for the diagnostics block
 REJECT_HOLDOFF_S = 30.0      # reconcile leaves a follower alone this long after a rejected order
 MAX_EVENTS_MEMORY = 200
 
@@ -207,7 +208,7 @@ class GroupRunner:
         self._filtered: set[int] = set()              # contracts already reported as filtered out
         self.follower_err_at: dict[str, float] = {}   # spec → monotonic of the last reject
         self.leader_account_id = 0
-        self.diag: dict[str, Any] = {"frames": 0, "props": {}, "backstop_catches": 0}
+        self.diag: dict[str, Any] = {"frames": 0, "props": {}, "backstop_catches": 0, "recent": []}
         self._stop = asyncio.Event()
 
     # ---- helpers
@@ -425,7 +426,12 @@ class GroupRunner:
                     continue
                 self.last_frame = time.monotonic()
                 self.diag["frames"] = int(self.diag.get("frames") or 0) + 1
-                for msg in parse_frames(str(raw)):
+                text = str(raw)
+                if text and text[0] not in ("h", "o"):
+                    recent = self.diag.setdefault("recent", [])
+                    recent.append(f"{datetime.now(timezone.utc).strftime('%H:%M:%S')} {text[:600]}")
+                    del recent[:-WS_RECENT_MAX]
+                for msg in parse_frames(text):
                     await self._on_ws_message(session, account_id, msg)
 
     async def _on_ws_message(self, session: Any, account_id: int, msg: dict[str, Any]) -> None:
@@ -476,7 +482,7 @@ class GroupRunner:
             if self.leader_net.get(cid, 0) != net:
                 changed += 1
                 if source != "poll":
-                    self._record("ws_miss", symbol=self.contract_names.get(cid, str(cid)),
+                    self._record("ws_miss", symbol=await self._contract_name(session, cid),
                                  detail=f"{source}: leader {self.leader_net.get(cid, 0):+d} → {net:+d} not delivered by the socket")
                 await self._on_position(session, cid, net)
         for cid in [c for c, n in self.leader_net.items() if n and c not in seen]:

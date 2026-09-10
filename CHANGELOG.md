@@ -4,6 +4,13 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.35
+- **Copy trading: 1-second backstop, socket capture.** Live groups mirrored every change
+  through the REST backstop (`ws_miss`), i.e. the socket delivered no position events; the
+  backstop now runs every second so the worst-case delay matches the poll feed, `ws_miss`
+  rows carry the contract name, and the Diagnostics block keeps the last 20 raw socket
+  messages so the event shape Tradovate actually sends can be read off the drawer.
+
 ## 5.0.0-alpha.34
 - **Copy trading: no silent paths, REST backstop, diagnostics.** A live group saw the
   leader's trade but sent no follower order and logged nothing. Every branch that could
