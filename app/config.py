@@ -130,6 +130,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "alert_on_agent_restored": True,
     # Copy trading: rejected mirror orders and groups paused after a feed loss.
     "alert_on_copy": True,
+    # Per-account risk guard (daily loss / profit limit, flatten time) fired.
+    "alert_on_risk": True,
+    # Risk-guard locks per trade account (spec → {day, kind, reason, pnl, at}); app.risk.
+    "risk_state": {},
     # Copy-trading groups (leader → followers); managed by /api/copy.
     "copy_groups": [],
     # One summary per day (local time in journal_timezone) with realised P&L.
@@ -401,7 +405,7 @@ SETTINGS_PROTECTED_KEYS = frozenset({
     "token_accounts", "webhooks", "webhooks_migrated", "webhook_secret",
     "discord_enabled", "discord_user_token", "discord_dry_run", "discord_channels",
     "rollover_notified", "journal_last_import", "journal_report_cursor", "journal_report_window",
-    "dd_state", "copy_groups",
+    "dd_state", "copy_groups", "risk_state",
 })
 
 # Fields that must never be returned to the browser in plain text.

@@ -19,7 +19,7 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from . import config, context, db, drawdown, state, tradovate, watch
+from . import risk, config, context, db, drawdown, state, tradovate, watch
 
 IDLE_INTERVAL_S = 60.0
 MAX_BACKOFF_S = 120.0
@@ -80,7 +80,7 @@ async def refresh_area(area_id: int) -> dict[str, Any]:
         accounts: list[dict[str, Any]] = []
         errors: list[str] = []
         for s in sessions:
-            risk = await risk_settings(s)
+            risk_recs = await risk_settings(s)
             for a in s.accounts:
                 if not a.get("id"):
                     continue
@@ -90,7 +90,7 @@ async def refresh_area(area_id: int) -> dict[str, Any]:
                     errors.append(f"{a.get('spec') or a.get('id')}: {exc}")
                     continue
                 try:
-                    snap.update(drawdown.apply(area_id, snap, risk.get(int(a["id"]))))
+                    snap.update(drawdown.apply(area_id, snap, risk_recs.get(int(a["id"]))))
                 except Exception as exc:  # noqa: BLE001 - the drawdown view must never break the P&L feed
                     state.log_event("warn", f"drawdown tracking failed for {snap.get('spec')}: {exc}")
                 accounts.append(snap)
@@ -104,6 +104,10 @@ async def refresh_area(area_id: int) -> dict[str, Any]:
             "error": "; ".join(errors)[:300],
         }
         summary["total"] = round(summary["realized"] + summary["open"], 2)
+        try:
+            await risk.check_area(area_id, sessions, accounts)
+        except Exception as exc:  # noqa: BLE001 - the guard must never break the P&L feed
+            state.log_event("warn", f"risk guard failed: {exc}")
         changed = state.set_pnl(summary, area_id)
         if changed:
             state.publish("pnl", summary, area_id)
@@ -128,7 +132,7 @@ async def pnl_loop() -> None:
                 fast = max(2.0, fast)
                 # Fast while a dashboard is open — or while trade alerts need a
                 # timely view of the broker's positions.
-                watched = state.subscriber_count(aid) or watch.trade_alerts_enabled(s)
+                watched = state.subscriber_count(aid) or watch.trade_alerts_enabled(s) or risk.any_active(s)
                 interval = fast if watched else IDLE_INTERVAL_S
                 try:
                     summary = await refresh_area(aid)

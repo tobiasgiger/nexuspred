@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
-from .. import config, context, db, state, tradovate
+from .. import config, context, db, risk, state, tradovate
 
 router = APIRouter(prefix="/api", tags=["accounts"])
 
@@ -31,6 +31,8 @@ def trade_accounts_overview() -> list[dict[str, Any]]:
                 "id": a.get("id") or a.get("account_id") or 0,
                 "enabled": bool(a.get("enabled", True)),
                 "qty_multiplier": float(a.get("qty_multiplier", t.get("qty_multiplier", 1)) or 1),
+                "risk": dict(a.get("risk") or {}),
+                "locked": risk.lock_of(context.get_area(), a.get("spec") or a.get("account_spec") or ""),
             })
     return out
 
@@ -120,6 +122,11 @@ async def api_save_trade_accounts(request: Request) -> list[dict[str, Any]]:
             a["qty_multiplier"] = float(u.get("qty_multiplier", 1) or 1)
             if u.get("id"):
                 a["id"] = u["id"]
+            if "risk" in u:
+                try:
+                    a["risk"] = risk.normalize(u["risk"])
+                except (TypeError, ValueError) as exc:
+                    raise HTTPException(status_code=400, detail=f"{spec}: {exc}") from exc
             existing[spec] = a
         t["accounts"] = list(existing.values())
         tokens[idx] = t
@@ -129,3 +136,23 @@ async def api_save_trade_accounts(request: Request) -> list[dict[str, Any]]:
     enabled = sum(1 for a in trade_accounts_overview() if a["enabled"])
     state.log_event("info", f"Trade-account toggles updated — {enabled} enabled for execution")
     return trade_accounts_overview()
+
+
+# ================================================================= Risk guard
+@router.get("/risk")
+async def api_risk() -> list[dict[str, Any]]:
+    """Every trade account's risk rules and today's lock."""
+    return risk.overview(context.get_area())
+
+
+@router.post("/risk/unlock")
+async def api_risk_unlock(request: Request) -> dict[str, Any]:
+    """Clear an account's risk lock for today (the rules stay in place)."""
+    body = await request.json()
+    spec = str(body.get("spec") or "")
+    if not spec:
+        raise HTTPException(status_code=400, detail="spec required")
+    if not risk.unlock(context.get_area(), spec):
+        raise HTTPException(status_code=404, detail="Account is not locked")
+    state.log_event("warn", f"🔓 Risk guard: {spec} unlocked by user")
+    return {"status": "unlocked", "spec": spec}

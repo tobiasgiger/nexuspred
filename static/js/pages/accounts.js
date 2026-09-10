@@ -6,6 +6,7 @@ import { api } from "../api.js";
 import { store } from "../store.js";
 import { actions } from "../actions.js";
 import { dataTable } from "../components/table.js";
+import { openDrawer, closeDrawer } from "../components/drawer.js";
 
 export default {
   title: "Tradovate Accounts",
@@ -68,6 +69,53 @@ export default {
       await actions.connectAll();
     } }, icon("refresh"), "Connect & Verify");
 
+    const money = (v) => Number(v).toLocaleString([], { maximumFractionDigits: 0 });
+    const riskSummary = (a) => {
+      const r = a.risk || {};
+      const parts = [];
+      if (Number(r.loss_limit)) parts.push(`−${money(r.loss_limit)}`);
+      if (Number(r.profit_limit)) parts.push(`+${money(r.profit_limit)}`);
+      if (r.flatten_at) parts.push(`⏰ ${r.flatten_at}`);
+      return parts.length ? parts.join(" · ") : "";
+    };
+    /** Drawer: daily loss / profit limit, flatten time and today's lock for one account. */
+    function riskDrawer(a) {
+      const r = a.risk || {};
+      const lossInp = h("input", { type: "number", min: 0, step: 1, value: r.loss_limit || "", placeholder: "off" });
+      const profitInp = h("input", { type: "number", min: 0, step: 1, value: r.profit_limit || "", placeholder: "off" });
+      const timeInp = h("input", { type: "time", value: r.flatten_at || "" });
+      const lock = a.locked;
+      const lockBox = lock
+        ? h("div", { class: "callout warn" }, h("strong", null, "Locked for today: "), lock.reason, h("div", { class: "hint", style: "margin-top:4px" }, `Since ${new Date(lock.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · P&L at trigger ${Number(lock.pnl).toLocaleString([], { maximumFractionDigits: 2 })}. Bridge orders for this account are refused; a position that reappears is closed again.`))
+        : h("div", { class: "callout" }, "Not locked. When a rule fires, every working order is cancelled, every position closed at market and the account locked until the next local day.");
+      const unlockBtn = lock ? h("button", { type: "button", class: "btn btn-ghost btn-danger", onClick: async () => {
+        if (!(await confirmDialog({ title: `Unlock ${maskAccount(a.spec)}?`, body: "Bridge orders are accepted again today. The rules stay in place and can fire again.", confirmText: "Unlock", danger: true }))) return;
+        try { await api.post("/api/risk/unlock", { spec: a.spec }); toast("Account unlocked", "success"); closeDrawer(); actions.loadTradeAccounts(); }
+        catch (e) { toast(e.message, "error"); }
+      } }, icon("key"), "Unlock for today") : null;
+      const saveRisk = h("button", { type: "button", class: "btn btn-primary", onClick: async () => {
+        saveRisk.disabled = true;
+        try {
+          const list = await api.post("/api/trade-accounts", [{ token_idx: a.token_idx, spec: a.spec, id: a.id, enabled: a.enabled, qty_multiplier: a.qty_multiplier,
+            risk: { loss_limit: Number(lossInp.value) || 0, profit_limit: Number(profitInp.value) || 0, flatten_at: timeInp.value || "" } }]);
+          store.set("tradeAccounts", list);
+          toast("Risk rules saved", "success");
+          closeDrawer();
+        } catch (e) { toast(e.message, "error"); }
+        finally { saveRisk.disabled = false; }
+      } }, icon("check"), "Save rules");
+      openDrawer({
+        title: `Risk guard · ${maskAccount(a.spec)}`,
+        body: [
+          lockBox,
+          h("div", { class: "field" }, h("label", null, "Daily loss limit"), lossInp, h("div", { class: "field-hint" }, "Account currency. Fires when today's P&L (realised + open, the broker's figures) reaches −limit. 0 = off.")),
+          h("div", { class: "field" }, h("label", null, "Daily profit target"), profitInp, h("div", { class: "field-hint" }, "Fires when today's P&L reaches +target — locks in the day. 0 = off.")),
+          h("div", { class: "field" }, h("label", null, "Flatten at"), timeInp, h("div", { class: "field-hint" }, "Local time (Settings → General → journal timezone). Everything on this account is closed at that time and the account is locked for the rest of the day. Empty = off.")),
+          h("p", { class: "hint" }, "Checked on every live P&L poll (Settings → General → Live P&L refresh, at least every few seconds while a rule is set). Applies to every path that trades this account: webhooks, Discord signals, marketplace subscriptions and copy trading."),
+        ],
+        foot: [saveRisk, h("button", { type: "button", class: "btn btn-ghost", onClick: () => closeDrawer() }, "Close"), h("span", { style: "flex:1" }), unlockBtn],
+      });
+    }
     const discovered = dataTable({
       empty: "No accounts yet — add a login above, save, then Connect & Verify.",
       columns: [
@@ -76,6 +124,9 @@ export default {
         { label: "Env", render: (a) => tag((a.environment || "—").toUpperCase(), a.environment === "live" ? "live" : "demo") },
         { label: "Login enabled", render: (a) => h("span", { class: a.token_enabled ? "pos" : "muted" }, a.token_enabled ? "yes" : "no") },
         { label: "Status", render: (a) => h("span", { class: a.connected ? "pos" : "neg" }, a.connected ? "Connected" : "Not connected") },
+        { label: "Risk guard", render: (a) => h("span", { class: "inline-actions" },
+          a.locked ? tag("locked", "warn") : null,
+          h("button", { type: "button", class: "btn btn-ghost btn-sm", title: "Daily loss / profit limit, flatten time", onClick: () => riskDrawer(a) }, icon("shield"), riskSummary(a) || "Set rules")) },
       ],
     });
 

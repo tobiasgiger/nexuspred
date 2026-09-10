@@ -186,6 +186,7 @@ export default {
         } }, label, h("span", { class: "arrow" }, active ? (pnlSort.dir === "asc" ? "▲" : "▼") : "")));
       }
     }
+    const riskTag = (a) => a.risk && a.risk.locked ? tag("locked", "warn") : null;
     function cell(k, node, changed) {
       return h("span", { class: `pnl-cell${changed ? " flash" : ""}` }, h("span", { class: "k" }, k), node);
     }
@@ -211,7 +212,7 @@ export default {
         const ch = (k) => !!was && Number(was[k]) !== Number(a[k]);
         if (hideIdle && isIdle(a)) continue;
         pnlRows.append(h("div", { class: `pnl-row${isIdle(a) ? " idle" : ""}` },
-          h("span", { class: "pnl-acct" }, maskAccount(a.spec || String(id)), a.environment === "live" ? [" ", tag("live", "accent")] : null),
+          h("span", { class: "pnl-acct", title: a.risk && a.risk.locked ? `Risk guard: ${a.risk.reason}` : null }, maskAccount(a.spec || String(id)), a.environment === "live" ? [" ", tag("live", "accent")] : null, riskTag(a) ? [" ", riskTag(a)] : null),
           cell("realised", money(a.realized), ch("realized")),
           cell("open", money(a.open), ch("open")),
           cell("week", money(a.week), ch("week")),

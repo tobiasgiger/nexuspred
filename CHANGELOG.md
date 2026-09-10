@@ -4,6 +4,19 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.36
+- **Risk guard per trade account** (`app/risk.py`, Settings → Tradovate Accounts → Risk
+  guard). Daily **loss limit**, daily **profit target** and a fixed **flatten time** per
+  account. Evaluated on every live P&L poll against the broker's own today's P&L
+  (realised + open). A hit flattens the account (cancel all working orders, close every
+  position at market) and **locks** it for the rest of the local day: the lock is enforced
+  in `TradovateSession.place_order`, the single path every order takes (webhooks, Discord,
+  marketplace, copy trading), refused orders appear as rejected in the order log, and a
+  position that reappears while locked is closed again. *Unlock for today* clears the lock
+  by hand; it clears itself with the next local day. `locked` tag on the Overview, *Risk
+  guard fired* alert (all channels), `GET /api/risk`, `POST /api/risk/unlock`. The P&L
+  poll runs at the fast cadence whenever any account has a rule. 5 tests.
+
 ## 5.0.0-alpha.35
 - **Copy trading: 1-second backstop, socket capture.** Live groups mirrored every change
   through the REST backstop (`ws_miss`), i.e. the socket delivered no position events; the

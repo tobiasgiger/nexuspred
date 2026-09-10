@@ -245,6 +245,19 @@ async def agent_restored(name: str) -> None:
                          _send_push(f"Agent online: {name}", message, url="/#/settings/agents"))
 
 
+async def risk_triggered(spec: str, kind: str, reason: str, pnl: float, errors: list[str]) -> None:
+    """Risk guard: an account hit its daily loss / profit limit or flatten time."""
+    s = config.load_settings()
+    if not s.get("alert_on_risk", True):
+        return
+    icon = {"loss": "🛑", "profit": "🎯", "time": "⏰"}.get(kind, "🔒")
+    message = (f"{icon} **Risk guard** — `{spec}` flattened and locked for today: {reason}."
+               + (f" Errors: {'; '.join(errors)}" if errors else ""))
+    await asyncio.gather(_send_discord(message),
+                         _send_email(f"Fluxbridge: risk guard {spec} ({kind})", message),
+                         _send_push(f"Risk guard: {spec}", message, url="/#/settings/accounts"))
+
+
 async def copy_alert(title: str, message: str, *, email: bool = False) -> None:
     """Copy trading: a follower order was rejected or a group paused itself."""
     s = config.load_settings()

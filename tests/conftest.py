@@ -26,6 +26,7 @@ import pytest  # noqa: E402
 
 from app import auth, config, context, crypto, db, history, http, push, relay, security, signals, state, tradovate, watch  # noqa: E402
 from app import copy as copy_mod  # noqa: E402
+from app import risk  # noqa: E402
 from app.discord_signals import hub, listener  # noqa: E402
 from app.main import app  # noqa: E402
 
@@ -68,6 +69,7 @@ def _reset_runtime() -> None:
     push.reset()
     watch.reset()
     copy_mod.reset()
+    risk.reset()
 
 
 @pytest.fixture(autouse=True)

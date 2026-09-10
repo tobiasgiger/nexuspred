@@ -14,7 +14,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from . import alerts, config, context, http, state
+from . import alerts, config, context, http, risk, state
 
 LIVE_BASE = "https://live.tradovateapi.com/v1"
 DEMO_BASE = "https://demo.tradovateapi.com/v1"
@@ -161,6 +161,7 @@ class TradovateSession:
                 "id": a.get("id") or a.get("account_id") or 0,
                 "enabled": bool(a.get("enabled", True)),
                 "qty_multiplier": float(a.get("qty_multiplier", self.qty_multiplier) or 1),
+                "risk": dict(a.get("risk") or {}),
             } for a in raw]
         if self.account_spec or self.account_id:
             return [{"spec": self.account_spec, "id": self.account_id,
@@ -396,6 +397,13 @@ class TradovateSession:
         spec = account_spec or self.account_spec
         aid = account_id or self.account_id
         name = account_name or self.name
+        if not risk.bypassed():
+            locked = risk.is_locked(self.area_id if self.area_id is not None else context.get_area(), spec)
+            if locked:
+                state.log_order({"action": action, "symbol": symbol, "account": name, "qty": qty,
+                                 "order_type": order_type, "price": price, "stop_price": stop_price,
+                                 "order_id": None, "status": "rejected", "raw": {"errorText": f"risk guard: {locked}"}})
+                raise TradovateError(f"{name} is locked by its risk guard for today ({locked})")
         body: dict[str, Any] = {
             "accountSpec": spec, "accountId": aid,
             "action": action, "symbol": symbol, "orderQty": qty,

@@ -538,6 +538,22 @@ Subscriptions are stored in the `subscriptions` table; the sharing config lives 
 webhook itself (`sharing` key), so v4 data stays compatible.
 
 ---
+## Risk guard (per trade account)
+
+Settings → Tradovate Accounts → *Discovered trade accounts* → **Risk guard** sets, per
+account, a **daily loss limit**, a **daily profit target** and a **flatten time**. The
+guard rides on the live P&L poll (a few seconds while a rule is set) and uses the
+broker's own figures — today's realised + open P&L. When a rule fires the account is
+**flattened** (every working order cancelled, every position closed at market) and
+**locked** for the rest of the local day (journal timezone): the bridge refuses every
+order for it — webhooks, Discord signals, marketplace subscriptions and copy-trading
+mirrors alike, because the check sits in the one place all of them place orders — and a
+position that reappears (a manual trade) is closed again on the next poll. The lock
+clears with the next day or with **Unlock for today** (the rules stay). Locked accounts
+carry a `locked` tag on the Overview; the *Risk guard fired* alert goes to all channels.
+Bridge-placed orders that the guard refuses show up as rejected in the order log.
+
+---
 ## Copy trading (mirror a leader account onto followers)
 
 **Routing → Copy Trading** mirrors the *positions* of one **leader** trade account onto
@@ -669,6 +685,7 @@ the dashboard **Update** button works.
 | `POST` | `/api/agent/pair` | Exchange a one-time pairing code for an agent token (unauthenticated, rate-limited) |
 | `GET`  | `/api/agent/jobs` | Agent long-poll for relay jobs (agent token) · `POST /api/agent/jobs/{id}/result` delivers the answer |
 | `GET`  | `/api/agents` | Paired agents with online state · `POST /api/agents/pairing-code`, `PUT`/`DELETE /api/agents/{id}`, `GET /api/agents/download.zip` (admin) |
+| `GET`  | `/api/risk` | Every trade account's risk rules and today's lock · `POST /api/risk/unlock {spec}` clears a lock; rules are saved with `POST /api/trade-accounts` (`risk` key) |
 | `GET/POST` | `/api/copy/groups` | Copy-trading groups with live status · `PUT`/`DELETE /api/copy/groups/{id}`, `POST …/{id}/enable|disable|resume|sync|flatten`, `GET /api/copy/status`, `GET /api/copy/events` |
 | `GET`  | `/api/pnl` | Live account P&L: today's realised, open, week, cash per account (`?refresh=1` polls Tradovate now) |
 | `GET`  | `/api/journal/overview` | Journal stats, per-period buckets, equity curve for a filter slice (`range`/`frm`/`to`, `account`, `symbol`, `side`, `period`) |
