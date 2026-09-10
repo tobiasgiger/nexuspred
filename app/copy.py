@@ -36,7 +36,7 @@ from typing import Any, Optional
 from . import alerts, config, context, db, state, tradovate
 from .copy_orders import OrderMirror
 from .engine.common import _base_root
-from .tradovate import AccountExecutor, TradovateError
+from .tradovate import AccountExecutor, RateLimited, TradovateError
 
 WS_URLS = {"live": "wss://live.tradovateapi.com/v1/websocket",
            "demo": "wss://demo.tradovateapi.com/v1/websocket"}
@@ -46,6 +46,9 @@ HEARTBEAT_S = 2.5
 RECONNECT_BACKOFF_S = 2.0   # first retry delay after a feed error (doubles up to 30 s)
 FEED_STALE_S = 12.0          # no frame for this long → the WebSocket is considered lost
 POLL_ERROR_SLEEP_S = 2.0     # retry delay of the REST poll after an error
+POLL_MAX_INTERVAL_S = 5.0    # the poll slows down to this after Tradovate rate-limits us
+POLL_RECOVER_S = 60.0        # a clean minute speeds the poll up again by one step
+ORDERS_EVERY_N = 2           # the leader's orders are read every n-th position poll
 WS_SYNC_TIMEOUT_S = 15.0     # no answer to user/syncrequest → reconnect the socket
 WS_RECENT_MAX = 20           # raw socket messages kept for the diagnostics block
 REJECT_HOLDOFF_S = 30.0      # reconcile leaves a follower alone this long after a rejected order
@@ -192,6 +195,10 @@ class GroupRunner:
         self.tasks: list[asyncio.Task] = []
         self.feed_kind = ""
         self.feed_ok = False
+        self.poll_interval = POLL_INTERVAL_S    # adapts to Tradovate's rate limit
+        self.throttled_until: float = 0.0
+        self._poll_n = 0
+        self._last_429: float = 0.0
         self.ws_ok = False                     # the WebSocket accelerator is connected and synced
         self.ws_error = ""
         self.ws_last_frame: float = 0.0
@@ -388,7 +395,9 @@ class GroupRunner:
                 self.ws_ok = False
 
     async def _run_poll(self, session: Any, account_id: int) -> None:
-        """Poll until stopped or until the login must be re-resolved."""
+        """Poll until stopped or until the login must be re-resolved. A 429 from
+        Tradovate is a throttle, not a lost feed: the poll waits the penalty,
+        slows down a step and speeds up again after a clean minute."""
         while not self._stop.is_set():
             if not session.enabled or not session.has_token():
                 self.error = "leader login disabled or without token"
@@ -397,14 +406,28 @@ class GroupRunner:
             try:
                 await self._poll_once(session, account_id)
                 self._mark_feed(True)
+                if self.poll_interval > POLL_INTERVAL_S and time.monotonic() - self._last_429 > POLL_RECOVER_S:
+                    self.poll_interval = max(POLL_INTERVAL_S, self.poll_interval / 2)
+                    self._last_429 = time.monotonic()
             except asyncio.CancelledError:
                 raise
+            except RateLimited as exc:
+                self._last_429 = time.monotonic()
+                self.poll_interval = min(POLL_MAX_INTERVAL_S, self.poll_interval * 2)
+                self.throttled_until = time.monotonic() + exc.retry_after
+                self.error = f"rate limited by Tradovate on {exc.path} — waiting {exc.retry_after:.0f} s, poll now every {self.poll_interval:.0f} s"
+                self.last_frame = time.monotonic()        # the broker is reachable, just throttling
+                if not self.feed_ok:
+                    self._mark_feed(True)
+                self.diag["rate_limits"] = int(self.diag.get("rate_limits") or 0) + 1
+                await asyncio.sleep(exc.retry_after)
+                continue
             except Exception as exc:  # noqa: BLE001
                 self.error = f"{type(exc).__name__}: {exc}"[:200]
                 self._mark_feed(False)
                 await asyncio.sleep(POLL_ERROR_SLEEP_S)
                 continue
-            await asyncio.sleep(POLL_INTERVAL_S)
+            await asyncio.sleep(self.poll_interval)
 
     async def _ws_accelerator(self, session: Any, account_id: int) -> None:
         backoff = RECONNECT_BACKOFF_S
@@ -429,6 +452,8 @@ class GroupRunner:
             self._record("feed_up", detail=self.feed_kind)
             self.error = ""
             self._last_error = ""
+        elif ok and self.feed_ok and self.error.startswith("rate limited") and time.monotonic() >= self.throttled_until:
+            self.error = ""
         elif not ok and self.feed_ok:
             self._record("feed_lost", detail=self.error or "connection closed")
             self._last_error = self.error
@@ -537,7 +562,9 @@ class GroupRunner:
         the poll finds first is logged as ``ws_miss``."""
         if not source:
             source = "backstop" if self.ws_ok else "poll"
-        await self.orders.poll(session, account_id)
+        self._poll_n += 1
+        if self._poll_n % ORDERS_EVERY_N == 1 or ORDERS_EVERY_N == 1:
+            await self.orders.poll(session, account_id)
         raw = await session._request("GET", "/position/list") or []
         self.last_frame = time.monotonic()
         seen: set[int] = set()
@@ -802,6 +829,7 @@ class GroupRunner:
                               "positions": rows, "orders": self.orders.status(f["spec"])})
         return {"id": self.id, "running": bool(self.tasks), "feed": self.feed_kind, "feed_ok": self.feed_ok,
                 "ws_ok": self.ws_ok, "ws_error": self.ws_error,
+                "poll_interval": self.poll_interval, "throttled": time.monotonic() < self.throttled_until,
                 "paused": self.paused, "pause_reason": self.pause_reason, "error": self.error,
                 "last_event_ts": self.last_event_ts, "latency_ms": self.last_latency_ms,
                 "diag": {**self.diag, "leader_account_id": self.leader_account_id, "baseline": sorted(self.contract_names.get(c, str(c)) for c in self.baseline)},

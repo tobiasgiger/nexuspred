@@ -612,6 +612,8 @@ leader places by hand in the Tradovate UI, stop / target fills and manual closes
   `ws_miss`; the drawer's **Diagnostics** block shows the leader account id, the sync
   response, event counts and the last raw socket messages — the first place to look when a
   group does not copy.
+- **Rate limits**: a 429 from Tradovate is a throttle, not a lost feed — the poll waits
+  the broker's penalty, slows down (up to 5 s) and speeds up again after a clean minute.
 - **Feed loss**: when the REST poll fails (Tradovate unreachable, token dead) the feed is
   lost; after *Flatten followers after feed loss* seconds (default 30) every mirrored
   follower position is **closed at market**, the group **pauses** and an alert goes out

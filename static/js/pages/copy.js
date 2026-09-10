@@ -34,8 +34,9 @@ function feedTag(g) {
   if (!s) return tag("starting…", "");
   if (s.paused) return tag("paused", "warn");
   if (!s.feed_ok) return tag("feed lost", "off");
+  if (s.throttled) return tag("live · throttled", "warn");
   if (s.feed === "websocket") return tag(s.ws_ok ? "socket + poll · live" : "poll · live (socket down)", "on");
-  return tag("poll · live", "on");
+  return tag(`poll${s.poll_interval > 1 ? ` ${s.poll_interval}s` : ""} · live`, "on");
 }
 
 function latencyText(s) {

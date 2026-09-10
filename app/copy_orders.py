@@ -30,7 +30,7 @@ import time
 from typing import TYPE_CHECKING, Any, Optional
 
 from . import context, db
-from .tradovate import TradovateError
+from .tradovate import RateLimited, TradovateError
 
 if TYPE_CHECKING:  # pragma: no cover
     from .copy import GroupRunner
@@ -161,6 +161,8 @@ class OrderMirror:
             return
         try:
             now = await self.snapshot(session, account_id)
+        except RateLimited:
+            raise                                   # the poll loop waits the penalty
         except Exception as exc:  # noqa: BLE001
             self.error = f"orders: {exc}"[:200]
             return

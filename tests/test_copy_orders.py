@@ -92,6 +92,7 @@ def world(monkeypatch, admin):
     ex.session, ex.id = fol, 2
     mgr = Manager([lead, fol], {"F1": ex})
     monkeypatch.setattr(tradovate, "manager_for", lambda area_id: mgr)
+    monkeypatch.setattr(cp, "ORDERS_EVERY_N", 1)     # every _poll_once reads the orders in these tests
     sent = []
 
     async def rec(*a, **k):

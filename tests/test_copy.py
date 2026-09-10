@@ -578,3 +578,64 @@ async def test_socket_accelerates_but_never_counts_as_the_feed(world, monkeypatc
         assert await _wait(lambda: len(ex.of("place")) == 2)
     finally:
         await r.stop()
+
+
+async def test_rate_limit_is_a_throttle_not_a_lost_feed(world, monkeypatch):
+    lead = world["leader"]
+    r = cp.GroupRunner(1, _group())
+    r.start()
+    try:
+        assert await _wait(lambda: r.feed_ok)
+        base = cp.POLL_INTERVAL_S
+        orig = lead._request
+
+        async def limited(method, path, **kw):
+            if path == "/position/list" and lead.limit:
+                lead.limit -= 1
+                raise tradovate.RateLimited(path, '{"p-ticket":"x","p-time":0.05}', 0.05)
+            return await orig(method, path, **kw)
+        lead.limit = 3
+        lead._request = limited
+        assert await _wait(lambda: lead.limit == 0)
+        await r.watchdog()
+        assert r.feed_ok and not r.paused and r.poll_interval > base and r.diag["rate_limits"] == 3
+        assert "rate limited" in r.error
+        assert not any(e["kind"] in ("feed_lost", "paused") for e in db.list_copy_events(1))
+        # still mirroring once the penalty is over
+        lead.positions = [{"accountId": 1, "contractId": 901, "netPos": 1}]
+        assert await _wait(lambda: len(world["execs"]["F1"].of("place")) == 1)
+        assert r.status()["throttled"] is False or r.status()["poll_interval"] > base
+    finally:
+        await r.stop()
+
+
+def test_429_becomes_rate_limited_with_the_penalty(monkeypatch):
+    assert tradovate._penalty_seconds('{"p-ticket":"t","p-time":12}') == 12.0
+    assert tradovate._penalty_seconds("") == 5.0 and tradovate._penalty_seconds("garbage") == 5.0
+    err = tradovate.RateLimited("/position/list", '{"p-time":3}', 3.0)
+    assert isinstance(err, tradovate.TradovateError) and err.retry_after == 3.0 and "429" in str(err)
+
+
+async def test_session_request_maps_429(admin):
+    sess = tradovate.TradovateSession(0, {"name": "L", "environment": "demo", "enabled": True, "access_token": "t"}, area_id=1)
+
+    class Resp:
+        status_code, text = 429, '{"p-ticket":"abc","p-time":7}'
+
+    class Client:
+        async def request(self, *a, **k):
+            return Resp()
+    from app import http
+    orig = http.client
+    http.client = lambda name: Client()
+    try:
+        sess._get_token = lambda: _tok()
+        with pytest.raises(tradovate.RateLimited) as ei:
+            await sess._request("GET", "/position/list")
+        assert ei.value.retry_after == 7.0
+    finally:
+        http.client = orig
+
+
+async def _tok():
+    return "t"

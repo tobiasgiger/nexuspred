@@ -27,6 +27,24 @@ class TradovateError(Exception):
     """Raised when the Tradovate API returns an error."""
 
 
+class RateLimited(TradovateError):
+    """Tradovate answered 429: the request was refused for ``retry_after`` s
+    (``p-time`` in the body when given). Not a connectivity problem."""
+    def __init__(self, path: str, text: str, retry_after: float) -> None:
+        super().__init__(f"429 {path}: rate limited by Tradovate, retry in {retry_after:.0f} s")
+        self.path, self.text, self.retry_after = path, text, retry_after
+
+
+def _penalty_seconds(text: str, default: float = 5.0) -> float:
+    try:
+        data = json.loads(text) if text else {}
+        p = float(data.get("p-time") or 0) if isinstance(data, dict) else 0.0
+        return max(1.0, min(p, 120.0)) if p else default
+    except (ValueError, TypeError):
+        return default
+
+
+
 def _front_month_key(name: str, root: str) -> tuple[int, int]:
     """Sort key (year, month) parsed from a contract name like ``MNQM5``."""
     suffix = name[len(root):]
@@ -191,11 +209,15 @@ class TradovateSession:
                     area_id=self.area_id if self.area_id is not None else context.get_area())
             except relay.AgentOffline as exc:
                 raise TradovateError(f"[{self.name}] {exc}") from exc
+            if status == 429:
+                raise RateLimited(path, text, _penalty_seconds(text))
             if status >= 400:
                 raise TradovateError(f"{status} {path}: {text}")
             return json.loads(text) if text else None
         # Pooled, keep-alive client: no TLS handshake per order (see app.http).
         resp = await http.client("tradovate").request(method, url, headers=headers, **kwargs)
+        if resp.status_code == 429:
+            raise RateLimited(path, resp.text, _penalty_seconds(resp.text))
         if resp.status_code >= 400:
             raise TradovateError(f"{resp.status_code} {path}: {resp.text}")
         return resp.json() if resp.text else None

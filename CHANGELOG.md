@@ -4,6 +4,14 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.40
+- **Copy trading: Tradovate's rate limit is a throttle, not a lost feed.** A 429 on the
+  leader poll marked the feed lost and could flatten the followers. `TradovateSession`
+  now raises `RateLimited` with the broker's penalty time (`p-time`); the copy poll waits
+  it out, slows down a step (up to 5 s, back to 1 s after a clean minute) and keeps the
+  feed marked up — the feed tag shows *live · throttled*. The leader's orders are read
+  every second poll to halve the request volume.
+
 ## 5.0.0-alpha.39
 - **Copy trading: the socket can no longer flatten your followers.** Tradovate's WebSocket
   answered `authorize` but never the sync request and dropped the connection every few
