@@ -4,6 +4,14 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.41
+- **Copy trading: orders over the socket, REST only as a safety net.** With the user sync
+  now answering, the leader's orders are maintained from the sync snapshot and the
+  `order` / `orderVersion` events too, so the REST poll drops to every 10 s while the
+  socket is synced (2 s when it is down, orders every second poll, up to 30 s after a
+  rate limit). The poll wakes immediately when the socket drops. The 429 body is kept in
+  Diagnostics (`last_429`).
+
 ## 5.0.0-alpha.40
 - **Copy trading: Tradovate's rate limit is a throttle, not a lost feed.** A 429 on the
   leader poll marked the feed lost and could flatten the followers. `TradovateSession`

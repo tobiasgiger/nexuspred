@@ -77,6 +77,7 @@ def world(monkeypatch, admin):
     mgr = Manager([leader, follower], execs)
     monkeypatch.setattr(tradovate, "manager_for", lambda area_id: mgr)
     monkeypatch.setattr(cp, "POLL_INTERVAL_S", 0.01)
+    monkeypatch.setattr(cp, "POLL_WS_INTERVAL_S", 0.05)
     monkeypatch.setattr(cp, "RECONCILE_INTERVAL_S", 3600)
     monkeypatch.setattr(cp, "RECONNECT_BACKOFF_S", 0.02)
     monkeypatch.setattr(cp, "POLL_ERROR_SLEEP_S", 0.02)

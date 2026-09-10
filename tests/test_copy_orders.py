@@ -1,6 +1,8 @@
 """Copy trading stage 2 (app/copy_orders.py): twins of the leader's working orders."""
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from app import alerts, config, context, copy as cp, db, tradovate
@@ -291,3 +293,36 @@ async def test_api_accepts_copy_orders_flag(client, admin, world):
     assert r.json()["copy_orders"] is True
     r = await client.put(f"/api/copy/groups/{gid}", json={"copy_orders": False})
     assert r.status_code == 200 and r.json()["copy_orders"] is False
+
+
+async def test_socket_entities_drive_the_order_mirror(world):
+    """The user-sync snapshot and order / orderVersion props events maintain the
+    leader's order picture without a REST poll."""
+    lead, ex = world["lead"], world["ex"]
+    r = await _runner(world)
+    # sync snapshot: one working limit with its version
+    await r._on_ws_message(lead, 1, {"i": 2, "s": 200, "d": {"positions": [], "accounts": [{"id": 1}],
+        "orders": [{"id": 70, "accountId": 1, "contractId": 901, "action": "Buy", "ordStatus": "Working", "ocoId": None}],
+        "orderVersions": [{"id": 700, "orderId": 70, "orderQty": 1, "orderType": "Limit", "price": 21000.0}]}})
+    assert _kinds() and ("F1", 70) in r.orders.twins and ex.of("place")[0]["price"] == 21000.0
+    # a modification arrives as a new orderVersion
+    await r._on_ws_message(lead, 1, {"e": "props", "d": {"entityType": "orderVersion", "eventType": "Created",
+        "entity": {"id": 701, "orderId": 70, "orderQty": 2, "orderType": "Limit", "price": 20990.0}}})
+    await asyncio.sleep(0.4)
+    assert ex.of("modify")[-1]["price"] == 20990.0 and r.orders.twins[("F1", 70)]["qty"] == 4
+    # a brand-new order: the order event lands first, its version a moment later
+    await r._on_ws_message(lead, 1, {"e": "props", "d": {"entityType": "order", "eventType": "Created",
+        "entity": {"id": 71, "accountId": 1, "contractId": 901, "action": "Sell", "ordStatus": "Working"}}})
+    await r._on_ws_message(lead, 1, {"e": "props", "d": {"entityType": "orderVersion", "eventType": "Created",
+        "entity": {"id": 710, "orderId": 71, "orderQty": 1, "orderType": "Stop", "stopPrice": 20800.0}}})
+    await asyncio.sleep(0.4)
+    assert ("F1", 71) in r.orders.twins and ex.of("place")[-1]["stop_price"] == 20800.0
+    # the leader's order fills: status update → twin cancelled
+    await r._on_ws_message(lead, 1, {"e": "props", "d": {"entityType": "order", "eventType": "Updated",
+        "entity": {"id": 70, "accountId": 1, "contractId": 901, "action": "Buy", "ordStatus": "Filled"}}})
+    await asyncio.sleep(0.4)
+    assert ("F1", 70) not in r.orders.twins and ex.of("cancel")
+    # another account's order is ignored
+    await r._on_ws_message(lead, 1, {"e": "props", "d": {"entityType": "order", "entity": {"id": 99, "accountId": 5, "contractId": 901, "action": "Buy", "ordStatus": "Working"}}})
+    await asyncio.sleep(0.4)
+    assert ("F1", 99) not in r.orders.twins

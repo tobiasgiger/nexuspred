@@ -40,13 +40,14 @@ from .tradovate import AccountExecutor, RateLimited, TradovateError
 
 WS_URLS = {"live": "wss://live.tradovateapi.com/v1/websocket",
            "demo": "wss://demo.tradovateapi.com/v1/websocket"}
-POLL_INTERVAL_S = 1.0
+POLL_INTERVAL_S = 2.0        # REST cadence while the socket is down (positions; orders every 2nd)
+POLL_WS_INTERVAL_S = 10.0    # REST cadence while the socket is synced (a safety net only)
 RECONCILE_INTERVAL_S = 10.0
 HEARTBEAT_S = 2.5
 RECONNECT_BACKOFF_S = 2.0   # first retry delay after a feed error (doubles up to 30 s)
 FEED_STALE_S = 12.0          # no frame for this long → the WebSocket is considered lost
 POLL_ERROR_SLEEP_S = 2.0     # retry delay of the REST poll after an error
-POLL_MAX_INTERVAL_S = 5.0    # the poll slows down to this after Tradovate rate-limits us
+POLL_MAX_INTERVAL_S = 30.0   # the poll slows down to this after Tradovate rate-limits us
 POLL_RECOVER_S = 60.0        # a clean minute speeds the poll up again by one step
 ORDERS_EVERY_N = 2           # the leader's orders are read every n-th position poll
 WS_SYNC_TIMEOUT_S = 15.0     # no answer to user/syncrequest → reconnect the socket
@@ -406,15 +407,19 @@ class GroupRunner:
             try:
                 await self._poll_once(session, account_id)
                 self._mark_feed(True)
-                if self.poll_interval > POLL_INTERVAL_S and time.monotonic() - self._last_429 > POLL_RECOVER_S:
-                    self.poll_interval = max(POLL_INTERVAL_S, self.poll_interval / 2)
+                base = POLL_WS_INTERVAL_S if self.ws_ok else POLL_INTERVAL_S
+                if self.poll_interval > base and time.monotonic() - self._last_429 > POLL_RECOVER_S:
+                    self.poll_interval = max(base, self.poll_interval / 2)
                     self._last_429 = time.monotonic()
+                elif self.poll_interval < base:
+                    self.poll_interval = base
             except asyncio.CancelledError:
                 raise
             except RateLimited as exc:
                 self._last_429 = time.monotonic()
                 self.poll_interval = min(POLL_MAX_INTERVAL_S, self.poll_interval * 2)
                 self.throttled_until = time.monotonic() + exc.retry_after
+                self.diag["last_429"] = f"{exc.path}: {exc.text[:160]}" if exc.text else f"{exc.path}: (empty body)"
                 self.error = f"rate limited by Tradovate on {exc.path} — waiting {exc.retry_after:.0f} s, poll now every {self.poll_interval:.0f} s"
                 self.last_frame = time.monotonic()        # the broker is reachable, just throttling
                 if not self.feed_ok:
@@ -427,7 +432,18 @@ class GroupRunner:
                 self._mark_feed(False)
                 await asyncio.sleep(POLL_ERROR_SLEEP_S)
                 continue
-            await asyncio.sleep(self.poll_interval)
+            await self._sleep_poll()
+
+    async def _sleep_poll(self) -> None:
+        """Wait for the next poll — cut short the moment the socket drops, so the
+        REST safety net takes over without a 10-second hole."""
+        was_ok = self.ws_ok
+        deadline = time.monotonic() + self.poll_interval
+        while not self._stop.is_set():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or (was_ok and not self.ws_ok):
+                return
+            await asyncio.sleep(min(0.5, remaining))
 
     async def _ws_accelerator(self, session: Any, account_id: int) -> None:
         backoff = RECONNECT_BACKOFF_S
@@ -541,15 +557,26 @@ class GroupRunner:
                 if int(p.get("accountId") or 0) == account_id:
                     await self._on_position(session, int(p.get("contractId") or 0), int(p.get("netPos") or 0),
                                             snapshot=True)
+            if self.orders.enabled:
+                for o in d.get("orders") or []:
+                    self.orders.on_entity("order", o)
+                for v in d.get("orderVersions") or []:
+                    self.orders.on_entity("orderversion", v)
+                if d.get("orders") is not None:
+                    await self.orders.apply(session, self.orders.entity_snapshot(account_id))
             return
         if e == "props":
             d = msg.get("d") if isinstance(msg.get("d"), dict) else {}
             etype = str(d.get("entityType") or "").lower()
             props = self.diag.setdefault("props", {})
             props[etype or "?"] = int(props.get(etype or "?") or 0) + 1
+            ent = d.get("entity") if isinstance(d.get("entity"), dict) else d
+            if etype in ("order", "orderversion"):
+                if self.orders.on_entity(etype, ent):
+                    self.orders.apply_soon(session, account_id)
+                return
             if etype != "position":
                 return
-            ent = d.get("entity") if isinstance(d.get("entity"), dict) else d
             self.diag["last_position_event"] = {k: ent.get(k) for k in ("accountId", "contractId", "netPos", "netPrice", "timestamp") if k in ent}
             if int(ent.get("accountId") or 0) == account_id and "netPos" in ent:
                 await self._on_position(session, int(ent.get("contractId") or 0), int(ent.get("netPos") or 0))

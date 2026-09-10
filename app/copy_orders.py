@@ -56,6 +56,9 @@ class OrderMirror:
         self.touched: dict[tuple[str, int], float] = {}         # (spec, contract) → monotonic
         self.error = ""
         self._seeded = False
+        self.ent_orders: dict[int, dict[str, Any]] = {}       # socket: order entities by id
+        self.ent_versions: dict[int, dict[str, Any]] = {}     # socket: latest orderVersion by order id
+        self._apply_task: Optional[asyncio.Task] = None
 
     # ------------------------------------------------------------ helpers
     def _twin_key(self, spec: str, leader_order_id: int) -> tuple[str, int]:
@@ -156,7 +159,7 @@ class OrderMirror:
         return out
 
     async def poll(self, session: Any, account_id: int) -> None:
-        """Diff the leader's working orders against the last look and act."""
+        """REST look at the leader's working orders, then act on the difference."""
         if not self.enabled:
             return
         try:
@@ -167,6 +170,63 @@ class OrderMirror:
             self.error = f"orders: {exc}"[:200]
             return
         self.error = ""
+        await self.apply(session, now)
+
+    # ---- socket entities (user sync snapshot + props events)
+    def on_entity(self, kind: str, ent: dict[str, Any]) -> bool:
+        """Merge an ``order`` / ``orderVersion`` entity from the socket. Returns
+        True when it belongs to a tracked order (→ apply soon)."""
+        if not self.enabled or not isinstance(ent, dict):
+            return False
+        if kind == "order":
+            oid = int(ent.get("id") or 0)
+            if not oid:
+                return False
+            self.ent_orders[oid] = ent
+            return True
+        if kind == "orderversion":
+            oid = int(ent.get("orderId") or 0)
+            if not oid:
+                return False
+            cur = self.ent_versions.get(oid)
+            if cur is None or int(ent.get("id") or 0) >= int(cur.get("id") or 0):
+                self.ent_versions[oid] = ent
+            return True
+        return False
+
+    def entity_snapshot(self, account_id: int) -> dict[int, dict[str, Any]]:
+        """The leader's working orders as the socket entities describe them."""
+        out: dict[int, dict[str, Any]] = {}
+        for oid, o in self.ent_orders.items():
+            if int(o.get("accountId") or 0) != account_id or str(o.get("ordStatus")) not in WORKING:
+                continue
+            v = self.ent_versions.get(oid) or {}
+            out[oid] = {"id": oid, "contract_id": int(o.get("contractId") or 0), "action": str(o.get("action") or ""),
+                        "qty": int(v.get("orderQty") or 0), "order_type": str(v.get("orderType") or ""),
+                        "price": _num(v.get("price")), "stop_price": _num(v.get("stopPrice")),
+                        "version_id": int(v.get("id") or 0), "oco_id": int(o.get("ocoId") or 0)}
+        return out
+
+    def apply_soon(self, session: Any, account_id: int, delay: float = 0.25) -> None:
+        """Apply the socket's order state shortly — an order and its version
+        arrive as separate events, the delay lets both land first."""
+        if self._apply_task is not None and not self._apply_task.done():
+            return
+
+        async def run() -> None:
+            await asyncio.sleep(delay)
+            try:
+                await self.apply(session, self.entity_snapshot(account_id))
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                self.error = f"orders (socket): {exc}"[:200]
+        self._apply_task = asyncio.create_task(run(), name=f"copy-orders-apply-{self.r.id}")
+
+    async def apply(self, session: Any, now: dict[int, dict[str, Any]]) -> None:
+        """Diff a fresh picture of the leader's working orders against the last one."""
+        # a version may not have arrived yet for a brand-new order: wait for it
+        now = {i: o for i, o in now.items() if o["order_type"] or i in self.leader_orders}
         prev = self.leader_orders
         # every twin whose leader order is no longer working goes — including
         # twins restored from the database after a restart
