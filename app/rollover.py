@@ -169,10 +169,18 @@ def evaluate(symbol_map: dict[str, str], warn_days: int, today: Optional[date] =
         if days_left > warn_days:
             continue
         stage = "expired" if days_left < 0 else "upcoming"
+        # propose the first contract whose own roll date is still ahead — a
+        # mapping that expired months ago must not roll to another dead month
+        nxt = next_contract(root, month, year)
+        for _ in range(40):
+            p = parse_contract(nxt, today)
+            if not p or roll_date(*p[:1], p[1], p[2])[0] >= today:
+                break
+            nxt = next_contract(*p)
         out.append({
             "tv_symbol": tv_symbol, "contract": str(contract).upper(), "root": root,
             "family": family(root), "date": ref.isoformat(), "date_kind": what, "source": source,
-            "days_left": days_left, "stage": stage, "next": next_contract(root, month, year),
+            "days_left": days_left, "stage": stage, "next": nxt,
         })
     out.sort(key=lambda w: w["days_left"])
     return out
@@ -185,7 +193,7 @@ def _message(items: list[dict[str, Any]]) -> str:
                 else "today" if w["days_left"] == 0 else f"{-w['days_left']} day(s) ago")
         lines.append(f"• `{w['tv_symbol']}` → **{w['contract']}** — {w['date_kind']} {w['date']} "
                      f"({when}); suggested: **{w['next']}**")
-    head = "📅 **Contract rollover** — update Settings → Symbol map:"
+    head = "📅 **Contract rollover** — review and confirm the new contracts under Settings → Symbol Mapping:"
     return head + "\n" + "\n".join(lines)
 
 
@@ -213,6 +221,79 @@ async def _exact_dates(area_id: int, contracts: list[str]) -> dict[str, date]:
     return out
 
 
+async def _broker_next(area_id: int, warnings: list[dict[str, Any]]) -> None:
+    """Replace the estimated ``next`` contract by the broker's own listing where a
+    session is connected: the first listed contract of the same root after the
+    current one (``/contract/suggest``), verified to exist. Adds ``next_source``
+    (``broker`` / ``estimate``) and, when known, ``next_expiry``."""
+    from . import tradovate
+    for w in warnings:
+        w.setdefault("next_source", "estimate")
+    sessions = [s for s in tradovate.manager_for(area_id).all()
+                if state.session_status(s.name).get("connected")]
+    if not sessions or not warnings:
+        return
+    sess = sessions[0]
+    for w in warnings:
+        cur = parse_contract(w["contract"])
+        if not cur:
+            continue
+        root, month, year = cur
+        try:
+            listed = await sess._request("GET", "/contract/suggest", params={"t": root, "l": 30}) or []
+        except Exception:  # noqa: BLE001 - the estimate stands
+            continue
+        cands: list[tuple[tuple[int, int], str, Any]] = []
+        for c in listed if isinstance(listed, list) else []:
+            p = parse_contract(str(c.get("name") or ""))
+            if p and p[0] == root and (p[2], p[1]) > (year, month):
+                cands.append(((p[2], p[1]), str(c["name"]).upper(), c.get("contractMaturityId")))
+        if not cands:
+            continue
+        cands.sort()
+        _, name, mid = cands[0]
+        w["next"], w["next_source"] = name, "broker"
+        if mid:
+            try:
+                mat = await sess._request("GET", "/contractMaturity/item", params={"id": mid})
+                exp = (mat or {}).get("expirationDate")
+                if exp:
+                    w["next_expiry"] = datetime.fromisoformat(str(exp).replace("Z", "+00:00")).date().isoformat()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def apply(area_id: int, items: list[dict[str, Any]]) -> dict[str, Any]:
+    """Roll the given TradingView symbols to their new contracts (user-confirmed).
+    Each item: ``{"tv_symbol": "MNQ1!", "contract": "MNQZ6"}``. Raises ValueError
+    for an unknown symbol or a contract that is not a dated contract name."""
+    with context.use_area(area_id):
+        s = config.load_settings()
+        symbol_map = dict(s.get("symbol_map") or {})
+        notified = dict(s.get("rollover_notified") or {})
+        changes: list[dict[str, str]] = []
+        for it in items:
+            tv = str(it.get("tv_symbol") or "").strip()
+            new = str(it.get("contract") or "").strip().upper()
+            if tv not in symbol_map:
+                raise ValueError(f"{tv or '?'} is not in the symbol map")
+            if not parse_contract(new):
+                raise ValueError(f"{new or '?'} is not a dated contract (e.g. MNQZ6)")
+            old = str(symbol_map[tv]).upper()
+            if old == new:
+                continue
+            old_root = parse_contract(old)
+            if old_root and old_root[0] != parse_contract(new)[0]:
+                raise ValueError(f"{new} is a different product than {old}")
+            symbol_map[tv] = new
+            notified.pop(old, None)
+            changes.append({"tv_symbol": tv, "from": old, "to": new})
+        if changes:
+            config.save_settings({"symbol_map": symbol_map, "rollover_notified": notified})
+            state.log_event("info", "Rollover applied: " + ", ".join(f"{c['tv_symbol']} {c['from']} → {c['to']}" for c in changes))
+        return {"changes": changes, "symbol_map": symbol_map}
+
+
 _last_run: dict[int, date] = {}
 
 
@@ -234,6 +315,10 @@ async def check_area(area_id: int, *, force: bool = False, today: Optional[date]
         dated = [c for c in symbol_map.values() if parse_contract(str(c), today)]
         exact = await _exact_dates(area_id, dated) if dated else {}
         warnings = evaluate(symbol_map, warn_days, today, exact)
+        try:
+            await _broker_next(area_id, warnings)
+        except Exception as exc:  # noqa: BLE001 - the estimate stands
+            state.log_event("warn", f"rollover: broker lookup failed: {exc}")
         state.set_rollover_warnings(warnings, area_id)
 
         notified: dict[str, str] = dict(s.get("rollover_notified") or {})

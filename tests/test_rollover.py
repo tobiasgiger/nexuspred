@@ -108,3 +108,58 @@ async def test_status_and_manual_check(client, monkeypatch):
     with context.use_area(1):
         s = config.load_settings()
     assert s["rollover_warn_days"] == 5 and "X" not in s["rollover_notified"]
+
+
+class _Sess:
+    """A connected login whose contract listing the test controls."""
+    def __init__(self, listing):
+        self.name, self.listing = "L1", listing
+
+    async def _request(self, method, path, **kw):
+        if path == "/contract/suggest":
+            return [c for c in self.listing if str(c["name"]).startswith(kw["params"]["t"])]
+        if path == "/contractMaturity/item":
+            return {"id": kw["params"]["id"], "expirationDate": "2026-12-18T14:30:00Z"}
+        raise AssertionError(path)
+
+
+async def test_broker_listing_picks_the_next_contract(admin, monkeypatch):
+    from app import tradovate
+    sess = _Sess([{"name": "MNQU6", "contractMaturityId": 1}, {"name": "MNQZ6", "contractMaturityId": 2},
+                  {"name": "MNQH7", "contractMaturityId": 3}, {"name": "MNQZ5", "contractMaturityId": 0}])
+    monkeypatch.setattr(tradovate.manager_for(1), "all", lambda: [sess])
+    monkeypatch.setattr(rollover, "_exact_dates", lambda *a, **k: _empty())
+    state.set_session_status("L1", connected=True)
+    with context.use_area(1):
+        config.save_settings({"symbol_map": {"MNQ1!": "MNQU6", "GC1!": "GCV6"}, "alert_on_rollover": False})
+    w = await rollover.check_area(1, force=True, today=date(2026, 9, 22))
+    by = {x["tv_symbol"]: x for x in w}
+    assert by["MNQ1!"]["next"] == "MNQZ6" and by["MNQ1!"]["next_source"] == "broker" and by["MNQ1!"]["next_expiry"] == "2026-12-18"
+    assert by["GC1!"]["next"] == "GCX6" and by["GC1!"]["next_source"] == "estimate"   # not in the listing → estimate
+
+
+async def test_apply_rollover_updates_the_map_and_clears_the_warning(client, monkeypatch):
+    monkeypatch.setattr(rollover, "_exact_dates", lambda *a, **k: _empty())
+    with context.use_area(1):
+        config.save_settings({"symbol_map": {"MNQ1!": "MNQH24", "ES1!": "ESH24"}, "alert_on_rollover": False})
+    r = await client.get("/api/rollover?refresh=1")
+    assert {w["tv_symbol"] for w in r.json()["rollover"]} == {"MNQ1!", "ES1!"}
+    # a mapping that expired long ago proposes a contract that is still ahead, not the next dead month
+    from datetime import datetime, timezone
+    for w in r.json()["rollover"]:
+        p = rollover.parse_contract(w["next"])
+        assert p and rollover.roll_date(*p)[0] >= datetime.now(timezone.utc).date(), w
+    # validation: unknown symbol, not a contract, different product
+    for bad in ([{"tv_symbol": "NQ1!", "contract": "NQZ6"}], [{"tv_symbol": "MNQ1!", "contract": "MNQ"}], [{"tv_symbol": "MNQ1!", "contract": "ESZ6"}]):
+        assert (await client.post("/api/rollover/apply", json={"items": bad})).status_code == 400, bad
+    assert (await client.post("/api/rollover/apply", json={"items": []})).status_code == 400
+    r = await client.post("/api/rollover/apply", json={"items": [{"tv_symbol": "MNQ1!", "contract": "mnqz6"}]})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["changes"] == [{"tv_symbol": "MNQ1!", "from": "MNQH24", "to": "MNQZ6"}]
+    assert body["symbol_map"] == {"MNQ1!": "MNQZ6", "ES1!": "ESH24"}
+    assert [w["tv_symbol"] for w in body["rollover"]] == ["ES1!"]        # only the un-rolled one remains
+    with context.use_area(1):
+        s = config.load_settings()
+        assert s["symbol_map"]["MNQ1!"] == "MNQZ6" and "MNQH24" not in s["rollover_notified"]
+        assert any("Rollover applied" in e["message"] for e in state.recent_events())

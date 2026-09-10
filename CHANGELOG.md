@@ -4,6 +4,15 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.37
+- **Rollover with confirmation.** The daily rollover check now proposes the next contract
+  per mapped symbol — from the broker's listing when a login is connected (first month after
+  the current one, with its expiry date), otherwise estimated, and never a month that is
+  itself already past — and Settings → Symbol Mapping shows a *Rollover due* card with the
+  proposals (editable, tick / untick) and **Apply selected rollovers** behind a confirmation
+  dialog. `GET /api/rollover`, `POST /api/rollover/apply`. The Overview banner links to the
+  review; the alert text points there too. 2 tests.
+
 ## 5.0.0-alpha.36
 - **Risk guard per trade account** (`app/risk.py`, Settings → Tradovate Accounts → Risk
   guard). Daily **loss limit**, daily **profit target** and a fixed **flatten time** per

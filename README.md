@@ -538,6 +538,21 @@ Subscriptions are stored in the `subscriptions` table; the sharing config lives 
 webhook itself (`sharing` key), so v4 data stays compatible.
 
 ---
+## Rollover with confirmation
+
+Dated contracts in the symbol map (`MNQU6`) expire. The daily check flags every mapped
+contract within `rollover_warn_days` of its roll date (exchange-convention estimate, or the
+broker's expiry when a login is connected) and **proposes the next contract** — taken from
+the broker's own listing when connected (`/contract/suggest`, first month after the current
+one, with its expiry), otherwise estimated (next quarter for index / FX / treasuries /
+crypto, next month otherwise; never a month that is itself already past). The proposal is
+shown on the Overview banner and under **Settings → Symbol Mapping → Rollover due**, where
+each row can be edited or unticked; **Apply selected rollovers** asks for confirmation and
+then rewrites the mapping — nothing changes without that click. New signals trade the new
+contract immediately; open positions and working orders on the old contract are left
+alone. The rollover alert (Discord / email / push) points to that page.
+
+---
 ## Risk guard (per trade account)
 
 Settings → Tradovate Accounts → *Discovered trade accounts* → **Risk guard** sets, per
@@ -685,6 +700,7 @@ the dashboard **Update** button works.
 | `POST` | `/api/agent/pair` | Exchange a one-time pairing code for an agent token (unauthenticated, rate-limited) |
 | `GET`  | `/api/agent/jobs` | Agent long-poll for relay jobs (agent token) · `POST /api/agent/jobs/{id}/result` delivers the answer |
 | `GET`  | `/api/agents` | Paired agents with online state · `POST /api/agents/pairing-code`, `PUT`/`DELETE /api/agents/{id}`, `GET /api/agents/download.zip` (admin) |
+| `GET`  | `/api/rollover` | Rollover warnings with proposed next contracts (`?refresh=1` re-checks) · `POST /api/rollover/apply {items:[{tv_symbol, contract}]}` confirms a roll |
 | `GET`  | `/api/risk` | Every trade account's risk rules and today's lock · `POST /api/risk/unlock {spec}` clears a lock; rules are saved with `POST /api/trade-accounts` (`risk` key) |
 | `GET/POST` | `/api/copy/groups` | Copy-trading groups with live status · `PUT`/`DELETE /api/copy/groups/{id}`, `POST …/{id}/enable|disable|resume|sync|flatten`, `GET /api/copy/status`, `GET /api/copy/events` |
 | `GET`  | `/api/pnl` | Live account P&L: today's realised, open, week, cash per account (`?refresh=1` polls Tradovate now) |

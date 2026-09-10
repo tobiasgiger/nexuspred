@@ -97,7 +97,7 @@ export default {
           h("code", null, w.tv_symbol), " → ", h("code", null, w.contract), ` (${w.date_kind} ${w.date}, `,
           w.days_left < 0 ? `${-w.days_left}d ago` : w.days_left === 0 ? "today" : `in ${w.days_left}d`,
           w.source === "broker" ? ", broker date" : ", estimated", ") → suggested ", h("code", null, w.next)))),
-        h("button", { class: "btn btn-sm", onClick: () => navigate("/settings/symbols") }, "Open symbol map"));
+        h("button", { class: "btn btn-sm", onClick: () => navigate("/settings/symbols") }, "Review & confirm the rollover"));
     }
 
     // ---- live P&L (today's realised + open, per account) -----------------

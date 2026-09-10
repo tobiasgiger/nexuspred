@@ -342,18 +342,61 @@ export const symbols = {
       return map;
     };
     const saveBtn = h("button", { type: "button", class: "btn btn-primary", onClick: async () => {
-      try { await actions.saveSettings({ symbol_map: collect() }); toast("Symbol mapping saved", "success"); actions.checkRollover(); }
+      try { await actions.saveSettings({ symbol_map: collect() }); toast("Symbol mapping saved", "success"); loadRollover(true); }
       catch (e) { toast(e.message, "error"); }
     } }, icon("check"), "Save mapping");
+
+    // --- Rollover: proposals the user confirms
+    const rollBody = h("tbody");
+    const rollCard = card({ title: "Rollover due", hint: "Dated contracts near or past their roll date. The next contract is proposed from the broker's listing when a login is connected (otherwise estimated from exchange conventions) — edit it if you prefer another month, tick the rows to roll, then confirm. Nothing changes until you confirm." },
+      h("div", { class: "table-scroll" }, h("table", { class: "data-table compact" }, h("thead", null, h("tr", null, h("th", null, "Roll"), h("th", null, "TradingView symbol"), h("th", null, "Current"), h("th", null, "Roll date"), h("th", null, "New contract"), h("th", null, "Source"))), rollBody)),
+      h("div", { class: "form-actions", style: "margin-top:12px" },
+        h("button", { type: "button", class: "btn btn-primary", onClick: () => applyRollover() }, icon("check"), "Apply selected rollovers"),
+        h("button", { type: "button", class: "btn btn-ghost", onClick: () => loadRollover(true) }, icon("refresh"), "Re-check now")));
+    rollCard.hidden = true;
+    let rollItems = [];
+    function paintRollover(items) {
+      rollItems = items || [];
+      rollCard.hidden = !rollItems.length;
+      rollBody.replaceChildren(...rollItems.map((w) => h("tr", { class: w.stage === "expired" ? "neg" : null },
+        h("td", null, h("input", { type: "checkbox", class: "ro-on", checked: true, dataset: { tv: w.tv_symbol } })),
+        h("td", null, h("code", null, w.tv_symbol)),
+        h("td", null, h("code", null, w.contract)),
+        h("td", null, `${w.date_kind} ${w.date} · `, h("span", { class: w.days_left < 0 ? "neg" : "warn" }, w.days_left < 0 ? `${-w.days_left}d ago` : w.days_left === 0 ? "today" : `in ${w.days_left}d`)),
+        h("td", null, h("input", { class: "ro-next input-sm", value: w.next || "", style: "width:110px", dataset: { tv: w.tv_symbol } })),
+        h("td", null, w.next_source === "broker" ? tag("broker listing", "on") : tag("estimated", "warn"), w.next_expiry ? h("small", { class: "muted", style: "display:block" }, `expires ${w.next_expiry}`) : null))));
+    }
+    async function loadRollover(refresh = false) {
+      try { const r = await api.get(`/api/rollover${refresh ? "?refresh=1" : ""}`); paintRollover(r.rollover); }
+      catch (e) { /* the banner on the Overview still shows */ }
+    }
+    async function applyRollover() {
+      const items = [...rollBody.querySelectorAll(".ro-on:checked")].map((cb) => ({ tv_symbol: cb.dataset.tv, contract: (rollBody.querySelector(`.ro-next[data-tv="${CSS.escape(cb.dataset.tv)}"]`).value || "").trim().toUpperCase() })).filter((it) => it.contract);
+      if (!items.length) return toast("Nothing selected", "warn");
+      const ok = await confirmDialog({ title: "Apply the rollover?", body: h("div", null, "The symbol map changes as follows; new signals trade the new contracts immediately. Open positions and working orders on the old contracts are not touched.",
+        h("ul", { style: "margin:8px 0 0 18px" }, items.map((it) => { const w = rollItems.find((x) => x.tv_symbol === it.tv_symbol) || {}; return h("li", null, h("code", null, it.tv_symbol), ": ", h("code", null, w.contract || "?"), " → ", h("code", null, it.contract)); }))), confirmText: "Apply rollover" });
+      if (!ok) return;
+      try {
+        const r = await api.post("/api/rollover/apply", { items });
+        toast(r.changes.length ? `Rolled ${r.changes.length} symbol(s)` : "Nothing changed", "success");
+        await actions.loadSettings();
+        paint(r.symbol_map);
+        paintRollover(r.rollover);
+        actions.refreshStatus();
+      } catch (e) { toast(e.message, "error"); }
+    }
+
     root.append(
-      pageHead("Symbol Mapping", "Maps each TradingView symbol to the exact Tradovate contract used for orders. Update the contract after each rollover.", [
+      pageHead("Symbol Mapping", "Maps each TradingView symbol to the exact Tradovate contract used for orders. When a contract nears its roll date the bridge proposes the next one here — you confirm.", [
         h("button", { type: "button", class: "btn", onClick: () => tbody.append(row()) }, icon("plus"), "Add row"),
       ]),
+      rollCard,
       card({ title: "Current mapping", hint: "Use a dated contract (e.g. MNQU6); a bare root (e.g. MNQ) also works and auto-picks the front month. Unmapped symbols are only accepted when their root is in Allowed symbols (General & Trading)." },
         h("div", { class: "table-scroll" }, h("table", { class: "data-table" }, h("thead", null, h("tr", null, h("th", null, "TradingView symbol"), h("th", null, "Tradovate contract"), h("th"))), tbody)),
         h("div", { class: "form-actions", style: "margin-top:12px" }, saveBtn)),
     );
     paint((store.get("settings") || {}).symbol_map);
+    loadRollover(true);
     return () => {};
   },
 };

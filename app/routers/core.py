@@ -62,6 +62,31 @@ async def api_status() -> dict[str, Any]:
     }
 
 
+@router.get("/api/rollover")
+async def api_rollover(refresh: bool = False) -> dict[str, Any]:
+    """Current rollover warnings with the proposed next contracts (``?refresh=1``
+    re-runs the check first)."""
+    if refresh:
+        return {"rollover": await rollover.check_area(context.get_area(), force=True)}
+    return {"rollover": state.rollover_warnings()}
+
+
+@router.post("/api/rollover/apply")
+async def api_rollover_apply(request: Request) -> dict[str, Any]:
+    """Confirm a rollover: switch the given TradingView symbols to their new
+    contracts, then re-check."""
+    body = await request.json()
+    items = body.get("items") if isinstance(body, dict) else None
+    if not isinstance(items, list) or not items:
+        raise HTTPException(status_code=400, detail="items required")
+    try:
+        result = rollover.apply(context.get_area(), items)
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    result["rollover"] = await rollover.check_area(context.get_area(), force=True)
+    return result
+
+
 @router.post("/api/rollover/check")
 async def api_rollover_check() -> dict[str, Any]:
     """Re-run the contract-rollover check for the caller's area right now
