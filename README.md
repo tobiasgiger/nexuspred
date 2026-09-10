@@ -344,6 +344,20 @@ are global, configurable on the **Settings** tab (TS-Hunter is always Market, pe
 
 ---
 
+### Per-account sizing (webhooks and marketplace subscriptions)
+
+Each routed account on a webhook (Webhooks → Accounts) and each account of a marketplace
+subscription has its own **Sizing** rule — the same three as copy trading:
+
+| Mode | Contracts |
+|---|---|
+| **Same** | exactly what the signal carries (1:1) |
+| **Multiplier** | signal × factor, rounded half up, never below 1 |
+| **Fixed** | always this many contracts for the entry; bracket take-profit slices are scaled proportionally (fixed 2 for an entry of 3 → a TP slice of 1 stays 1, the stop is 2) |
+
+**Max** caps the result (0 = no cap). Older entries that only carried `qty_multiplier`
+keep working: a factor other than 1 is *Multiplier*, 1 is *Same*.
+
 ## Simulator
 
 The **Simulator** tab lets you rehearse complete trades without sending anything to

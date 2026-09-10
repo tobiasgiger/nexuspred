@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from . import config, db
+from . import config, db, sizing
 
 VISIBILITIES = ("all", "selected")
 
@@ -115,11 +115,13 @@ def clean_accounts(raw: Any) -> list[dict[str, Any]]:
         if not isinstance(a, dict) or not a.get("spec") or a.get("token_idx") is None:
             continue
         try:
+            sz = sizing.normalize(a)
             out.append({
                 "token_idx": int(a["token_idx"]),
                 "spec": str(a.get("spec", "")),
                 "enabled": bool(a.get("enabled", True)),
-                "qty_multiplier": float(a.get("qty_multiplier", 1) or 1),
+                "qty_multiplier": sizing.effective_multiplier(sz),
+                "sizing": sz,
             })
         except (TypeError, ValueError):
             continue

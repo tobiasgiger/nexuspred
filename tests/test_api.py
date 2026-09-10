@@ -222,7 +222,8 @@ async def test_webhook_crud(client):
     up = r.json()
     assert up["name"] == "S1b" and up["enabled"] is False and up["strategy"] == "ts_hunter"
     assert up["default_qty"] == 1 and up["tp_qty"] == 3
-    assert up["accounts"] == [{"token_idx": 0, "spec": "A1", "enabled": True, "qty_multiplier": 2.0}]
+    assert up["accounts"] == [{"token_idx": 0, "spec": "A1", "enabled": True, "qty_multiplier": 2.0,
+                               "sizing": {"mode": "multiplier", "multiplier": 2.0, "fixed": 1, "max_contracts": 0}}]
 
     r = await client.post(f"/api/webhooks/{wh['id']}/regenerate-token")
     assert r.json()["token"] != wh["token"]

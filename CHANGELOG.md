@@ -4,6 +4,16 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.44
+- **Per-account sizing on webhooks and marketplace subscriptions** (`app/sizing.py`).
+  Each routed account picks **Same** (1:1 the signal's contracts), **Multiplier** (signal ×
+  factor, rounded half up, never below 1) or **Fixed** contracts (bracket take-profit
+  slices scale proportionally), plus an optional **Max** cap — the same rules as copy
+  trading, in the Accounts tab of the webhook drawer and the subscription drawer. Older
+  entries with only a `qty_multiplier` keep their behaviour. Rounding is now half up in
+  every strategy (bracket used to truncate, simple used half-to-even): 3 × 1.5 = 5,
+  1 × 2.5 = 3.
+
 ## 5.0.0-alpha.43
 - **A close can no longer hit the wrong account.** Every account-scoped Tradovate call
   (`liquidateposition`, working-order list, positions, `placeorder`, `placeoco`) fell

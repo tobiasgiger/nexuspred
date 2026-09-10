@@ -14,7 +14,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from . import alerts, config, context, http, risk, state
+from . import alerts, config, context, http, risk, sizing, state
 
 REQUEST_SPACING_S = 0.2   # minimum gap between two requests of one login (5/s)
 LIVE_BASE = "https://live.tradovateapi.com/v1"
@@ -636,6 +636,10 @@ class AccountExecutor:
                 aid = int(session.account_id or 0)
         self.id = aid
         self.qty_multiplier = account.get("qty_multiplier", 1) or 1
+        try:
+            self.sizing = sizing.normalize(account)
+        except (TypeError, ValueError):
+            self.sizing = {"mode": "same", "multiplier": 1.0, "fixed": 1, "max_contracts": 0}
         # Unique per trade account (Tradovate specs are unique); used to key the
         # bridge's active-trade tracking and per-account order results.
         self.name = self.spec or session.name
@@ -723,7 +727,7 @@ class SessionManager:
         return out
 
     def executor_for(
-        self, token_idx: int, spec: str, qty_multiplier: float = 1
+        self, token_idx: int, spec: str, qty_multiplier: float = 1, sizing: dict[str, Any] | None = None
     ) -> AccountExecutor | None:
         """Build an executor for one specific (login, trade account) pair, with a
         caller-supplied qty multiplier — used by per-webhook routing, independent
@@ -738,7 +742,10 @@ class SessionManager:
         account = next((a for a in session.accounts if a.get("spec") == spec), None)
         if account is None:
             return None
-        return AccountExecutor(session, {**account, "qty_multiplier": qty_multiplier})
+        extra: dict[str, Any] = {"qty_multiplier": qty_multiplier}
+        if sizing:
+            extra["sizing"] = sizing
+        return AccountExecutor(session, {**account, **extra})
 
 
 # One SessionManager per area (user workspace).

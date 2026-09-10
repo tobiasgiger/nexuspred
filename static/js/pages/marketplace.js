@@ -34,9 +34,11 @@ export function openSubscriptionDrawer(item, onDone) {
   accTable.update(known);
   const collect = () => known.map((a) => {
     const key = accountKey(a.token_idx, a.spec);
-    const on = accTable.tbody.querySelector(`.acc-on[data-key="${CSS.escape(key)}"]`);
-    const mult = accTable.tbody.querySelector(`.acc-mult[data-key="${CSS.escape(key)}"]`);
-    return { token_idx: a.token_idx, spec: a.spec, enabled: !!(on && on.checked), qty_multiplier: Number(mult && mult.value) || 1 };
+    const q = (cls) => accTable.tbody.querySelector(`.${cls}[data-key="${CSS.escape(key)}"]`);
+    const on = q("acc-on");
+    const sizing = { mode: q("acc-mode") ? q("acc-mode").value : "same", multiplier: Number(q("acc-mult") && q("acc-mult").value) || 1,
+      fixed: Number(q("acc-fixed") && q("acc-fixed").value) || 1, max_contracts: Number(q("acc-max") && q("acc-max").value) || 0 };
+    return { token_idx: a.token_idx, spec: a.spec, enabled: !!(on && on.checked), qty_multiplier: sizing.mode === "multiplier" ? sizing.multiplier : 1, sizing };
   }).filter((a) => a.enabled);
 
   const saveBtn = h("button", { type: "button", class: "btn btn-primary", onClick: async () => {
@@ -67,7 +69,7 @@ export function openSubscriptionDrawer(item, onDone) {
         item.description ? h("div", { style: "margin-top:6px;white-space:pre-line" }, item.description) : null),
       h("label", { class: "switch-row" }, h("span", null, "Subscription active", h("small", null, "Off = signals from this publisher are ignored for your accounts. Your own Trading switch applies as well.")), enabledSw),
       h("h3", null, "Trade on my accounts"),
-      h("p", { class: "hint" }, "Signals execute on every routed account below, in parallel, scaled by Qty ×. The publisher never sees your accounts."),
+      h("p", { class: "hint" }, "Signals execute on every routed account below, in parallel, sized per account (Same 1:1, Multiplier, or Fixed contracts with an optional Max). The publisher never sees your accounts."),
       accTable.el,
     ],
     foot: [saveBtn, h("button", { type: "button", class: "btn btn-ghost", onClick: () => closeDrawer() }, "Close"), h("span", { style: "flex:1" }), unsubBtn],

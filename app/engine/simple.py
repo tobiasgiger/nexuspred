@@ -6,6 +6,7 @@ from typing import Any
 
 from .. import alerts, config, state
 from .common import SignalError, _lock, _trade_key
+from ..sizing import account_qty
 
 
 async def handle_entry(payload, action, root, target, executors, active_map, tag, webhook):
@@ -27,8 +28,7 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
 
     async def place_for(ex):
         contract = await ex.resolve_contract(target)
-        mult = getattr(ex, "qty_multiplier", 1) or 1
-        qty = max(1, round(base_qty * mult))
+        qty = account_qty(ex, base_qty)
         order = await ex.place_order(
             symbol=contract, action=entry_side, qty=qty,
             order_type=order_type, price=price,

@@ -7,6 +7,7 @@ from typing import Any
 
 from .. import alerts, config, state
 from .common import SignalError, _lock, _opposite, _tp_index_from_event, _trade_key
+from ..sizing import account_qty
 
 
 async def handle_entry(payload, action, root, target, executors, active_map, tag, webhook):
@@ -28,9 +29,8 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
 
     async def place_for(ex):
         contract = await ex.resolve_contract(target)
-        mult = getattr(ex, "qty_multiplier", 1) or 1
-        entry_qty = max(1, int(base_qty * mult))
-        tp_qty = max(1, int(base_tp_qty * mult))
+        entry_qty = account_qty(ex, base_qty)
+        tp_qty = min(entry_qty, account_qty(ex, base_tp_qty, of_entry=base_qty))
 
         # 1) Market entry first (so the position exists before the brackets).
         entry = await ex.place_order(

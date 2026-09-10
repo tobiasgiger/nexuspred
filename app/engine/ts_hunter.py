@@ -14,6 +14,7 @@ from typing import Any
 from .. import alerts, config, state
 from ..tradovate import TradovateError
 from .common import SignalError, _cancel_working, _lock, _opposite
+from ..sizing import account_qty
 
 
 async def handle_entry(payload, side, root, target, trade_id, executors, active_map, tag, webhook):
@@ -35,8 +36,7 @@ async def handle_entry(payload, side, root, target, trade_id, executors, active_
 
     async def place_for(ex):
         contract = await ex.resolve_contract(target)
-        mult = getattr(ex, "qty_multiplier", 1) or 1
-        qty = max(1, round(base_qty * mult))
+        qty = account_qty(ex, base_qty)
 
         # Entry first (always Market — the TS-Hunter contract is market-only).
         entry = await ex.place_order(

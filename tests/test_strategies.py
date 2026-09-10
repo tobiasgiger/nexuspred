@@ -122,10 +122,10 @@ async def test_simple_qty_and_multiplier_rounding(live):
     assert live.alerts == [("simple-wh", "buy", "MNQU6", ["A", "B"])]
 
 
-async def test_simple_uses_bankers_rounding_for_multiplier(live):
+async def test_simple_rounds_half_up_for_multiplier(live):
     live.use(FakeExecutor("A", qty_multiplier=2.5))
     r = await signals.process({"action": "sell", "symbol": "MNQ1!", "qty": 1}, wh())
-    assert r["accounts"][0]["qty"] == 2  # round(2.5) == 2 (half-to-even)
+    assert r["accounts"][0]["qty"] == 3  # 2.5 → 3 (half up, the copy-trading rule)
 
 
 async def test_simple_contracts_key_and_webhook_default(live):
@@ -221,25 +221,25 @@ async def test_bracket_entry_places_entry_tps_and_stop(live):
     assert live.alerts == [("bracket-wh", "sell", "MNQU6", ["A"])]
 
 
-async def test_bracket_qty_from_payload_truncates_and_falls_back(live):
+async def test_bracket_qty_from_payload_rounds_and_falls_back(live):
     a = FakeExecutor("A", qty_multiplier=1.5)
     live.use(a)
     w = wh("bracket", default_qty=3)
     await signals.process({**ENTRY, "qty": 2.9}, w)
-    assert a.of("place")[0]["qty"] == 3          # int(2.9)=2 -> int(2*1.5)=3
+    assert a.of("place")[0]["qty"] == 3          # int(2.9)=2 -> 2*1.5=3
     await signals.process({**ENTRY, "qty": "abc"}, w)
-    assert a.of("place")[-5]["qty"] == 4         # invalid -> default 3 -> int(3*1.5)=4
+    assert a.of("place")[-5]["qty"] == 5         # invalid -> default 3 -> 3*1.5=4.5 -> 5 (half up, like copy trading)
     await signals.process({**ENTRY, "contracts": 0}, w)
-    assert a.of("place")[-5]["qty"] == 4         # <=0 -> default
+    assert a.of("place")[-5]["qty"] == 5         # <=0 -> default
 
 
-async def test_bracket_truncates_where_simple_rounds(live):
+async def test_bracket_and_simple_round_half_up_alike(live):
     a = FakeExecutor("A", qty_multiplier=1.5)
     live.use(a)
     await signals.process({**ENTRY, "qty": 1}, wh("bracket"))
-    assert a.of("place")[0]["qty"] == 1          # int(1.5) == 1
+    assert a.of("place")[0]["qty"] == 2          # 1.5 -> 2
     await signals.process({"action": "sell", "symbol": "MNQ1!", "qty": 1}, wh("simple"))
-    assert a.of("place")[-1]["qty"] == 2         # round(1.5) == 2
+    assert a.of("place")[-1]["qty"] == 2
 
 
 async def test_bracket_entry_omits_missing_tps(live):

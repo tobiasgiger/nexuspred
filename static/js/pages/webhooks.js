@@ -15,6 +15,14 @@ import { openSubscriptionDrawer } from "./marketplace.js";
 
 const accountKey = (idx, spec) => `${idx}::${spec}`;
 
+/** The sizing rule of a routed account (older entries carry only qty_multiplier). */
+function sizingOf(a) {
+  const s = (a && a.sizing) || {};
+  const legacy = Number(a && a.qty_multiplier) || 1;
+  return { mode: s.mode || (legacy !== 1 ? "multiplier" : "same"), multiplier: s.multiplier ?? legacy, fixed: s.fixed ?? 1, max_contracts: s.max_contracts ?? 0 };
+}
+
+
 async function saveWebhook(id, body) {
   const updated = await api.put(`/api/webhooks/${id}`, body);
   store.update("webhooks", (list) => list.map((w) => (w.id === id ? { ...w, ...updated } : w)));
@@ -68,15 +76,21 @@ function webhookDrawer(wh, { navigate }) {
       { label: "Account", render: (a) => h("code", null, maskAccount(a.spec) || "—") },
       { label: "Env", render: (a) => tag((a.environment || "—").toUpperCase(), a.environment === "live" ? "live" : "demo") },
       { label: "Status", render: (a) => h("span", { class: a.connected ? "pos" : "muted" }, a.connected ? "connected" : "offline") },
-      { label: "Qty ×", render: (a) => h("input", { type: "number", class: "acc-mult input-sm", min: 0.1, step: 0.1, style: "width:80px", value: (selected.get(accountKey(a.token_idx, a.spec)) || {}).qty_multiplier ?? 1, dataset: { key: accountKey(a.token_idx, a.spec) } }) },
+      { label: "Sizing", render: (a) => { const sz = sizingOf(selected.get(accountKey(a.token_idx, a.spec))); return h("select", { class: "acc-mode input-sm", dataset: { key: accountKey(a.token_idx, a.spec) } },
+        h("option", { value: "same", selected: sz.mode === "same" }, "Same (1:1)"), h("option", { value: "multiplier", selected: sz.mode === "multiplier" }, "Multiplier"), h("option", { value: "fixed", selected: sz.mode === "fixed" }, "Fixed")); } },
+      { label: "×", render: (a) => h("input", { type: "number", class: "acc-mult input-sm", min: 0.01, step: 0.01, style: "width:70px", value: sizingOf(selected.get(accountKey(a.token_idx, a.spec))).multiplier, dataset: { key: accountKey(a.token_idx, a.spec) } }) },
+      { label: "Fixed", render: (a) => h("input", { type: "number", class: "acc-fixed input-sm", min: 1, step: 1, style: "width:64px", value: sizingOf(selected.get(accountKey(a.token_idx, a.spec))).fixed, dataset: { key: accountKey(a.token_idx, a.spec) } }) },
+      { label: "Max", render: (a) => h("input", { type: "number", class: "acc-max input-sm", min: 0, step: 1, style: "width:64px", title: "0 = no cap", value: sizingOf(selected.get(accountKey(a.token_idx, a.spec))).max_contracts, dataset: { key: accountKey(a.token_idx, a.spec) } }) },
     ],
   });
   accTable.update(known);
   const collectAccounts = () => known.map((a) => {
     const key = accountKey(a.token_idx, a.spec);
-    const on = accTable.tbody.querySelector(`.acc-on[data-key="${CSS.escape(key)}"]`);
-    const mult = accTable.tbody.querySelector(`.acc-mult[data-key="${CSS.escape(key)}"]`);
-    return { token_idx: a.token_idx, spec: a.spec, enabled: !!(on && on.checked), qty_multiplier: Number(mult && mult.value) || 1 };
+    const q = (cls) => accTable.tbody.querySelector(`.${cls}[data-key="${CSS.escape(key)}"]`);
+    const on = q("acc-on");
+    const sizing = { mode: q("acc-mode") ? q("acc-mode").value : "same", multiplier: Number(q("acc-mult") && q("acc-mult").value) || 1,
+      fixed: Number(q("acc-fixed") && q("acc-fixed").value) || 1, max_contracts: Number(q("acc-max") && q("acc-max").value) || 0 };
+    return { token_idx: a.token_idx, spec: a.spec, enabled: !!(on && on.checked), qty_multiplier: sizing.mode === "multiplier" ? sizing.multiplier : 1, sizing };
   }).filter((a) => a.enabled);
 
   // --- Alert template
@@ -181,7 +195,7 @@ function webhookDrawer(wh, { navigate }) {
         defQtyField, tpQtyField),
       blurb),
     accounts: h("div", null,
-      h("p", { class: "hint" }, "Every routed account receives each signal in parallel; Qty × scales the contracts for that account (1 = as sent)."),
+      h("p", { class: "hint" }, "Every routed account receives each signal in parallel. Sizing per account — Same: the contracts the signal carries, 1:1. Multiplier: signal × factor (rounded half up, never below 1). Fixed: always this many contracts for the entry; bracket take-profit slices scale proportionally. Max caps the result (0 = no cap)."),
       accTable.el),
     template: h("div", null,
       h("h3", null, "Webhook URL"),

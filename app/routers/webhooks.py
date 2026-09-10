@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from .. import config, context, db, marketplace, signals, state
+from .. import config, context, db, marketplace, signals, sizing, state
 from ..tradovate import TradovateError
 from ..web import require_admin
 
@@ -58,6 +58,13 @@ async def webhook(token: str, request: Request) -> JSONResponse:
 
 
 # ======================================================================== CRUD
+def _routed_account(a: dict[str, Any]) -> dict[str, Any]:
+    """One routed (login, account) entry with its sizing rule; raises ValueError."""
+    sz = sizing.normalize(a)
+    return {"token_idx": int(a["token_idx"]), "spec": str(a.get("spec", "")), "enabled": bool(a.get("enabled")),
+            "qty_multiplier": sizing.effective_multiplier(sz), "sizing": sz}
+
+
 def _webhook_or_404(webhook_id: str) -> tuple[list[dict[str, Any]], int]:
     """Return (all webhooks, index of webhook_id) or raise 404."""
     webhooks = config.load_settings().get("webhooks", [])
@@ -109,16 +116,7 @@ async def api_update_webhook(webhook_id: str, request: Request) -> dict[str, Any
         if "tp_qty" in body:
             wh["tp_qty"] = max(1, int(body["tp_qty"] or 1))
         if "accounts" in body:
-            wh["accounts"] = [
-                {
-                    "token_idx": int(a["token_idx"]),
-                    "spec": a.get("spec", ""),
-                    "enabled": bool(a.get("enabled")),
-                    "qty_multiplier": float(a.get("qty_multiplier", 1) or 1),
-                }
-                for a in body["accounts"]
-                if a.get("spec") and a.get("token_idx") is not None
-            ]
+            wh["accounts"] = [_routed_account(a) for a in body["accounts"] if a.get("spec") and a.get("token_idx") is not None]
     except (TypeError, ValueError, KeyError, AttributeError) as exc:
         raise HTTPException(status_code=400, detail=f"Invalid webhook payload: {exc}") from exc
     webhooks[i] = wh
