@@ -1134,6 +1134,12 @@ def delete_copy_twin(area_id: int, group_id: str, spec: str, leader_order_id: in
                   (area_id, group_id, spec, int(leader_order_id)))
 
 
+def delete_copy_twins(area_id: int, group_id: str) -> None:
+    init()
+    with _connect() as c:
+        c.execute("DELETE FROM copy_twins WHERE area_id=? AND group_id=?", (area_id, group_id))
+
+
 def list_copy_twins(area_id: int, group_id: str) -> list[dict[str, Any]]:
     init()
     with _connect() as c:

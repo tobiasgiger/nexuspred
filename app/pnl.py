@@ -43,6 +43,11 @@ async def snapshot_account(session: Any, account: dict[str, Any]) -> dict[str, A
         raise tradovate.TradovateError("unexpected snapshot answer")
     if data.get("errorText"):
         raise tradovate.TradovateError(str(data["errorText"]))
+    for key in ("realizedPnL", "openPnL"):
+        try:
+            float(data[key])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise tradovate.TradovateError(f"snapshot without a numeric {key}") from exc   # never read a missing figure as 0
     return {
         "account_id": int(account["id"]), "spec": account.get("spec") or "", "login": session.name,
         "environment": session.environment,
@@ -73,8 +78,7 @@ async def risk_settings_cached(area_id: int, session: Any) -> dict[int, dict[str
     if hit and time.monotonic() - hit[0] < RISK_CACHE_S:
         return hit[1]
     recs = await risk_settings(session)
-    if recs or not hit:
-        _risk_cache[key] = (time.monotonic(), recs)
+    _risk_cache[key] = (time.monotonic(), recs or (hit[1] if hit else {}))   # a failed refresh keeps the last records, and waits
     return _risk_cache[key][1]
 
 
@@ -84,7 +88,7 @@ async def leader_positions(session: Any) -> Optional[list[dict[str, Any]]]:
         raw = await session._request("GET", "/position/list") or []
     except Exception:  # noqa: BLE001
         return None
-    return raw if isinstance(raw, list) else []
+    return raw if isinstance(raw, list) else None      # an error object is not "no positions"
 
 
 async def risk_settings(session: Any) -> dict[int, dict[str, Any]]:
@@ -155,7 +159,7 @@ async def refresh_area(area_id: int) -> dict[str, Any]:
         }
         summary["total"] = round(summary["realized"] + summary["open"], 2)
         try:
-            await risk.check_area(area_id, sessions, accounts)
+            await risk.check_area(area_id, sessions, accounts, positions=positions_by_login)
         except Exception as exc:  # noqa: BLE001 - the guard must never break the P&L feed
             state.log_event("warn", f"risk guard failed: {exc}")
         changed = state.set_pnl(summary, area_id)

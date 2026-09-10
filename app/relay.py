@@ -42,6 +42,11 @@ class AgentOffline(Exception):
     pass
 
 
+class ResultUnknown(AgentOffline):
+    """The agent picked the job up but its answer never arrived: the request may
+    or may not have been executed at Tradovate."""
+
+
 def allowed_url(url: str) -> bool:
     """HTTPS to a Tradovate host only."""
     from urllib.parse import urlsplit
@@ -115,12 +120,23 @@ async def request(agent_id: int, *, method: str, url: str, headers: dict[str, st
     _inflight[job.id] = job
     await _queue(agent_id).put(job)
     try:
-        return await asyncio.wait_for(job.future, timeout=timeout + RESULT_TIMEOUT_EXTRA_S)
-    except asyncio.TimeoutError as exc:
-        raise AgentOffline(f"execution agent #{agent_id} did not answer within {int(timeout + RESULT_TIMEOUT_EXTRA_S)} s"
-                           + ("" if job.claimed else " (job never picked up)")) from exc
+        # phase 1: the agent must pick the job up quickly — an agent that is not
+        # polling is "offline" now, not after the whole HTTP timeout
+        try:
+            return await asyncio.wait_for(asyncio.shield(job.future), timeout=DISPATCH_TIMEOUT_S)
+        except asyncio.TimeoutError as exc:
+            if not job.claimed:
+                raise AgentOffline(f"execution agent #{agent_id} did not pick the request up within {int(DISPATCH_TIMEOUT_S)} s") from exc
+        # phase 2: claimed — give it the request's own timeout from the moment it was claimed
+        try:
+            return await asyncio.wait_for(asyncio.shield(job.future), timeout=timeout + RESULT_TIMEOUT_EXTRA_S)
+        except asyncio.TimeoutError as exc:
+            raise ResultUnknown(f"execution agent #{agent_id} picked the request up but did not answer within "
+                                f"{int(timeout + RESULT_TIMEOUT_EXTRA_S)} s — its outcome is unknown") from exc
     finally:
         _inflight.pop(job.id, None)
+        if not job.future.done():
+            job.future.cancel()          # a job the caller gave up on must never be executed later (a stale order)
 
 
 # -------------------------------------------------------------- agent side
@@ -128,23 +144,27 @@ async def next_jobs(agent_id: int, wait: float, max_jobs: int = 8) -> list[dict[
     """Long-poll: block up to ``wait`` seconds for jobs; return their payloads."""
     touch(agent_id)
     q = _queue(agent_id)
-    jobs: list[_Job] = []
-    try:
-        first = await asyncio.wait_for(q.get(), timeout=max(0.0, wait))
-        jobs.append(first)
-    except asyncio.TimeoutError:
-        return []
-    while len(jobs) < max_jobs:
+    deadline = time.monotonic() + max(0.0, wait)
+    out: list[dict[str, Any]] = []
+    while not out:
+        remaining = deadline - time.monotonic()
+        jobs: list[_Job] = []
         try:
-            jobs.append(q.get_nowait())
-        except asyncio.QueueEmpty:
+            jobs.append(await asyncio.wait_for(q.get(), timeout=max(0.0, remaining)))
+        except asyncio.TimeoutError:
             break
-    out = []
-    for j in jobs:
-        if j.future.done():  # caller gave up while the job waited in the queue
-            continue
-        j.claimed = True
-        out.append({"id": j.id, **j.payload})
+        while len(jobs) < max_jobs:
+            try:
+                jobs.append(q.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        for j in jobs:
+            if j.future.done():  # the caller gave up while the job waited: never run it late
+                continue
+            j.claimed = True
+            out.append({"id": j.id, **j.payload})
+        if remaining <= 0:
+            break
     touch(agent_id)
     return out
 

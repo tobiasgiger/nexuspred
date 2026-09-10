@@ -6,28 +6,30 @@ from typing import Any
 
 from .. import config, state
 from ..tradovate import TradovateError
-from .common import _cancel_working, _lock, _trade_key
+from .common import _cancel_working, _close_contract, _lock, _trade_key
 
 
 async def handle_close_all(root, target, executors, active_map, tag, webhook):
     async def close_account(ex) -> int:
         contract = await ex.resolve_contract(target)
         # Only this contract's working orders — other symbols keep their stops.
-        cancelled = await _cancel_working(ex, tag, contract=contract)
-        await ex.liquidate_position(contract)
-        return cancelled
+        return await _close_contract(ex, tag, contract)
 
     # Flatten every enabled account in parallel.
     results = await asyncio.gather(*(close_account(ex) for ex in executors),
                                    return_exceptions=True)
     cancelled = sum(r for r in results if isinstance(r, int))
+    failed = [ex.name for ex, r in zip(executors, results) if isinstance(r, Exception)]
     for ex, r in zip(executors, results):
         if isinstance(r, Exception):
-            state.log_event("warn", f"{tag}close_all failed for {ex.name}: {r}")
+            state.log_event("error", f"{tag}close_all FAILED for {ex.name}: {r} — the position may still be open")
 
     key = _trade_key(webhook["id"], root)
     with _lock:
-        active_map.pop(key, None)
+        if failed and len(failed) == len(executors):
+            pass                                   # nothing closed: keep the tracked record for a retry
+        else:
+            active_map.pop(key, None)
 
     state.log_event(
         "info", f"{tag}[{webhook.get('name', '?')}] Closed all for {root} on "
@@ -82,34 +84,37 @@ async def handle_set_sl_tp(payload, root, target, executors, active_map, tag, we
         changed = False
 
         if new_sl is not None:
+            # place the new stop first, then retire the old one: the position is
+            # never without a stop in between, and a failed placement keeps the old
             old = info.get("sl_order_id")
-            if old:
-                try:
-                    await ex.cancel_order(old)
-                except TradovateError:
-                    pass
             try:
                 o = await ex.place_order(symbol=contract, action=exit_side, qty=qty,
                                          order_type=sl_type, stop_price=float(new_sl))
                 info["sl_order_id"] = o.get("order_id")
                 info["sl_stop"] = float(new_sl)
                 changed = True
+                if old:
+                    try:
+                        await ex.cancel_order(old)
+                    except TradovateError as exc:
+                        state.log_event("error", f"{tag}{ex.name}: old stop {old} could not be cancelled after the new one was placed: {exc} — two stops may be working")
             except TradovateError as exc:
-                state.log_event("warn", f"{tag}set stop for {ex.name} failed: {exc}")
+                state.log_event("error", f"{tag}set stop for {ex.name} failed: {exc}" + (" (the previous stop stays)" if old else " — position without a stop"))
 
         if new_tp is not None:
-            for oid in info.get("tp_order_ids") or []:
-                try:
-                    await ex.cancel_order(oid)
-                except TradovateError:
-                    pass
+            old_tps = list(info.get("tp_order_ids") or [])
             try:
                 o = await ex.place_order(symbol=contract, action=exit_side, qty=qty,
                                          order_type=tp_type, price=float(new_tp))
                 info["tp_order_ids"] = [o["order_id"]] if o.get("order_id") else []
                 changed = True
+                for oid in old_tps:                 # retire the previous target only once the new one works
+                    try:
+                        await ex.cancel_order(oid)
+                    except TradovateError as exc:
+                        state.log_event("error", f"{tag}{ex.name}: old target {oid} could not be cancelled after the new one was placed: {exc} — two targets may be working")
             except TradovateError as exc:
-                state.log_event("warn", f"{tag}set target for {ex.name} failed: {exc}")
+                state.log_event("error", f"{tag}set target for {ex.name} failed: {exc}" + (" (the previous target stays)" if old_tps else ""))
 
         return (ex.name, info, changed)
 

@@ -6,10 +6,20 @@ import { store } from "./store.js";
 const CAP = 200;
 let es = null;
 let reconnTimer = null;
+let retryTimer = null;
+let retryMs = 2000;
+let wasDown = false;
 
 function markLive() {
   if (reconnTimer) { clearTimeout(reconnTimer); reconnTimer = null; }
+  retryMs = 2000;
   if (store.get("stream") !== "live") store.set("stream", "live");
+  if (wasDown) {
+    // events emitted while we were away are gone: pull the current picture
+    wasDown = false;
+    store.set("statusDirty", Date.now());
+    store.set("streamResync", Date.now());
+  }
 }
 
 function prepend(key, item) {
@@ -37,7 +47,17 @@ export function connectStream() {
   es.onopen = markLive;
   es.addEventListener("ping", markLive);
   es.onerror = () => {
-    // EventSource reconnects on its own; only show "reconnecting" if it stays down.
+    wasDown = true;
+    if (es && es.readyState === EventSource.CLOSED) {
+      // a non-200 answer (502/503 while the bridge restarts) closes the source for
+      // good — the browser will not retry that on its own, so we do, with backoff
+      es = null;
+      store.set("stream", "reconnecting");
+      if (!retryTimer) retryTimer = setTimeout(() => { retryTimer = null; connectStream(); }, retryMs);
+      retryMs = Math.min(30000, retryMs * 2);
+      return;
+    }
+    // a dropped connection: EventSource reconnects on its own; show "reconnecting" if it stays down
     if (reconnTimer) return;
     reconnTimer = setTimeout(() => { reconnTimer = null; store.set("stream", "reconnecting"); }, 4000);
   };
@@ -59,6 +79,7 @@ export function connectStream() {
 }
 
 export function disconnectStream() {
+  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
   if (es) es.close();
   es = null;
   store.set("stream", "off");

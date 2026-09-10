@@ -56,6 +56,8 @@ export default {
 
     const saveHint = h("span", { class: "save-hint" });
     const saveBtn = h("button", { type: "button", class: "btn btn-primary", onClick: async () => {
+      if (saveBtn.disabled) return;
+      saveBtn.disabled = true;
       try {
         const list = await api.post("/api/token-accounts", collect());
         dirty = false;
@@ -64,10 +66,13 @@ export default {
         toast("Token accounts saved", "success");
         actions.refreshStatus(); actions.loadTradeAccounts();
       } catch (e) { toast(e.message, "error"); }
+      finally { saveBtn.disabled = false; }
     } }, icon("check"), "Save logins");
     const connectBtn = h("button", { type: "button", class: "btn btn-secondary", onClick: async () => {
       if (dirty) { toast("Save your logins first", "warn"); return; }
-      await actions.connectAll();
+      if (connectBtn.disabled) return;
+      connectBtn.disabled = true;
+      try { await actions.connectAll(); } finally { connectBtn.disabled = false; }
     } }, icon("refresh"), "Connect & Verify");
 
     const money = (v) => Number(v).toLocaleString([], { maximumFractionDigits: 0 });

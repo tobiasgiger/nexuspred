@@ -53,6 +53,8 @@ ORDERS_EVERY_N = 2           # the leader's orders are read every n-th position 
 WS_SYNC_TIMEOUT_S = 15.0     # no answer to user/syncrequest → reconnect the socket
 WS_RECENT_MAX = 20           # raw socket messages kept for the diagnostics block
 REJECT_HOLDOFF_S = 30.0      # reconcile leaves a follower alone this long after a rejected order
+ORDER_SETTLE_S = 5.0         # …and this long after a successful one (the fill must reach /position/list)
+FOLLOWER_RESEED_S = 60.0     # followers' positions are re-read at most this often while the leader seed fails
 MAX_EVENTS_MEMORY = 200
 
 
@@ -238,6 +240,9 @@ class GroupRunner:
         self._last_error = ""
         self._filtered: set[int] = set()              # contracts already reported as filtered out
         self.follower_err_at: dict[str, float] = {}   # spec → monotonic of the last reject
+        self.last_order_at: dict[str, float] = {}     # spec → monotonic of the last successful order
+        self._pending_poll: dict[int, int] = {}       # contract → net a poll saw once while the socket is synced
+        self._followers_seeded_at: float = 0.0
         self.leader_account_id = 0
         self.diag: dict[str, Any] = {"frames": 0, "props": {}, "backstop_catches": 0, "recent": []}
         self.orders = OrderMirror(self)
@@ -302,6 +307,16 @@ class GroupRunner:
         self.contract_names[cid] = name
         return name
 
+    def _alert(self, title: str, message: str, *, email: bool = False) -> None:
+        """Alerts never hold a follower lock or the socket loop: fire and forget."""
+        async def run() -> None:
+            try:
+                with context.use_area(self.area_id):
+                    await alerts.copy_alert(title, message, email=email)
+            except Exception:  # noqa: BLE001
+                pass
+        asyncio.create_task(run(), name=f"copy-alert-{self.id}")
+
     def _record(self, kind: str, *, follower: str = "", symbol: str = "", detail: str = "",
                 latency_ms: Optional[int] = None) -> None:
         db.insert_copy_event(self.area_id, {"group_id": self.id, "kind": kind, "leader": self.group["leader"]["spec"],
@@ -325,9 +340,21 @@ class GroupRunner:
                 pass
         self.tasks = []
         self.feed_ok = False
+        t = getattr(self.orders, "_apply_task", None)
+        if t is not None and not t.done():
+            t.cancel()
 
-    async def _seed_followers(self) -> None:
-        """Followers' current positions from the broker (once per login)."""
+    def _follower_id(self, session: Any, f: dict[str, Any]) -> int:
+        """Tradovate id of a follower account (0 when unknown — never guessed)."""
+        return int(f.get("account_id") or 0) or next((int(a["id"]) for a in session.accounts if a.get("spec") == f["spec"] and a.get("id")), 0)
+
+    async def _seed_followers(self, *, force: bool = False) -> None:
+        """Followers' current positions from the broker (one call per login).
+        Each login's picture is rebuilt from scratch, so a position that is gone
+        at the broker is gone here too. Re-seeds are throttled while the leader
+        seed keeps failing."""
+        if not force and time.monotonic() - self._followers_seeded_at < FOLLOWER_RESEED_S:
+            return
         by_session: dict[int, list[dict[str, Any]]] = {}
         for f in self.group["followers"]:
             by_session.setdefault(int(f["token_idx"]), []).append(f)
@@ -336,17 +363,26 @@ class GroupRunner:
             if not (0 <= idx < len(sessions)):
                 continue
             s = sessions[idx]
-            ids = {int(f.get("account_id") or 0) or next((int(a["id"]) for a in s.accounts if a.get("spec") == f["spec"] and a.get("id")), 0): f["spec"] for f in fs}
+            ids = {self._follower_id(s, f): f["spec"] for f in fs}
+            ids.pop(0, None)
+            for f in fs:
+                if self._follower_id(s, f) == 0:
+                    self.follower_err[f["spec"]] = "no Tradovate account id — run Connect & Verify on the login"
             try:
                 raw = await s._request("GET", "/position/list") or []
             except Exception as exc:  # noqa: BLE001
                 for f in fs:
                     self.follower_err[f["spec"]] = f"positions: {exc}"
                 continue
-            for p in raw if isinstance(raw, list) else []:
+            if not isinstance(raw, list):
+                continue
+            for key in [k for k in self.follower_pos if k[0] in ids.values()]:
+                self.follower_pos.pop(key, None)              # rebuild this login's picture from the broker
+            for p in raw:
                 spec = ids.get(int(p.get("accountId") or 0))
                 if spec and int(p.get("netPos") or 0):
                     self.follower_pos[(spec, int(p.get("contractId") or 0))] = int(p.get("netPos") or 0)
+        self._followers_seeded_at = time.monotonic()
         try:
             await self.orders.load()
         except Exception as exc:  # noqa: BLE001
@@ -432,7 +468,7 @@ class GroupRunner:
             use_ws = kind == "websocket" or (kind == "auto" and not session.agent_id)
             self.feed_kind = "websocket" if use_ws else "poll"
             try:
-                await self._seed_followers()
+                await self._seed_followers(force=not self._leader_seeded and not self._followers_seeded_at)
                 await self._seed_leader(session, account_id)
             except asyncio.CancelledError:
                 raise
@@ -559,15 +595,30 @@ class GroupRunner:
             first = await asyncio.wait_for(ws.recv(), 15)
             if not str(first).startswith("o"):
                 raise TradovateError(f"unexpected opening frame {str(first)[:20]!r}")
-            await ws.send(f"authorize\n1\n\n{token}")
+            await asyncio.wait_for(ws.send(f"authorize\n1\n\n{token}"), 5)
             self.ws_last_frame = time.monotonic()
             sync_sent_at: Optional[float] = None
-            last_beat = time.monotonic()
+
+            async def heartbeat() -> None:
+                # Tradovate drops a socket without "[]" every ~2.5 s — the beat must
+                # never wait behind a mirror or an alert in the receive loop
+                while True:
+                    await asyncio.sleep(HEARTBEAT_S)
+                    await asyncio.wait_for(ws.send("[]"), 5)
+            beat = asyncio.create_task(heartbeat(), name=f"copy-ws-beat-{self.id}")
+            try:
+                await self._ws_loop(ws, session, account_id, user_id, sync_sent_at)
+            finally:
+                beat.cancel()
+                try:
+                    await beat
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                    pass
+
+    async def _ws_loop(self, ws: Any, session: Any, account_id: int, user_id: int, sync_sent_at: Optional[float]) -> None:
+        if True:
             while not self._stop.is_set():
                 now = time.monotonic()
-                if now - last_beat >= HEARTBEAT_S:
-                    await ws.send("[]")
-                    last_beat = now
                 if sync_sent_at is not None and not self.ws_ok and now - sync_sent_at > WS_SYNC_TIMEOUT_S:
                     raise TradovateError("no answer to user/syncrequest")
                 try:
@@ -587,7 +638,7 @@ class GroupRunner:
                     if msg.get("i") == 1 and msg.get("s") == 200 and sync_sent_at is None:
                         # authorised: only now ask for the user sync (requests sent
                         # before the authorize answer are dropped by Tradovate)
-                        await ws.send("user/syncrequest\n2\n\n" + json.dumps({"users": [user_id]} if user_id else {}))
+                        await asyncio.wait_for(ws.send("user/syncrequest\n2\n\n" + json.dumps({"users": [user_id]} if user_id else {})), 5)
                         sync_sent_at = time.monotonic()
                         continue
                     await self._on_ws_message(session, account_id, msg)
@@ -613,15 +664,17 @@ class GroupRunner:
                 self._record("ws_up", detail=f"user sync: {len(positions)} position(s)")
             for p in positions:
                 if int(p.get("accountId") or 0) == account_id:
-                    await self._on_position(session, int(p.get("contractId") or 0), int(p.get("netPos") or 0),
-                                            snapshot=True)
+                    cid_, net_ = int(p.get("contractId") or 0), int(p.get("netPos") or 0)
+                    if cid_ not in self.leader_net and net_:
+                        self.leader_net[cid_] = 0          # opened after the REST seed: an entry, mirror it
+                    await self._on_position(session, cid_, net_)
             if self.orders.enabled:
                 for o in d.get("orders") or []:
                     self.orders.on_entity("order", o)
                 for v in d.get("orderVersions") or []:
                     self.orders.on_entity("orderversion", v)
                 if d.get("orders") is not None:
-                    await self.orders.apply(session, self.orders.entity_snapshot(account_id))
+                    await self.orders.apply(session, self.orders.entity_snapshot(account_id), self.orders.entity_statuses(account_id))
             return
         if e == "props":
             d = msg.get("d") if isinstance(msg.get("d"), dict) else {}
@@ -660,19 +713,38 @@ class GroupRunner:
             cid, net = int(p.get("contractId") or 0), int(p.get("netPos") or 0)
             seen.add(cid)
             if self.leader_net.get(cid, 0) != net:
+                if not self._poll_confirmed(cid, net):
+                    continue                     # a snapshot older than the last socket event: wait for a second look
                 changed += 1
                 if source != "poll":
                     self.diag["backstop_catches"] = int(self.diag.get("backstop_catches") or 0) + 1
                     self._record("ws_miss", symbol=await self._contract_name(session, cid),
                                  detail=f"{source}: leader {self.leader_net.get(cid, 0):+d} → {net:+d} not delivered by the socket")
                 await self._on_position(session, cid, net)
+            else:
+                self._pending_poll.pop(cid, None)
         for cid in [c for c, n in self.leader_net.items() if n and c not in seen]:
+            if not self._poll_confirmed(cid, 0):
+                continue
             changed += 1
             if source != "poll":
                 self._record("ws_miss", symbol=self.contract_names.get(cid, str(cid)),
                              detail=f"{source}: leader {self.leader_net.get(cid, 0):+d} → 0 not delivered by the socket")
             await self._on_position(session, cid, 0)
         return changed
+
+    def _poll_confirmed(self, cid: int, net: int) -> bool:
+        """While the socket is synced a REST snapshot can predate the socket event
+        that was already applied; only a difference seen on two consecutive polls
+        is acted on. Without the socket the poll is the feed and acts at once."""
+        if not self.ws_ok:
+            self._pending_poll.pop(cid, None)
+            return True
+        if self._pending_poll.get(cid) == net:
+            self._pending_poll.pop(cid, None)
+            return True
+        self._pending_poll[cid] = net
+        return False
 
     # ---- mirror
     async def _on_position(self, session: Any, cid: int, net: int, *, snapshot: bool = False) -> None:
@@ -759,7 +831,7 @@ class GroupRunner:
                     self.follower_err[spec] = err[:200]
                     self.follower_err_at[spec] = time.monotonic()
                     self._record("reject", follower=spec, symbol=name, detail=f"{reason}: {err}")
-                    await alerts.copy_alert(f"Copy reject: {spec}", f"{name} {reason}: {err}")
+                    self._alert(f"Copy reject: {spec}", f"{name} {reason}: {err}")
                     return
             if not isinstance(res, dict) or res.get("status") != "submitted":
                 raw = res.get("raw") if isinstance(res, dict) else None
@@ -767,9 +839,10 @@ class GroupRunner:
                 self.follower_err[spec] = err[:200]
                 self.follower_err_at[spec] = time.monotonic()
                 self._record("reject", follower=spec, symbol=name, detail=f"{reason}: {err}")
-                await alerts.copy_alert(f"Copy reject: {spec}", f"{name} {reason}: {err}")
+                self._alert(f"Copy reject: {spec}", f"{name} {reason}: {err}")
                 return
             self.follower_pos[(spec, cid)] = target
+            self.last_order_at[spec] = time.monotonic()
             self.follower_err.pop(spec, None)
             self.follower_err_at.pop(spec, None)
             latency = int((time.monotonic() - t0) * 1000) if t0 is not None else None
@@ -779,11 +852,15 @@ class GroupRunner:
 
     async def _broker_net(self, ex: Any, cid: int) -> Optional[int]:
         """The follower's real net position for a contract (None if unreadable)."""
+        if not int(getattr(ex, "id", 0) or 0):
+            return None
         try:
             raw = await ex.session._request("GET", "/position/list") or []
         except Exception:  # noqa: BLE001
             return None
-        for p in raw if isinstance(raw, list) else []:
+        if not isinstance(raw, list):
+            return None
+        for p in raw:
             if int(p.get("accountId") or 0) == int(ex.id or 0) and int(p.get("contractId") or 0) == cid:
                 return int(p.get("netPos") or 0)
         return 0
@@ -820,33 +897,47 @@ class GroupRunner:
             if not (0 <= idx < len(sessions)):
                 continue
             s = sessions[idx]
-            ids = {next((int(a["id"]) for a in s.accounts if a.get("spec") == f["spec"] and a.get("id")), 0): f for f in fs}
+            ids = {self._follower_id(s, f): f for f in fs}
+            ids.pop(0, None)                                    # an account without id is never "flat"
+            fs = [f for f in fs if self._follower_id(s, f)]
+            if not fs:
+                continue
             try:
                 raw = await s._request("GET", "/position/list") or []
             except Exception:  # noqa: BLE001
                 continue
+            if not isinstance(raw, list):
+                continue
             actual: dict[tuple[str, int], int] = {}
-            for p in raw if isinstance(raw, list) else []:
+            for p in raw:
                 f = ids.get(int(p.get("accountId") or 0))
                 if f:
                     actual[(f["spec"], int(p.get("contractId") or 0))] = int(p.get("netPos") or 0)
+            read_at = time.monotonic()
             for f in fs:
-                if time.monotonic() - self.follower_err_at.get(f["spec"], -1e9) < REJECT_HOLDOFF_S:
+                spec = f["spec"]
+                if time.monotonic() - self.follower_err_at.get(spec, -1e9) < REJECT_HOLDOFF_S:
                     continue                                    # just rejected: don't hammer the broker
-                if risk.is_locked(self.area_id, f["spec"]):
+                if risk.is_locked(self.area_id, spec):
                     continue                                    # the risk guard closed this account for today
                 for cid, net in list(self.leader_net.items()):
                     if cid in self.baseline or not self._wanted(cid):
                         continue
-                    if self.orders.twins_for(f["spec"], cid):
+                    if self.orders.twins_for(spec, cid):
                         continue                                # a working twin explains a size gap
-                    key = (f["spec"], cid)
-                    have = actual.get(key, 0)
-                    self.follower_pos[key] = have               # trust the broker
+                    key = (spec, cid)
+                    lock = self.locks.setdefault(spec, asyncio.Lock())
+                    async with lock:
+                        # an order that went out after this snapshot was read, or just
+                        # before it, is not yet in it: leave the follower alone for a moment
+                        if self.last_order_at.get(spec, -1e9) > read_at - ORDER_SETTLE_S:
+                            break
+                        have = actual.get(key, 0)
+                        self.follower_pos[key] = have           # trust the broker (under the lock)
                     target = target_qty(f, net, self.unit.get(cid) or abs(net) or 1, copy_adds=bool(self.group.get("copy_adds", True)))
                     if have != target:
                         name = self.contract_names.get(cid, str(cid))
-                        self._record("drift", follower=f["spec"], symbol=name, detail=f"broker {have:+d}, expected {target:+d} — correcting")
+                        self._record("drift", follower=spec, symbol=name, detail=f"broker {have:+d}, expected {target:+d} — correcting")
                         await self._mirror_follower(f, cid, name, net, self.unit.get(cid) or abs(net) or 1,
                                                     bool(self.group.get("copy_adds", True)), "drift", None)
                         fixes += 1
@@ -857,8 +948,11 @@ class GroupRunner:
         if self.paused or not self.tasks:
             return
         limit = float(self.group.get("feed_loss_flatten_s") or 30)
+        if time.monotonic() < self.throttled_until:
+            return                                              # a 429 penalty is a throttle, never a lost feed
         lost_for = (time.monotonic() - self.last_frame) if self.last_frame else 0.0
-        if self.feed_ok and lost_for > max(FEED_STALE_S, 3 * POLL_ERROR_SLEEP_S):
+        stale = max(FEED_STALE_S, 3 * POLL_ERROR_SLEEP_S, self.poll_interval + FEED_STALE_S)
+        if self.feed_ok and lost_for > stale:
             self.error = self.error or "poll stalled"
             self._mark_feed(False)
         if not self.feed_ok and self.last_frame and lost_for > limit:
@@ -875,25 +969,47 @@ class GroupRunner:
         (market). Returns orders sent."""
         sent = 0
         await self.orders.cancel_all(reason=f"flatten: {reason}")
-        contracts = {cid for cid, n in self.leader_net.items() if cid not in self.baseline} | {k[1] for k, v in self.follower_pos.items() if v}
+        # only what the mirror opened: mirrored leader contracts plus contracts a twin
+        # touched — never a follower's own, unrelated position
+        contracts = {cid for cid, n in self.leader_net.items() if cid not in self.baseline}
+        contracts |= {k[1] for k in self.orders.touched if k[1]} | {t["contract_id"] for t in self.orders.twins.values()}
         for f in self.group["followers"]:
+            if not f.get("enabled", True):
+                continue
+            ex = self._executor(f)
+            if ex is None:
+                continue
             for cid in contracts:
                 key = (f["spec"], cid)
-                have = self.follower_pos.get(key, 0)
-                if not have:
-                    continue
-                ex = self._executor(f)
-                if ex is None:
-                    continue
-                name = self.contract_names.get(cid, str(cid))
-                with context.use_area(self.area_id):
-                    try:
-                        await ex.place_order(symbol=name, action="Sell" if have > 0 else "Buy", qty=abs(have), order_type="Market")
+                lock = self.locks.setdefault(f["spec"], asyncio.Lock())
+                async with lock:
+                    actual = await self._broker_net(ex, cid)
+                    have = self.follower_pos.get(key, 0) if actual is None else actual
+                    if not have:
                         self.follower_pos[key] = 0
+                        continue
+                    name = self.contract_names.get(cid, str(cid))
+                    with context.use_area(self.area_id):
+                        try:
+                            res = await ex.place_order(symbol=name, action="Sell" if have > 0 else "Buy", qty=abs(have), order_type="Market")
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as exc:  # noqa: BLE001 - keep going with the other followers
+                            self._record("reject", follower=f["spec"], symbol=name, detail=f"flatten ({reason}): {exc}")
+                            continue
+                    if isinstance(res, dict) and res.get("status") == "submitted":
+                        self.follower_pos[key] = 0
+                        self.last_order_at[f["spec"]] = time.monotonic()
                         sent += 1
                         self._record("flatten", follower=f["spec"], symbol=name, detail=f"{reason}: closed {have:+d}")
-                    except TradovateError as exc:
-                        self._record("reject", follower=f["spec"], symbol=name, detail=f"flatten ({reason}): {exc}")
+                    else:
+                        self._record("reject", follower=f["spec"], symbol=name, detail=f"flatten ({reason}): not accepted ({res})")
+        # what was flattened is not re-entered by the reconcile: it becomes baseline
+        # until the leader is flat or the user syncs
+        for cid in contracts:
+            if self.leader_net.get(cid):
+                self.baseline.add(cid)
+                self._persist(cid)
         return sent
 
     async def sync_now(self) -> int:
@@ -903,7 +1019,7 @@ class GroupRunner:
         n = 0
         for cid, net in list(self.leader_net.items()):
             self._persist(cid)
-            if not self._wanted(cid):
+            if not self._wanted(cid) or not net:
                 continue
             await self._mirror_contract(cid, self.contract_names.get(cid, str(cid)), net, reason="sync")
             n += 1
@@ -969,6 +1085,9 @@ def statuses(area_id: int) -> dict[str, dict[str, Any]]:
     return {gid: r.status() for (aid, gid), r in _runners.items() if aid == area_id}
 
 
+_last_loop_error: dict[str, str] = {}
+
+
 async def copy_loop() -> None:
     """Keep runners in line with the config and run the feed-loss watchdog."""
     while True:
@@ -982,8 +1101,10 @@ async def copy_loop() -> None:
                     r.error = f"watchdog: {exc}"[:200]
         except asyncio.CancelledError:
             raise
-        except Exception:  # noqa: BLE001 - the loop must survive anything
-            pass
+        except Exception as exc:  # noqa: BLE001 - the loop must survive anything, but not silently
+            if str(exc) != _last_loop_error.get("msg"):
+                _last_loop_error["msg"] = str(exc)
+                state.log_event("warn", f"copy loop: {exc}")
         await asyncio.sleep(5.0)
 
 

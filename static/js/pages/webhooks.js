@@ -12,15 +12,11 @@ import { dataTable } from "../components/table.js";
 import { openDrawer, closeDrawer } from "../components/drawer.js";
 import { alertMessageTemplate, STRATEGY_LABEL, STRATEGY_OPTIONS, PRESETS, webhookUrl } from "../templates.js";
 import { openSubscriptionDrawer } from "./marketplace.js";
+import { sizingOf } from "../sizing.js";
 
 const accountKey = (idx, spec) => `${idx}::${spec}`;
 
 /** The sizing rule of a routed account (older entries carry only qty_multiplier). */
-function sizingOf(a) {
-  const s = (a && a.sizing) || {};
-  const legacy = Number(a && a.qty_multiplier) || 1;
-  return { mode: s.mode || (legacy !== 1 ? "multiplier" : "same"), multiplier: s.multiplier ?? legacy, fixed: s.fixed ?? 1, max_contracts: s.max_contracts ?? 0 };
-}
 
 
 async function saveWebhook(id, body) {
@@ -158,7 +154,7 @@ function webhookDrawer(wh, { navigate }) {
         catch (e) { toast(e.message, "error"); }
       } }, icon("trash"), "Remove") },
     ] });
-    const loadSubs = () => api.get(`/api/webhooks/${w.id}/subscribers`).then((list) => subsTable.update(list)).catch(() => subsTable.update([]));
+    const loadSubs = () => api.get(`/api/webhooks/${w.id}/subscribers`).then((list) => subsTable.update(list)).catch((e) => { subsTable.update([]); const c = subsTable.tbody.querySelector("td.empty"); if (c) c.textContent = "Could not load subscribers: " + e.message; });
     loadSubs();
     const shareBtn = h("button", { type: "button", class: "btn btn-primary", onClick: async () => {
       shareBtn.disabled = true;

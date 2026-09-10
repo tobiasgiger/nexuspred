@@ -113,6 +113,7 @@ async function boot() {
   setInterval(actions.refreshDiscordStatus, 10000);
   let dirtyTimer = null;
   store.subscribe("statusDirty", () => { clearTimeout(dirtyTimer); dirtyTimer = setTimeout(actions.refreshStatus, 600); });
+  store.subscribe("streamResync", () => { actions.refreshOrders(); actions.refreshLogs(); });   // after a stream gap: re-pull what we missed
   store.subscribe("me", paintSidebar);
 }
 

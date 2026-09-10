@@ -99,10 +99,13 @@ async def api_update_group(group_id: str, request: Request) -> dict[str, Any]:
 async def api_delete_group(group_id: str) -> dict[str, Any]:
     groups, i = _group_or_404(group_id)
     removed = groups.pop(i)
+    r = copy.runner(context.get_area(), group_id)
+    if r is not None:
+        await r.orders.cancel_all(reason="group deleted")      # never leave twins resting at the broker
     copy.save_groups(groups)
     await copy.sync_area(context.get_area())
     db.delete_copy_state(context.get_area(), group_id)
-    db.delete_copy_twin_group(context.get_area(), group_id) if hasattr(db, "delete_copy_twin_group") else None
+    db.delete_copy_twins(context.get_area(), group_id)
     state.log_event("info", f"Copy group '{removed.get('name')}' deleted")
     return {"status": "deleted", "id": group_id}
 
@@ -117,6 +120,10 @@ async def _set_enabled(group_id: str, enabled: bool) -> dict[str, Any]:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     groups[i] = g
+    if not enabled:
+        r = copy.runner(context.get_area(), group_id)
+        if r is not None:
+            await r.orders.cancel_all(reason="group disabled")
     copy.save_groups(groups)
     await copy.sync_area(context.get_area())
     if not enabled:

@@ -3,10 +3,13 @@ import { h, $, clear } from "../ui.js";
 import { icon } from "../icons.js";
 
 let current = null;
+let closeTimer = null;
 
 export function openDrawer({ title, body, foot = null, onClose = null, width = null }) {
   closeDrawer();
+  if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }   // a drawer opened during the fade must survive it
   const root = $("#drawerRoot");
+  clear(root);
   root.className = "drawer-root";
   const titleEl = h("h2", null, title);
   const bodyEl = h("div", { class: "drawer-body" }, body);
@@ -38,7 +41,7 @@ export function closeDrawer() {
   document.removeEventListener("keydown", onKey);
   document.body.style.overflow = "";
   root.classList.remove("open");
-  setTimeout(() => { clear(root); root.className = ""; }, 220);
+  closeTimer = setTimeout(() => { closeTimer = null; if (!current) { clear(root); root.className = ""; } }, 220);
   if (onClose) onClose();
 }
 

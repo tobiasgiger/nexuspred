@@ -14,8 +14,11 @@ Discord signals, marketplace subscriptions and copy-trading mirrors alike —
 because the check sits in :meth:`TradovateSession.place_order`, the one path
 all of them use. Flattening itself and the SOS flatten-all run with the guard
 bypassed. While locked, a position that reappears (a manual trade in the
-Tradovate UI) is flattened again on the next poll. The lock clears with the
-next local day or by hand (*Unlock* on the account).
+Tradovate UI) is flattened again on the next poll. The lock lasts the Tradovate
+trading day (17:00 New York roll) or until *Unlock* on the account. A rule
+never fires twice on the same state: a flatten time fires once per clock day,
+a loss / profit rule not again while the broker still shows the P&L figure it
+fired on (which happens across the roll, when the cached snapshot lags).
 """
 from __future__ import annotations
 
@@ -37,6 +40,7 @@ REFLATTEN_EVERY_S = 30.0
 def reset() -> None:
     _flatten_lock.clear()
     _reflatten_at.clear()
+    _warned_no_id.clear()
 
 
 class bypass:
@@ -131,7 +135,7 @@ def lock_of(area_id: int, spec: str, *, settings: Optional[dict[str, Any]] = Non
     s = settings if settings is not None else config.load_settings(area_id=area_id)
     st = s.get("risk_state") if isinstance(s.get("risk_state"), dict) else {}
     rec = st.get(spec)
-    if not isinstance(rec, dict):
+    if not isinstance(rec, dict) or rec.get("unlocked"):
         return None
     if rec.get("day") != trading_day():
         return None
@@ -145,19 +149,39 @@ def is_locked(area_id: int, spec: str) -> Optional[str]:
 
 
 def unlock(area_id: int, spec: str) -> bool:
+    """Lift today's lock by hand. The record stays (marked ``unlocked``) so the
+    same rule does not fire again on the very state it fired on."""
     st = _state(area_id)
-    if spec not in st:
+    rec = st.get(spec)
+    if not isinstance(rec, dict) or rec.get("unlocked"):
         return False
-    st.pop(spec, None)
+    rec["unlocked"] = True
+    rec["unlocked_at"] = datetime.now(timezone.utc).isoformat()
+    st[spec] = rec
     config.save_settings({"risk_state": st}, area_id=area_id)
     return True
 
 
-def _lock(area_id: int, spec: str, kind: str, reason: str, total: float) -> None:
+def _lock(area_id: int, spec: str, kind: str, reason: str, total: float, *,
+          realized: Optional[float] = None, clock_day: str = "") -> None:
     st = _state(area_id)
     st[spec] = {"day": trading_day(), "kind": kind, "reason": reason,
-                "pnl": round(total, 2), "at": datetime.now(timezone.utc).isoformat()}
+                "pnl": round(total, 2), "at": datetime.now(timezone.utc).isoformat(),
+                "realized": None if realized is None else round(float(realized), 2), "clock_day": clock_day}
     config.save_settings({"risk_state": st}, area_id=area_id)
+
+
+def _already_fired(rec: Any, kind: str, realized: float, clock_day: str) -> bool:
+    """The rule already fired on this very state: a time rule once per clock
+    day; a loss / profit rule while the broker still reports the realised
+    figure it fired on (it resets at the 17:00 New York roll, the cached
+    snapshot a little later)."""
+    if not isinstance(rec, dict) or rec.get("kind") != kind:
+        return False
+    if kind == "time":
+        return bool(clock_day) and rec.get("clock_day") == clock_day
+    stored = rec.get("realized")
+    return stored is not None and round(float(realized), 2) == round(float(stored), 2)
 
 
 # ----------------------------------------------------------------- engine
@@ -208,16 +232,36 @@ async def flatten_account(session: Any, account: dict[str, Any]) -> tuple[int, i
     return cancelled, flattened, errors
 
 
-async def check_area(area_id: int, sessions: list[Any], snapshots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+_warned_no_id: set[tuple[int, str]] = set()
+
+
+async def check_area(area_id: int, sessions: list[Any], snapshots: list[dict[str, Any]], *,
+                     positions: Optional[dict[str, Optional[list[dict[str, Any]]]]] = None) -> list[dict[str, Any]]:
     """One P&L tick: apply every account's rules. Returns the triggers fired
-    (also used by tests). Annotates each snapshot with its ``risk`` view."""
+    (also used by tests). Annotates each snapshot with its ``risk`` view.
+    ``positions`` may carry the raw ``/position/list`` per login (from the P&L
+    poll) so "still holds a position" is judged by the broker's list, not by
+    an open P&L that can be exactly 0.00."""
     s = config.load_settings(area_id=area_id)
     now_local = local_now(area_id, s)
+    now_ny = now_local.astimezone(ET)
+    raw_state = s.get("risk_state") if isinstance(s.get("risk_state"), dict) else {}
     by_id: dict[int, tuple[Any, dict[str, Any]]] = {}
+    open_accounts: Optional[set[int]] = None
+    if positions:
+        open_accounts = set()
+        for raw in positions.values():
+            for p in raw or []:
+                if p.get("netPos"):
+                    open_accounts.add(int(p.get("accountId") or 0))
     for sess in sessions:
         for a in sess.accounts:
             if a.get("id"):
                 by_id[int(a["id"])] = (sess, a)
+            elif active(a.get("risk")) and (area_id, a.get("spec") or "") not in _warned_no_id:
+                _warned_no_id.add((area_id, a.get("spec") or ""))
+                state.log_event("error", f"Risk guard: {a.get('spec')} has rules but no Tradovate account id — "
+                                         "it is NOT guarded; run Connect & Verify on its login")
     fired: list[dict[str, Any]] = []
     for snap in snapshots:
         pair = by_id.get(int(snap.get("account_id") or 0))
@@ -233,7 +277,9 @@ async def check_area(area_id: int, sessions: list[Any], snapshots: list[dict[str
         total = float(snap.get("realized") or 0) + float(snap.get("open") or 0)
         if lock:
             # still locked: a position that came back (manual trade) is closed again
-            if float(snap.get("open") or 0) and _due(area_id, spec):
+            aid_ = int(snap.get("account_id") or 0)
+            holds = (aid_ in open_accounts) if open_accounts is not None else bool(float(snap.get("open") or 0))
+            if holds and _due(area_id, spec):
                 c, f, errs = await flatten_account(sess, acc)
                 if f or errs:
                     state.log_event("warn", f"🔒 {spec} is locked ({lock.get('reason')}): position closed again"
@@ -241,17 +287,23 @@ async def check_area(area_id: int, sessions: list[Any], snapshots: list[dict[str
             continue
         if not active(r):
             continue
-        hit = evaluate(r, total, now_local, now_local.astimezone(ET))
+        hit = evaluate(r, total, now_local, now_ny)
         if not hit:
             continue
         kind, reason = hit
+        clock = now_ny if str(r.get("flatten_tz") or "local") == "ny" else now_local
+        realized = float(snap.get("realized") or 0)
+        if _already_fired(raw_state.get(spec), kind, realized, clock.date().isoformat()):
+            continue                                   # fired on this state already (roll / unlock)
         key = (area_id, spec)
         lk = _flatten_lock.setdefault(key, asyncio.Lock())
         if lk.locked():
             continue
         async with lk:
+            # lock first: from this moment every bridge order for the account is
+            # refused, so nothing can slip in while the flatten is under way
+            _lock(area_id, spec, kind, reason, total, realized=realized, clock_day=clock.date().isoformat())
             c, f, errs = await flatten_account(sess, acc)
-            _lock(area_id, spec, kind, reason, total)
             snap["risk"].update({"locked": True, "reason": reason, "kind": kind})
             fired.append({"spec": spec, "kind": kind, "reason": reason, "cancelled": c, "flattened": f, "errors": errs, "pnl": total})
             state.log_event("warn", f"🔒 Risk guard: {spec} flattened and locked for today — {reason}"
@@ -283,5 +335,5 @@ def overview(area_id: int) -> list[dict[str, Any]]:
             spec = a.get("spec") or a.get("account_spec") or ""
             lock = lock_of(area_id, spec, settings=s)
             out.append({"token_idx": idx, "spec": spec, "risk": dict(a.get("risk") or {}),
-                        "locked": bool(lock), "lock": lock})
+                        "locked": bool(lock), "lock": lock, "guarded": bool(a.get("id")) or not active(a.get("risk"))})
     return out

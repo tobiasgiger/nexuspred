@@ -72,12 +72,14 @@ export const updates = {
     const status = h("div", { class: "callout" }, "Checking…");
     const applyBtn = h("button", { type: "button", class: "btn btn-update hidden", onClick: async () => {
       if (!(await confirmDialog({ title: "Update now?", body: "Pull the latest version from GitHub and restart the bridge. Open positions are not affected; the dashboard reloads in a few seconds.", confirmText: "Update & restart" }))) return;
+      if (applyBtn.disabled) return;
+      applyBtn.disabled = true;
       toast("Updating…");
       try {
         const r = await api.post("/api/update/apply");
         toast(r.message, "success");
         setTimeout(() => window.location.reload(), 5000);
-      } catch (e) { toast("Update failed: " + e.message, "error"); }
+      } catch (e) { toast("Update failed: " + e.message, "error"); applyBtn.disabled = false; }
     } }, "Update & restart");
     const checkBtn = h("button", { type: "button", class: "btn btn-secondary", onClick: () => actions.checkUpdate() }, icon("refresh"), "Check now");
     const form = settingsForm({

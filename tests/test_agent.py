@@ -129,13 +129,24 @@ async def test_offline_agent_fails_loudly(client, anon_client):
         await sess.list_accounts()
     # online but silent → times out with a clear message (short timeout for the test)
     relay.touch(paired["agent_id"])
-    orig = relay.RESULT_TIMEOUT_EXTRA_S
-    relay.RESULT_TIMEOUT_EXTRA_S = 0.1
+    orig, orig_dispatch = relay.RESULT_TIMEOUT_EXTRA_S, relay.DISPATCH_TIMEOUT_S
+    relay.RESULT_TIMEOUT_EXTRA_S = relay.DISPATCH_TIMEOUT_S = 0.1
     try:
-        with pytest.raises(tradovate.TradovateError, match="did not answer"):
+        with pytest.raises(tradovate.TradovateError, match="did not pick the request up"):
             await sess._request("GET", "/x", timeout=0.1)
+        # picked up but never answered → the outcome is unknown (never "failed")
+        async def claim_then_silence():
+            jobs = await relay.next_jobs(paired["agent_id"], wait=2.0)
+            assert jobs                                    # the abandoned first job is skipped, the new one claimed
+        import asyncio
+        relay.DISPATCH_TIMEOUT_S = 2.0
+        t = asyncio.create_task(claim_then_silence())
+        await asyncio.sleep(0.05)                       # the agent is polling before the request goes out
+        with pytest.raises(tradovate.TradovateError, match="outcome is unknown"):
+            await sess._request("GET", "/x", timeout=0.1)
+        await t
     finally:
-        relay.RESULT_TIMEOUT_EXTRA_S = orig
+        relay.RESULT_TIMEOUT_EXTRA_S, relay.DISPATCH_TIMEOUT_S = orig, orig_dispatch
 
 
 async def test_token_accounts_save_keeps_agent_and_accounts(client, anon_client):

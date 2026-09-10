@@ -231,6 +231,11 @@ async def test_reconcile_recreates_missing_drops_done_and_cancels_orphans(world)
     n = await r.orders.reconcile(lead, 1)
     assert n >= 1 and ("F1", 40) not in r.orders.twins or r.orders.twins[("F1", 40)]["follower_order_id"] != fid
     assert any(e["kind"] == "order_done" for e in db.list_copy_events(1))
+    # a twin that vanished at the broker while the leader order still works is
+    # held back for a moment (it may have filled: the position mirror reads the broker)
+    n = await r.orders.reconcile(lead, 1)
+    assert ("F1", 40) not in r.orders.twins and len(ex.of("place")) == 1
+    r.orders._done_at.clear()
     n = await r.orders.reconcile(lead, 1)
     assert ("F1", 40) in r.orders.twins and len(ex.of("place")) == 2
     # 2) orphan: the leader order disappears but a poll was missed → reconcile cancels the twin
@@ -326,3 +331,107 @@ async def test_socket_entities_drive_the_order_mirror(world):
     await r._on_ws_message(lead, 1, {"e": "props", "d": {"entityType": "order", "entity": {"id": 99, "accountId": 5, "contractId": 901, "action": "Buy", "ordStatus": "Working"}}})
     await asyncio.sleep(0.4)
     assert ("F1", 99) not in r.orders.twins
+
+
+async def test_leader_order_in_transition_keeps_the_twin(world):
+    """PendingReplace / Suspended is not gone: the twin stays, the leader order is
+    carried over until it works again (a version change then becomes a modify)."""
+    lead, ex = world["lead"], world["ex"]
+    r = await _runner(world)
+    lead.add_order(80, "Buy", 1, "Limit", price=21000.0)
+    await r._poll_once(lead, 1)
+    fid = ex.of("place")[0]["order_id"]
+    lead.orders[0]["ordStatus"] = "PendingReplace"
+    await r._poll_once(lead, 1)
+    assert ("F1", 80) in r.orders.twins and not ex.of("cancel") and 80 in r.orders.leader_orders
+    lead.orders[0]["ordStatus"] = "Working"
+    lead.versions[80] = {"id": 801, "orderId": 80, "orderQty": 1, "orderType": "Limit", "price": 20950.0, "stopPrice": None}
+    await r._poll_once(lead, 1)
+    assert ex.of("modify")[-1] == {"order_id": fid, "qty": 2, "order_type": "Limit", "price": 20950.0, "stop_price": None}
+    for final in ("Filled",):
+        lead.orders[0]["ordStatus"] = final
+        await r._poll_once(lead, 1)
+    assert ("F1", 80) not in r.orders.twins and ex.of("cancel") == [{"order_id": fid}]
+    # a leader order without a version yet is waited for, not mirrored with size 0
+    lead.orders.append({"id": 81, "accountId": 1, "ordStatus": "Working", "contractId": 901, "action": "Buy", "ocoId": 0})
+    await r._poll_once(lead, 1)
+    assert 81 not in r.orders.leader_orders and len(ex.of("place")) == 1
+    lead.versions[81] = {"id": 810, "orderId": 81, "orderQty": 1, "orderType": "Limit", "price": 20900.0, "stopPrice": None}
+    await r._poll_once(lead, 1)
+    assert 81 in r.orders.leader_orders and len(ex.of("place")) == 2
+    # a known order whose version is missing from one snapshot keeps its last picture
+    lead.versions.pop(81)
+    await r._poll_once(lead, 1)
+    assert r.orders.leader_orders[81]["qty"] == 1 and not ex.of("modify")[1:]
+
+
+async def test_oco_legs_of_different_size_become_two_orders(world):
+    """The follower's OCO must share one quantity: legs that size differently
+    (a 3-lot target and a 1-lot partial stop) are mirrored as independent orders."""
+    lead, fol, ex = world["lead"], world["fol"], world["ex"]
+    lead.positions = [{"accountId": 1, "contractId": 901, "netPos": 0}]
+    r = await _runner(world)
+    lead.positions = [{"accountId": 1, "contractId": 901, "netPos": 3}]
+    await r._poll_once(lead, 1)
+    fol.positions = [{"accountId": 2, "contractId": 901, "netPos": 6}]
+    lead.add_order(20, "Sell", 3, "Limit", price=21100.0, oco=21)
+    lead.add_order(21, "Sell", 1, "Stop", stop=20900.0, oco=20)
+    await r._poll_once(lead, 1)
+    assert not ex.of("place_oco")
+    legs = [c for c in ex.of("place") if c["order_type"] != "Market"]
+    assert [(c["order_type"], c["qty"]) for c in legs] == [("Limit", 6), ("Stop", 2)]
+    assert len(r.orders.twins) == 2 and all(t["oco_with"] == 0 for t in r.orders.twins.values())
+    assert any("two independent orders" in e["detail"] for e in db.list_copy_events(1))
+
+
+async def test_cancel_failure_keeps_a_twin_that_still_works(world):
+    lead, ex = world["lead"], world["ex"]
+    r = await _runner(world)
+    lead.add_order(90, "Buy", 1, "Limit", price=21000.0)
+    await r._poll_once(lead, 1)
+    fid = ex.of("place")[0]["order_id"]
+
+    async def boom(order_id):
+        raise tradovate.TradovateError("cancel: broker timeout")
+    ex.cancel_order = boom
+    lead.drop_order(90)
+    await r._poll_once(lead, 1)
+    assert ("F1", 90) in r.orders.twins and r.follower_err["F1"].startswith("cancel failed")
+    assert any(e["kind"] == "order_reject" and "still working" in e["detail"] for e in db.list_copy_events(1))
+    # the reconcile retries the orphan; once the broker no longer has it, it is dropped
+    ex.working = []
+    await r.orders.reconcile(lead, 1)
+    assert ("F1", 90) not in r.orders.twins
+
+
+async def test_concurrent_applies_place_one_twin(world):
+    """A poll and a socket pass that both see a new order create one twin, not two."""
+    lead, ex = world["lead"], world["ex"]
+    r = await _runner(world)
+    ex.place_delay = 0.05
+    lead.add_order(95, "Buy", 1, "Limit", price=21000.0)
+    now, statuses = await r.orders.snapshot(lead, 1)
+    await asyncio.gather(r.orders.apply(lead, dict(now), dict(statuses)), r.orders.apply(lead, dict(now), dict(statuses)))
+    assert len(ex.of("place")) == 1 and r.orders.twins[("F1", 95)]["follower_order_id"] == ex.of("place")[0]["order_id"]
+
+
+async def test_socket_events_during_an_apply_are_not_lost(world):
+    lead, ex = world["lead"], world["ex"]
+    r = await _runner(world)
+    ex.place_delay = 0.1
+    await r._on_ws_message(lead, 1, {"e": "props", "d": {"entityType": "order", "eventType": "Created",
+        "entity": {"id": 96, "accountId": 1, "contractId": 901, "action": "Buy", "ordStatus": "Working"}}})
+    await r._on_ws_message(lead, 1, {"e": "props", "d": {"entityType": "orderVersion", "eventType": "Created",
+        "entity": {"id": 960, "orderId": 96, "orderQty": 1, "orderType": "Limit", "price": 21000.0}}})
+    await asyncio.sleep(0.3)                                    # the apply task is placing (slow broker)
+    await r._on_ws_message(lead, 1, {"e": "props", "d": {"entityType": "order", "eventType": "Created",
+        "entity": {"id": 97, "accountId": 1, "contractId": 901, "action": "Sell", "ordStatus": "Working"}}})
+    await r._on_ws_message(lead, 1, {"e": "props", "d": {"entityType": "orderVersion", "eventType": "Created",
+        "entity": {"id": 970, "orderId": 97, "orderQty": 1, "orderType": "Stop", "stopPrice": 20800.0}}})
+    await asyncio.sleep(0.8)
+    assert {k[1] for k in r.orders.twins} == {96, 97}
+    # a final status prunes the socket entities once the twin is gone
+    await r._on_ws_message(lead, 1, {"e": "props", "d": {"entityType": "order", "eventType": "Updated",
+        "entity": {"id": 96, "accountId": 1, "contractId": 901, "action": "Buy", "ordStatus": "Filled"}}})
+    await asyncio.sleep(0.5)
+    assert ("F1", 96) not in r.orders.twins and 96 not in r.orders.ent_orders and 96 not in r.orders.ent_versions

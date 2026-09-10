@@ -6,7 +6,7 @@ import asyncio
 from typing import Any
 
 from .. import alerts, config, state
-from .common import SignalError, _lock, _opposite, _tp_index_from_event, _trade_key
+from .common import _place_stop_with_retry, SignalError, _lock, _opposite, _tp_index_from_event, _trade_key
 from ..sizing import account_qty
 
 
@@ -49,11 +49,6 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
                 bracket.append(("tp", ex.place_order(
                     symbol=contract, action=exit_side, qty=slice_qty,
                     order_type=s.get("tp_order_type", "Limit"), price=float(payload[key]))))
-        if payload.get("sl") is not None:
-            bracket.append(("sl", ex.place_order(
-                symbol=contract, action=exit_side, qty=entry_qty,
-                order_type=sl_type, stop_price=float(payload["sl"]))))
-
         tp_ids: list[int] = []
         sl_id = None
         if bracket:
@@ -66,8 +61,14 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
                 acc_orders.append(res)
                 if kind == "tp" and res.get("order_id"):
                     tp_ids.append(res["order_id"])
-                elif kind == "sl":
-                    sl_id = res.get("order_id")
+        if payload.get("sl") is not None:
+            # the protective stop is placed on its own, with a retry and a loud
+            # alert when it fails: the entry is live by now
+            sl = await _place_stop_with_retry(ex, symbol=contract, action=exit_side, qty=entry_qty,
+                                              order_type=sl_type, stop_price=float(payload["sl"]), tag=tag)
+            if sl is not None:
+                acc_orders.append(sl)
+                sl_id = sl.get("order_id")
 
         info = {
             "name": ex.name, "contract": contract, "entry_qty": entry_qty,
@@ -114,10 +115,11 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
 
 
 def _remaining_qty(info: dict[str, Any], tp_index: int | None) -> int:
-    """Position left after ``tp_index`` take-profits filled (1 contract each by default)."""
+    """Position left after ``tp_index`` take-profits filled (1 contract each by
+    default). 0 means the last target closed the position: the stop is retired."""
     if tp_index is None:
         return int(info.get("qty") or info.get("entry_qty", 1))
-    return max(1, int(info["entry_qty"]) - tp_index * int(info["tp_qty"]))
+    return max(0, int(info["entry_qty"]) - tp_index * int(info["tp_qty"]))
 
 
 def _is_breakeven_move(payload: dict[str, Any], tp_index: int | None) -> bool:
@@ -156,12 +158,22 @@ async def handle_move_sl(payload, root, executors, active_map, tag, webhook):
             state.log_event("warn", f"{tag}move_sl for {root}: no stop price available")
             return None
         qty = _remaining_qty(info, tp_index)
-        info["qty"] = qty
-        info["sl_stop"] = stop
+        if qty <= 0:
+            # every target filled: a stop left working would open a reverse trade
+            try:
+                await ex.cancel_order(info["sl_order_id"])
+            except TradovateError as exc:
+                state.log_event("error", f"{tag}{ex.name}: stop {info['sl_order_id']} could not be retired after the last target: {exc}")
+                raise
+            info["sl_order_id"] = None
+            info["qty"] = 0
+            return None
         await ex.modify_order(
             info["sl_order_id"], qty=qty,
             order_type=info.get("sl_type", "Stop"), stop_price=stop,
         )
+        info["qty"] = qty                       # state follows the broker, never precedes it
+        info["sl_stop"] = stop
         return stop
 
     results = await asyncio.gather(

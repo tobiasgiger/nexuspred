@@ -68,12 +68,17 @@ def _group(**over):
     return g
 
 
+_REAL_WS_ACCELERATOR = cp.GroupRunner._ws_accelerator
+
+
 @pytest.fixture
 def world(monkeypatch, admin):
     """A leader login (poll feed), one follower login with two accounts."""
     leader = Sess(0, "L", [{"id": 1, "spec": "LEAD"}])
     follower = Sess(1, "F", [{"id": 2, "spec": "F1"}, {"id": 3, "spec": "F2"}])
     execs = {"F1": FakeExecutor("F1"), "F2": FakeExecutor("F2")}
+    execs["F1"].session, execs["F1"].id = follower, 2     # broker truth (position list) reachable per executor
+    execs["F2"].session, execs["F2"].id = follower, 3
     mgr = Manager([leader, follower], execs)
     monkeypatch.setattr(tradovate, "manager_for", lambda area_id: mgr)
     monkeypatch.setattr(cp, "POLL_INTERVAL_S", 0.01)
@@ -81,6 +86,11 @@ def world(monkeypatch, admin):
     monkeypatch.setattr(cp, "RECONCILE_INTERVAL_S", 3600)
     monkeypatch.setattr(cp, "RECONNECT_BACKOFF_S", 0.02)
     monkeypatch.setattr(cp, "POLL_ERROR_SLEEP_S", 0.02)
+    monkeypatch.setattr(cp, "ORDER_SETTLE_S", 0.0)          # reconcile right after an order (a dedicated test covers the hold-off)
+
+    async def no_ws(self, session, account_id):             # never open a real socket from the tests
+        await self._stop.wait()
+    monkeypatch.setattr(cp.GroupRunner, "_ws_accelerator", no_ws)
     sent = []
 
     async def rec(title, message, **kw):
@@ -307,6 +317,7 @@ async def test_feed_loss_flattens_followers_and_pauses(world, monkeypatch):
         world["leader"].positions = [{"accountId": 1, "contractId": 901, "netPos": 2}]
         ex = world["execs"]["F1"]
         assert await _wait(lambda: len(ex.of("place")) == 1)
+        world["follower"].positions = [{"accountId": 2, "contractId": 901, "netPos": 2}]   # the fill at the broker
         world["leader"].fail = True                         # the poll feed dies
         await asyncio.sleep(0.1)
         await r.watchdog()
@@ -315,12 +326,15 @@ async def test_feed_loss_flattens_followers_and_pauses(world, monkeypatch):
         await r.watchdog()
         assert r.paused and "feed lost" in r.pause_reason
         assert _placed(ex)[-1] == ("Sell", 2, "MNQZ6") and r.follower_pos[("F1", 901)] == 0
+        world["follower"].positions = []
         assert world["sent"][-1][0].startswith("Copy group paused") and world["sent"][-1][2] == {"email": True}
-        # while paused, leader changes are not mirrored
+        # the flattened contract became baseline: leader changes are not mirrored
+        # while the leader keeps the position (and the group is paused anyway)
+        assert 901 in r.baseline
         world["leader"].fail = False
         assert await _wait(lambda: r.feed_ok)
         world["leader"].positions[0]["netPos"] = 3
-        assert await _wait(lambda: any(e["kind"] == "skipped" for e in db.list_copy_events(1)))
+        assert await _wait(lambda: any(e["kind"] == "ignored" and "existing position" in e["detail"] for e in db.list_copy_events(1)))
         assert len(ex.of("place")) == 2
         # resume + sync brings the follower back in line
         await r.sync_now()
@@ -336,14 +350,15 @@ async def test_websocket_messages_drive_the_mirror(world):
     await r._seed_leader(lead, 1)
     r._mark_feed(True)
     ex = world["execs"]["F1"]
-    # snapshot: existing position → baseline
+    # sync snapshot: a position the REST seed did not know was opened after the
+    # seed → an entry, mirrored (the REST seed alone decides the baseline)
     await r._on_ws_message(lead, 1, {"i": 2, "s": 200, "d": {"positions": [{"accountId": 1, "contractId": 902, "netPos": 1}]}})
-    assert 902 in r.baseline and not ex.of("place")
+    assert 902 not in r.baseline and _placed(ex) == [("Buy", 1, "ESZ6")]
     # live property change on another account: ignored
     await r._on_ws_message(lead, 1, {"e": "props", "d": {"entityType": "position", "entity": {"accountId": 9, "contractId": 901, "netPos": 5}}})
-    assert not ex.of("place")
+    assert len(ex.of("place")) == 1
     await r._on_ws_message(lead, 1, {"e": "props", "d": {"entityType": "position", "entity": {"accountId": 1, "contractId": 901, "netPos": 2}}})
-    assert _placed(ex) == [("Buy", 2, "MNQZ6")]
+    assert _placed(ex) == [("Buy", 1, "ESZ6"), ("Buy", 2, "MNQZ6")]
     with pytest.raises(tradovate.TradovateError, match="authorize"):
         await r._on_ws_message(lead, 1, {"i": 1, "s": 401, "d": "bad token"})
     with pytest.raises(tradovate.TradovateError):
@@ -368,6 +383,89 @@ async def test_sync_area_starts_stops_and_restarts_runners(world):
     await cp.sync_area(1)
     assert cp.runner(1, g["id"]) is None and cp.statuses(1) == {}
     await cp.stop_all()
+
+
+async def test_reconcile_waits_for_a_fresh_order_to_settle(world, monkeypatch):
+    """A market order that just went out is not yet in the broker's position list:
+    the reconcile must not read the stale snapshot as drift and double the order."""
+    monkeypatch.setattr(cp, "ORDER_SETTLE_S", 5.0)
+    r = cp.GroupRunner(1, _group())
+    lead = world["leader"]
+    await r._seed_followers()
+    await r._seed_leader(lead, 1)
+    r._mark_feed(True)
+    ex = world["execs"]["F1"]
+    lead.positions = [{"accountId": 1, "contractId": 901, "netPos": 2}]
+    await r._poll_once(lead, 1)
+    assert _placed(ex) == [("Buy", 2, "MNQZ6")]
+    # the broker still reports the follower flat (fill not yet in /position/list)
+    world["follower"].positions = [{"accountId": 2, "contractId": 901, "netPos": 0}]
+    assert await r.reconcile() == 0 and len(ex.of("place")) == 1
+    # once the settle window is over the broker's word counts again
+    r.last_order_at["F1"] = time.monotonic() - 10
+    assert await r.reconcile() == 1 and _placed(ex)[-1] == ("Buy", 2, "MNQZ6")
+
+
+async def test_poll_change_needs_two_looks_while_the_socket_is_synced(world):
+    """With the socket synced a REST snapshot may predate an already applied
+    socket event; a difference is acted on only when two consecutive polls agree."""
+    r = cp.GroupRunner(1, _group(feed="websocket"))
+    lead = world["leader"]
+    await r._seed_followers()
+    await r._seed_leader(lead, 1)
+    r._mark_feed(True)
+    ex = world["execs"]["F1"]
+    r.ws_ok = True
+    lead.positions = [{"accountId": 1, "contractId": 901, "netPos": 2}]
+    assert await r._poll_once(lead, 1) == 0 and not ex.of("place")       # first look: pending
+    lead.positions = [{"accountId": 1, "contractId": 901, "netPos": 3}]
+    assert await r._poll_once(lead, 1) == 0 and not ex.of("place")       # a different value: pending again
+    assert await r._poll_once(lead, 1) == 1 and _placed(ex) == [("Buy", 3, "MNQZ6")]
+    # without the socket the poll is the feed and acts at once
+    r.ws_ok = False
+    lead.positions = []
+    assert await r._poll_once(lead, 1) == 1 and _placed(ex)[-1] == ("Sell", 3, "MNQZ6")
+
+
+async def test_flatten_uses_broker_truth_only_mirrored_contracts_and_enabled_followers(world):
+    r = cp.GroupRunner(1, _group(followers=[cp.normalize_follower({"token_idx": 1, "spec": "F1", "account_id": 2}),
+                                          cp.normalize_follower({"token_idx": 1, "spec": "F2", "account_id": 3, "enabled": False})]))
+    lead = world["leader"]
+    lead.positions = [{"accountId": 1, "contractId": 902, "netPos": 1}]      # ES held before the group: baseline
+    await r._seed_followers()
+    await r._seed_leader(lead, 1)
+    r._mark_feed(True)
+    ex, ex2 = world["execs"]["F1"], world["execs"]["F2"]
+    lead.positions.append({"accountId": 1, "contractId": 901, "netPos": 2})
+    await r._poll_once(lead, 1)
+    assert _placed(ex) == [("Buy", 2, "MNQZ6")] and not ex2.of("place")
+    # the broker says the follower holds 3 (a manual add) and 1 ES of its own
+    world["follower"].positions = [{"accountId": 2, "contractId": 901, "netPos": 3}, {"accountId": 2, "contractId": 902, "netPos": 1},
+                                   {"accountId": 3, "contractId": 901, "netPos": 5}]
+    n = await r.flatten_followers(reason="test")
+    assert n == 1 and _placed(ex)[-1] == ("Sell", 3, "MNQZ6")               # broker truth, MNQ only
+    assert not ex2.of("place")                                             # disabled follower untouched
+    assert 901 in r.baseline and r.follower_pos[("F1", 901)] == 0
+    # the reconcile does not re-enter what was flattened
+    world["follower"].positions = [{"accountId": 2, "contractId": 901, "netPos": 0}]
+    assert await r.reconcile() == 0 and len(ex.of("place")) == 2
+
+
+async def test_watchdog_treats_a_throttle_as_no_feed_loss(world, monkeypatch):
+    monkeypatch.setattr(cp, "FEED_STALE_S", 0.05)
+    r = cp.GroupRunner(1, _group(feed_loss_flatten_s=1))
+    r.start()
+    try:
+        assert await _wait(lambda: r.feed_ok)
+        world["leader"].positions = [{"accountId": 1, "contractId": 901, "netPos": 2}]
+        ex = world["execs"]["F1"]
+        assert await _wait(lambda: len(ex.of("place")) == 1)
+        r.last_frame = time.monotonic() - 60
+        r.throttled_until = time.monotonic() + 30                      # a 429 penalty is running
+        await r.watchdog()
+        assert r.feed_ok and not r.paused and len(ex.of("place")) == 1
+    finally:
+        await r.stop()
 
 
 # --------------------------------------------------------------------- API
@@ -408,6 +506,7 @@ async def test_api_crud_and_actions(client, accounts_cfg, world):
     world["leader"].positions = [{"accountId": 1, "contractId": 901, "netPos": 2}]
     ex = world["execs"]["F1"]
     assert await _wait(lambda: len(ex.of("place")) == 1)
+    world["follower"].positions = [{"accountId": 2, "contractId": 901, "netPos": 2}]   # the fill at the broker
     r = await client.post(f"/api/copy/groups/{gid}/flatten")
     assert r.status_code == 200 and r.json()["paused"] and r.json()["flattened"] == 1
     r = await client.post(f"/api/copy/groups/{gid}/resume")
@@ -555,6 +654,7 @@ async def test_socket_accelerates_but_never_counts_as_the_feed(world, monkeypatc
     ws = _FakeWs(["o", "<wait>", 'a[{"e":"props","d":{"entityType":"position","eventType":"Updated","entity":{"accountId":1,"contractId":901,"netPos":2}}}]', "<wait>"])
     fake_mod = types.SimpleNamespace(connect=lambda *a, **k: ws)
     monkeypatch.setitem(sys.modules, "websockets", fake_mod)
+    monkeypatch.setattr(cp.GroupRunner, "_ws_accelerator", _REAL_WS_ACCELERATOR)   # this test drives the real socket loop
     monkeypatch.setattr(cp, "RECONNECT_BACKOFF_S", 5.0)          # no reconnect during the test
     r = cp.GroupRunner(1, _group(feed="websocket"))
     r.start()

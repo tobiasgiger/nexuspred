@@ -4,6 +4,53 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.49
+- **Code review, part 1: the money paths.** A full review of the order, copy-trading,
+  risk and P&L code; everything that could place a wrong order, miss one, or double one
+  is fixed in this release.
+  - *Tradovate:* an order the broker rejects with HTTP 200 (`failureReason` in the body)
+    is now an error, not a success — the bridge no longer believes a stop is working when
+    it is not. Order, cancel, modify and liquidate calls go through their own fast lane
+    (60 ms spacing, never queued behind the P&L poll); a 429 penalty longer than three
+    seconds fails them fast instead of blocking. A token that cannot be renewed keeps
+    serving while it is still valid; an empty account discovery no longer wipes the account
+    list, and a rediscovery keeps each account's enabled flag and risk settings.
+  - *Execution agent:* a job the agent claimed but never answered is an **unknown
+    outcome** (alerted) rather than a silent failure, and a job the bridge abandoned can
+    no longer be picked up by the agent later.
+  - *Strategies:* a protective stop that fails to place is retried once and alerted;
+    closing a trade cancels its orders, liquidates, then retries the cancels; a stop whose
+    quantity reaches zero is retired instead of left working; *set SL/TP* places the new
+    order before cancelling the old one, so a position is never unprotected in between.
+  - *Risk guard:* a lock never fires twice for the same loss — the 17:00 New York day roll
+    no longer re-flattens an account, the lock is written before the flatten starts, and a
+    manual unlock sticks for the day.
+  - *Copy trading:* the reconcile leaves a follower alone for five seconds after an order
+    (the fill is not yet in the broker's position list), holds the follower lock while it
+    compares and writes, and never re-enters a contract that was flattened. While the
+    socket is synced a REST difference must be seen twice before it is mirrored (a
+    snapshot can predate an already applied socket event). A feed-loss flatten closes
+    only what the mirror opened, on enabled followers, using the broker's real position.
+    A 429 throttle is never a lost feed. A position that appears in the socket's sync
+    snapshot after the REST seed is an entry and is mirrored. Twins are cancelled when a
+    group is disabled or deleted.
+  - *Order mirror:* passes never run concurrently (one twin per leader order, whatever
+    the poll and the socket see at the same time); a leader order in transition
+    (PendingReplace, PendingCancel, Suspended) keeps its twin instead of cancel + recreate;
+    OCO legs that size differently on the follower are mirrored as two independent orders
+    (the broker requires one quantity per OCO); a twin whose cancel failed while it is
+    still working is kept and retried, never forgotten; a twin that filled at the broker
+    while the leader order still works is not re-created for 30 s; socket events that
+    arrive during a pass are applied by one more pass; final orders are pruned from the
+    socket state.
+  - *Dashboard:* the marketplace subscription drawer's sizing columns (Same / Multiplier /
+    Fixed / Max) were never wired — subscriptions always traded 1:1 — and the drawer
+    crashed on a missing helper; both fixed. Deleting a copy group works again. The event
+    stream reconnects with backoff after the browser closed it and refreshes orders and
+    logs on resync. Settings save posts only the fields that changed (blank numbers are
+    left alone). Save / Connect / Update buttons cannot be double-clicked. P&L paints skip
+    stale snapshots.
+
 ## 5.0.0-alpha.48
 - **Risk guard on the exchange's clock.** A lock now lasts the Tradovate trading day
   (rolls at 17:00 New York), the same day the broker's daily P&L uses — a Zurich-midnight

@@ -36,8 +36,10 @@ if TYPE_CHECKING:  # pragma: no cover
     from .copy import GroupRunner
 
 WORKING = {"Working"}
+GONE = {"Filled", "Canceled", "Cancelled", "Rejected", "Expired", "Completed"}   # final: the twin goes
 MIRRORED_TYPES = {"Limit", "Stop", "StopLimit"}
 TOUCH_WINDOW_S = 30.0       # after a twin event the position mirror reads the broker's position
+DONE_HOLD_S = 30.0          # a twin that filled / vanished at the broker is not re-created for this long
 
 
 def _num(v: Any) -> Optional[float]:
@@ -59,6 +61,9 @@ class OrderMirror:
         self.ent_orders: dict[int, dict[str, Any]] = {}       # socket: order entities by id
         self.ent_versions: dict[int, dict[str, Any]] = {}     # socket: latest orderVersion by order id
         self._apply_task: Optional[asyncio.Task] = None
+        self._apply_lock = asyncio.Lock()                      # poll, socket and reconcile never diff concurrently
+        self._dirty = False                                    # socket events arrived while an apply ran
+        self._done_at: dict[tuple[str, int], float] = {}       # (spec, leader order id) → twin found done (monotonic)
 
     # ------------------------------------------------------------ helpers
     def _twin_key(self, spec: str, leader_order_id: int) -> tuple[str, int]:
@@ -140,13 +145,15 @@ class OrderMirror:
         return out
 
     # --------------------------------------------------------- leader feed
-    async def snapshot(self, session: Any, account_id: int) -> dict[int, dict[str, Any]]:
-        """The leader's working orders with their latest version."""
+    async def snapshot(self, session: Any, account_id: int) -> tuple[dict[int, dict[str, Any]], dict[int, str]]:
+        """The leader's working orders with their latest version, plus the status
+        of every order of the account (working, in transition or final)."""
         raw = await session._request("GET", "/order/list") or []
-        orders = [o for o in raw if isinstance(o, dict) and int(o.get("accountId") or 0) == account_id
-                  and str(o.get("ordStatus")) in WORKING]
+        mine = [o for o in raw if isinstance(o, dict) and int(o.get("accountId") or 0) == account_id and o.get("id")]
+        statuses = {int(o["id"]): str(o.get("ordStatus") or "") for o in mine}
+        orders = [o for o in mine if statuses[int(o["id"])] in WORKING]
         if not orders:
-            return {}
+            return {}, statuses
         versions = await session.order_versions([int(o["id"]) for o in orders]) if hasattr(session, "order_versions") else {}
         out: dict[int, dict[str, Any]] = {}
         for o in orders:
@@ -156,21 +163,21 @@ class OrderMirror:
                         "qty": int(v.get("orderQty") or 0), "order_type": str(v.get("orderType") or ""),
                         "price": _num(v.get("price")), "stop_price": _num(v.get("stopPrice")),
                         "version_id": int(v.get("id") or 0), "oco_id": int(o.get("ocoId") or 0)}
-        return out
+        return out, statuses
 
     async def poll(self, session: Any, account_id: int) -> None:
         """REST look at the leader's working orders, then act on the difference."""
         if not self.enabled:
             return
         try:
-            now = await self.snapshot(session, account_id)
+            now, statuses = await self.snapshot(session, account_id)
         except RateLimited:
             raise                                   # the poll loop waits the penalty
         except Exception as exc:  # noqa: BLE001
             self.error = f"orders: {exc}"[:200]
             return
         self.error = ""
-        await self.apply(session, now)
+        await self.apply(session, now, statuses)
 
     # ---- socket entities (user sync snapshot + props events)
     def on_entity(self, kind: str, ent: dict[str, Any]) -> bool:
@@ -183,16 +190,34 @@ class OrderMirror:
             if not oid:
                 return False
             self.ent_orders[oid] = ent
+            if str(ent.get("ordStatus") or "") in GONE:
+                # keep the final status for one apply (the twin is cancelled), then forget the order
+                self.ent_versions.pop(oid, None)
             return True
         if kind == "orderversion":
             oid = int(ent.get("orderId") or 0)
             if not oid:
                 return False
+            if str((self.ent_orders.get(oid) or {}).get("ordStatus") or "") in GONE:
+                return False                        # a version for an order that is already final
             cur = self.ent_versions.get(oid)
             if cur is None or int(ent.get("id") or 0) >= int(cur.get("id") or 0):
                 self.ent_versions[oid] = ent
             return True
         return False
+
+    def prune_entities(self) -> None:
+        """Forget final orders that no twin / tracked leader order refers to any more."""
+        for oid in [i for i, o in self.ent_orders.items() if str(o.get("ordStatus") or "") in GONE]:
+            if oid not in self.leader_orders and not any(k[1] == oid for k in self.twins):
+                self.ent_orders.pop(oid, None)
+                self.ent_versions.pop(oid, None)
+        for oid in [i for i in self.ent_versions if i not in self.ent_orders]:
+            self.ent_versions.pop(oid, None)
+
+    def entity_statuses(self, account_id: int) -> dict[int, str]:
+        return {oid: str(o.get("ordStatus") or "") for oid, o in self.ent_orders.items()
+                if int(o.get("accountId") or 0) == account_id}
 
     def entity_snapshot(self, account_id: int) -> dict[int, dict[str, Any]]:
         """The leader's working orders as the socket entities describe them."""
@@ -209,39 +234,67 @@ class OrderMirror:
 
     def apply_soon(self, session: Any, account_id: int, delay: float = 0.25) -> None:
         """Apply the socket's order state shortly — an order and its version
-        arrive as separate events, the delay lets both land first."""
+        arrive as separate events, the delay lets both land first. Events that
+        arrive while an apply runs are picked up by one more pass."""
+        self._dirty = True
         if self._apply_task is not None and not self._apply_task.done():
             return
 
         async def run() -> None:
-            await asyncio.sleep(delay)
-            try:
-                await self.apply(session, self.entity_snapshot(account_id))
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:  # noqa: BLE001
-                self.error = f"orders (socket): {exc}"[:200]
+            while self._dirty and not self.r._stop.is_set():
+                await asyncio.sleep(delay)
+                self._dirty = False
+                if self.r._stop.is_set():
+                    return
+                try:
+                    await self.apply(session, self.entity_snapshot(account_id), self.entity_statuses(account_id))
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    self.error = f"orders (socket): {exc}"[:200]
         self._apply_task = asyncio.create_task(run(), name=f"copy-orders-apply-{self.r.id}")
 
-    async def apply(self, session: Any, now: dict[int, dict[str, Any]]) -> None:
-        """Diff a fresh picture of the leader's working orders against the last one."""
-        # a version may not have arrived yet for a brand-new order: wait for it
-        now = {i: o for i, o in now.items() if o["order_type"] or i in self.leader_orders}
-        prev = self.leader_orders
-        # every twin whose leader order is no longer working goes — including
-        # twins restored from the database after a restart
-        gone_ids = sorted({key[1] for key in self.twins if key[1] not in now} | {i for i in prev if i not in now})
-        new = [now[i] for i in now if i not in prev]
-        changed = [now[i] for i in now if i in prev and (now[i]["version_id"] != prev[i]["version_id"]
-                                                         or (now[i]["qty"], now[i]["price"], now[i]["stop_price"]) != (prev[i]["qty"], prev[i]["price"], prev[i]["stop_price"]))]
-        self.leader_orders = now
-        for oid in gone_ids:
-            await self.cancel_twins(oid, reason="leader order gone")
-        if not prev and not self.r._leader_seeded:
-            return
-        await self._create(session, new)
-        for o in changed:
-            await self._modify(o)
+    async def apply(self, session: Any, now: dict[int, dict[str, Any]], statuses: Optional[dict[int, str]] = None) -> None:
+        """Diff a fresh picture of the leader's working orders against the last one.
+
+        ``statuses`` (order id → ordStatus for every order of the account) tells
+        a leader order that is merely *in transition* (PendingReplace,
+        PendingCancel, Suspended …) from one that is final or gone: twins of an
+        order in transition are kept, and the order itself is carried over
+        until it is working again or final. Only one apply runs at a time."""
+        async with self._apply_lock:
+            prev = self.leader_orders
+            fresh: dict[int, dict[str, Any]] = {}
+            for i, o in now.items():
+                if o["order_type"]:
+                    fresh[i] = o
+                elif i in prev:
+                    fresh[i] = prev[i]              # version not (yet) known: keep what we know
+                # else: a brand-new order whose version has not arrived — wait for it
+            transitional: set[int] = set()
+            if statuses is not None:
+                for i in set(prev) | {key[1] for key in self.twins}:
+                    st = statuses.get(i)
+                    if i not in fresh and st is not None and st not in WORKING and st not in GONE:
+                        transitional.add(i)
+                        if i in prev:
+                            fresh[i] = prev[i]
+            now = fresh
+            # every twin whose leader order is no longer working goes — including
+            # twins restored from the database after a restart
+            gone_ids = sorted(({key[1] for key in self.twins if key[1] not in now} | {i for i in prev if i not in now}) - transitional)
+            new = [now[i] for i in now if i not in prev]
+            changed = [now[i] for i in now if i in prev and (now[i]["version_id"] != prev[i]["version_id"]
+                                                             or (now[i]["qty"], now[i]["price"], now[i]["stop_price"]) != (prev[i]["qty"], prev[i]["price"], prev[i]["stop_price"]))]
+            self.leader_orders = now
+            for oid in gone_ids:
+                await self.cancel_twins(oid, reason="leader order gone")
+            self.prune_entities()
+            if not prev and not self.r._leader_seeded:
+                return
+            await self._create(session, new)
+            for o in changed:
+                await self._modify(o)
 
     # ------------------------------------------------------------ actions
     def _blocked(self, cid: int) -> Optional[str]:
@@ -256,9 +309,11 @@ class OrderMirror:
             return "trading switch is off"
         return None
 
-    async def _create(self, session: Any, orders: list[dict[str, Any]]) -> None:
+    async def _create(self, session: Any, orders: list[dict[str, Any]]) -> int:
+        """Twins for new leader orders on every enabled follower. Returns twins placed."""
         if not orders:
-            return
+            return 0
+        created = 0
         # pair OCO legs (a.oco_id == b.id or b.oco_id == a.id)
         by_id = {o["id"]: o for o in orders}
         done: set[int] = set()
@@ -279,23 +334,49 @@ class OrderMirror:
             if o["order_type"] not in MIRRORED_TYPES or (partner is not None and partner["order_type"] not in MIRRORED_TYPES):
                 self._record("order_skip", symbol=name, detail=f"leader {o['action']} {o['qty']} {o['order_type']}: order type not mirrored")
                 continue
-            await asyncio.gather(*(self._create_for(f, o, partner, name) for f in self.r.group["followers"] if f.get("enabled", True)),
-                                 return_exceptions=True)
+            res = await asyncio.gather(*(self._create_for(f, o, partner, name) for f in self.r.group["followers"] if f.get("enabled", True)),
+                                       return_exceptions=True)
+            created += sum(r for r in res if isinstance(r, int))
+        return created
 
-    async def _create_for(self, f: dict[str, Any], o: dict[str, Any], partner: Optional[dict[str, Any]], name: str) -> None:
+    def _held_back(self, spec: str, leader_order_id: int) -> bool:
+        """A twin that filled / vanished at the broker moments ago is not re-created
+        right away: the position mirror is about to read the broker's position."""
+        now = time.monotonic()
+        for k in [k for k, t in self._done_at.items() if now - t >= DONE_HOLD_S]:
+            self._done_at.pop(k, None)
+        return now - self._done_at.get(self._twin_key(spec, leader_order_id), -1e9) < DONE_HOLD_S
+
+    async def _create_for(self, f: dict[str, Any], o: dict[str, Any], partner: Optional[dict[str, Any]], name: str) -> int:
+        """One twin (or OCO pair) for one follower. Returns twins placed."""
         spec = f["spec"]
-        if self._twin_key(spec, o["id"]) in self.twins:
-            return
+        if self._twin_key(spec, o["id"]) in self.twins or self._held_back(spec, o["id"]):
+            return 0
         qty = self.twin_qty(f, o)
         if qty <= 0:
             self._record("order_skip", follower=spec, symbol=name, detail=f"leader {o['action']} {o['qty']} {o['order_type']}: sizing gives 0 (direction / cap)")
-            return
+            return 0
+        if partner is not None:
+            pq = self.twin_qty(f, partner)
+            if self._twin_key(spec, partner["id"]) in self.twins or self._held_back(spec, partner["id"]) or pq <= 0:
+                if pq <= 0:
+                    self._record("order_skip", follower=spec, symbol=name, detail=f"leader {partner['action']} {partner['qty']} {partner['order_type']}: sizing gives 0 (direction / cap)")
+                partner = None                      # the partner leg is already there or not wanted: single order
+            elif pq != qty:
+                # an OCO pair must share one quantity at the broker: legs of different
+                # size become two independent twins (the leader's own legs differ too)
+                self._record("order_skip", follower=spec, symbol=name,
+                             detail=f"leader OCO legs size to {qty} and {pq} contracts: mirrored as two independent orders")
+                n = await self._create_for(f, o, None, name)
+                return n + await self._create_for(f, partner, None, name)
         ex = self.r._executor(f)
         if ex is None:
             self._record("order_reject", follower=spec, symbol=name, detail="login disabled or account gone")
-            return
+            return 0
         lock = self.r.locks.setdefault(spec, asyncio.Lock())
         async with lock:
+            if self._twin_key(spec, o["id"]) in self.twins:
+                return 0                            # placed by a concurrent pass while we waited
             with context.use_area(self.r.area_id):
                 try:
                     if partner is None:
@@ -304,7 +385,6 @@ class OrderMirror:
                         ids = [(o, int(res.get("order_id") or 0))] if res.get("status") == "submitted" else []
                         err = None if ids else str((res.get("raw") or {}).get("errorText") or res.get("status"))
                     else:
-                        pq = self.twin_qty(f, partner) or qty
                         res = await ex.place_oco(symbol=name, action=o["action"], qty=qty, order_type=o["order_type"],
                                                  price=o["price"], stop_price=o["stop_price"],
                                                  other={"action": partner["action"], "order_type": partner["order_type"],
@@ -321,7 +401,7 @@ class OrderMirror:
                 self.r.follower_err[spec] = err[:200]
                 self.r.follower_err_at[spec] = time.monotonic()
                 self._record("order_reject", follower=spec, symbol=name, detail=f"leader {o['action']} {o['qty']} {o['order_type']}: {err}")
-                return
+                return 0
             for lo, fid in ids:
                 t = {"leader_order_id": lo["id"], "follower_order_id": fid, "contract_id": lo["contract_id"], "symbol": name,
                      "action": lo["action"], "qty": qty if partner is None else qty_by[lo["id"]], "order_type": lo["order_type"],
@@ -333,6 +413,7 @@ class OrderMirror:
                 sp = f" stop {lo['stop_price']}" if lo["stop_price"] is not None else ""
                 self._record("order_mirror", follower=spec, symbol=name,
                              detail=f"{lo['action']} {t['qty']} {lo['order_type']}{px}{sp} (leader {lo['qty']}{', OCO' if partner is not None else ''})")
+            return len(ids)
 
     async def _modify(self, o: dict[str, Any]) -> None:
         name = self.r.contract_names.get(o["contract_id"], str(o["contract_id"]))
@@ -374,19 +455,41 @@ class OrderMirror:
             if t is None:
                 continue
             ex = self.r._executor(f)
-            if ex is not None:
-                with context.use_area(self.r.area_id):
-                    try:
-                        await ex.cancel_order(t["follower_order_id"])
-                        n += 1
-                        self._record("order_cancel", follower=spec, symbol=t["symbol"], detail=f"{t['action']} {t['qty']} {t['order_type']}: {reason}")
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception as exc:  # noqa: BLE001 - already filled / cancelled at the broker is fine
-                        self._record("order_cancel", follower=spec, symbol=t["symbol"], detail=f"{t['action']} {t['qty']} {t['order_type']}: {reason} (broker: {exc})")
+            if ex is None:
+                self._record("order_reject", follower=spec, symbol=t["symbol"],
+                             detail=f"{t['action']} {t['qty']} {t['order_type']}: login disabled — the twin stays at the broker until the login is back")
+                continue
+            with context.use_area(self.r.area_id):
+                try:
+                    await ex.cancel_order(t["follower_order_id"])
+                    n += 1
+                    self._record("order_cancel", follower=spec, symbol=t["symbol"], detail=f"{t['action']} {t['qty']} {t['order_type']}: {reason}")
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    # already filled / cancelled at the broker is fine — but a twin that is
+                    # still working must not be forgotten (a stray order would sit at the broker)
+                    still = await self._still_working(ex, t["follower_order_id"])
+                    if still is not False:
+                        self.r.follower_err[spec] = f"cancel failed: {exc}"[:200]
+                        self.r.follower_err_at[spec] = time.monotonic()
+                        self._record("order_reject", follower=spec, symbol=t["symbol"],
+                                     detail=f"{t['action']} {t['qty']} {t['order_type']}: cancel failed ({exc}) — order still working, retrying")
+                        continue
+                    self._record("order_cancel", follower=spec, symbol=t["symbol"], detail=f"{t['action']} {t['qty']} {t['order_type']}: {reason} (broker: {exc})")
             self._drop(spec, leader_order_id)
             self._touch(spec, t["contract_id"])
         return n
+
+    @staticmethod
+    async def _still_working(ex: Any, order_id: int) -> Optional[bool]:
+        """True / False when the broker answered, None when it did not."""
+        try:
+            return any(int(o.get("id") or 0) == order_id for o in await ex.working_orders())
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            return None
 
     async def cancel_all(self, *, reason: str, spec: Optional[str] = None, cid: Optional[int] = None) -> int:
         n = 0
@@ -400,8 +503,8 @@ class OrderMirror:
     async def reconcile(self, session: Any, account_id: int) -> int:
         """Twins the broker no longer holds are dropped; twins whose leader order
         is gone are cancelled; missing twins are created. Returns actions."""
-        if not self.enabled:
-            return 0
+        if not self.enabled or (not self.twins and not self.leader_orders):
+            return 0                                # nothing to compare: no broker round-trip
         actions = 0
         working = await self._follower_working()
         for key, t in list(self.twins.items()):
@@ -413,14 +516,16 @@ class OrderMirror:
                 self._record("order_done", follower=spec, symbol=t["symbol"], detail=f"{t['action']} {t['qty']} {t['order_type']}: no longer working at the broker (filled or cancelled)")
                 self._drop(spec, key[1])
                 self._touch(spec, t["contract_id"])
+                if key[1] in self.leader_orders:
+                    self._done_at[key] = time.monotonic()      # not re-created for DONE_HOLD_S
                 actions += 1
             elif key[1] not in self.leader_orders:
                 actions += await self.cancel_twins(key[1], reason="orphan: leader order gone", spec_only=spec)
         missing = [o for o in self.leader_orders.values()
-                   if any(self._twin_key(f["spec"], o["id"]) not in self.twins for f in self.r.group["followers"] if f.get("enabled", True))]
+                   if any(self._twin_key(f["spec"], o["id"]) not in self.twins and not self._held_back(f["spec"], o["id"])
+                          for f in self.r.group["followers"] if f.get("enabled", True))]
         if missing:
-            await self._create(session, missing)
-            actions += len(missing)
+            actions += await self._create(session, missing)
         return actions
 
     def status(self, spec: Optional[str] = None) -> list[dict[str, Any]]:

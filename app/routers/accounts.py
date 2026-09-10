@@ -134,8 +134,8 @@ async def api_save_trade_accounts(request: Request) -> list[dict[str, Any]]:
             a["spec"] = spec
             a["enabled"] = bool(u.get("enabled"))
             a["qty_multiplier"] = float(u.get("qty_multiplier", 1) or 1)
-            if u.get("id"):
-                a["id"] = u["id"]
+            if u.get("id") and not a.get("id"):
+                a["id"] = u["id"]                 # only for an account Connect & Verify has not seen yet
             if "risk" in u:
                 try:
                     a["risk"] = risk.normalize(u["risk"])

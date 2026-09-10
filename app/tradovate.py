@@ -17,6 +17,8 @@ from typing import Any
 from . import alerts, config, context, http, risk, sizing, state
 
 REQUEST_SPACING_S = 0.2   # minimum gap between two requests of one login (5/s)
+PRIORITY_SPACING_S = 0.06  # orders / cancels / liquidations: a small gap of their own, never behind polls
+PRIORITY_PENALTY_WAIT_S = 3.0  # a 429 penalty shorter than this is waited out for an order; longer → refused
 PRIORITY_PATHS = ("/order/placeorder", "/order/placeoco", "/order/modifyorder", "/order/cancelorder", "/order/liquidateposition")
 LIVE_BASE = "https://live.tradovateapi.com/v1"
 DEMO_BASE = "https://demo.tradovateapi.com/v1"
@@ -143,7 +145,9 @@ class TradovateSession:
         self._lock = asyncio.Lock()
         self._contract_cache: dict[str, tuple[str, datetime]] = {}
         self._pace_lock = asyncio.Lock()          # one request at a time per login
+        self._prio_lock = asyncio.Lock()          # orders have their own, shorter spacing
         self._last_sent: float = 0.0
+        self._last_prio: float = 0.0
         self.penalty_until: float = 0.0           # monotonic; set by a 429
         self.rate_limits = 0
         self._contract_id_cache: dict[str, tuple[int, datetime]] = {}
@@ -205,11 +209,18 @@ class TradovateSession:
         whole login banned."""
         import time as _time
         if path.startswith(PRIORITY_PATHS):
-            # orders, cancels, liquidations: never queue behind polls, and never
-            # execute a minute late — a running penalty is an immediate refusal
-            left = self.penalty_until - _time.monotonic()
-            if left > 0:
-                raise RateLimited(path, "", left)
+            # orders, cancels, liquidations: never queue behind polls; a burst of
+            # them is spaced a little so it does not trip the 429 that would then
+            # refuse the stop of the same bracket; a short running penalty is
+            # waited out, a long one is an immediate refusal (never a minute late)
+            async with self._prio_lock:
+                left = self.penalty_until - _time.monotonic()
+                if left > PRIORITY_PENALTY_WAIT_S:
+                    raise RateLimited(path, "", left)
+                gap = max(left, self._last_prio + PRIORITY_SPACING_S - _time.monotonic())
+                if gap > 0:
+                    await asyncio.sleep(gap)
+                self._last_prio = _time.monotonic()
         else:
             async with self._pace_lock:
                 now = _time.monotonic()
@@ -241,6 +252,12 @@ class TradovateSession:
                     json_body=kwargs.get("json"), params=kwargs.get("params"),
                     timeout=float(kwargs.get("timeout") or 20.0),
                     area_id=self.area_id if self.area_id is not None else context.get_area())
+            except relay.ResultUnknown as exc:
+                if path.startswith(PRIORITY_PATHS):
+                    state.log_event("error", f"[{self.name}] {path}: {exc} — CHECK THE ACCOUNT, the order may have gone through")
+                    _fire(alerts.execution_problem(f"Order outcome unknown on {self.name}",
+                                                   f"{path} via the execution agent: {exc}. Check the account for an untracked position or order."))
+                raise TradovateError(f"[{self.name}] {exc}") from exc
             except relay.AgentOffline as exc:
                 raise TradovateError(f"[{self.name}] {exc}") from exc
             if status == 429:
@@ -283,6 +300,8 @@ class TradovateSession:
                         return self._token  # type: ignore[return-value]
                 except TradovateError as exc:
                     state.log_event("warn", f"[{self.name}] token renew failed: {exc}")
+                    if self._token_valid(buffer_minutes=0):
+                        return self._token  # type: ignore[return-value]   # still valid: use it, retry the renewal later
             raise TradovateError(
                 f"[{self.name}] token expired and could not be renewed — paste a fresh token"
             )
@@ -300,7 +319,7 @@ class TradovateSession:
                 access_token=self._token, md_token=self._md_token or "",
                 token_expires=self._token_expires.isoformat(),
             )
-        except OSError as exc:
+        except Exception as exc:  # noqa: BLE001 - a renewed token must never fail because the disk did
             state.log_event("warn", f"[{self.name}] could not persist token: {exc}")
 
     async def _renew(self) -> None:
@@ -349,7 +368,7 @@ class TradovateSession:
             spec = a.get("name") or ""
             old = prev.get(spec) or {}
             mult = float(old.get("qty_multiplier", self.qty_multiplier) or 1)
-            entry = {"spec": spec, "id": a.get("id") or 0, "enabled": True, "qty_multiplier": mult}
+            entry = {"spec": spec, "id": a.get("id") or 0, "enabled": bool(old.get("enabled", True)) if old else True, "qty_multiplier": mult}
             if old.get("risk"):
                 entry["risk"] = dict(old["risk"])          # per-account settings survive a re-discovery
             merged.append(entry)
@@ -371,7 +390,10 @@ class TradovateSession:
         try:
             await self._get_token()
             discovered = await self.list_accounts()
-            self._merge_accounts(discovered)
+            if discovered:
+                self._merge_accounts(discovered)
+            elif self.accounts:
+                state.log_event("warn", f"[{self.name}] Tradovate listed no accounts — keeping the {len(self.accounts)} known one(s)")
             primary = next((a for a in self.accounts if a.get("enabled")), None) \
                 or (self.accounts[0] if self.accounts else None)
             if primary:
@@ -414,6 +436,8 @@ class TradovateSession:
             await self._set_connected(True, environment=self.environment,
                                       account_spec=self.account_spec, user=(me or {}).get("name", ""),
                                       last_error="")
+        except RateLimited as exc:
+            state.set_session_status(self.name, last_error=f"rate limited: {exc}")   # throttled, not disconnected
         except Exception as exc:  # noqa: BLE001
             await self._set_connected(False, last_error=str(exc))
         state.set_session_status(self.name, last_check=datetime.now(timezone.utc).isoformat())
@@ -457,6 +481,17 @@ class TradovateSession:
         candidates.sort(key=lambda c: (_front_month_key(c.get("name", ""), root_or_symbol),
                                        c.get("expirationDate") or c.get("name", "")))
         return candidates[0]["name"]
+
+    # -------------------------------------------------------- order results
+    @staticmethod
+    def _order_failure(data: Any) -> str | None:
+        """Tradovate answers a refused order/cancel/modify with HTTP 200 and a
+        ``failureReason`` / ``failureText`` body. Returns that text, else None."""
+        if isinstance(data, dict) and (data.get("failureReason") or data.get("failureText")):
+            return str(data.get("failureText") or data.get("failureReason"))
+        if isinstance(data, dict) and data.get("errorText"):
+            return str(data["errorText"])
+        return None
 
     # ------------------------------------------------------------ targeting
     def _target(self, account_spec: str | None, account_id: int | None) -> tuple[str, int]:
@@ -505,14 +540,17 @@ class TradovateSession:
         if sent_stop is not None:
             body["stopPrice"] = sent_stop
         data = await self._request("POST", "/order/placeorder", json=body)
+        failure = self._order_failure(data) or ("" if data and data.get("orderId") else "no orderId in the answer")
         result = {
             "action": action, "symbol": symbol, "account": name, "account_id": aid, "qty": qty,
             "order_type": order_type, "price": sent_price, "stop_price": sent_stop,
             "order_id": (data or {}).get("orderId"),
-            "status": "submitted" if data and data.get("orderId") else "rejected",
+            "status": "rejected" if failure else "submitted",
             "raw": data,
         }
         state.log_order(result)
+        if failure:
+            raise TradovateError(f"{name}: {action} {qty} {symbol} {order_type} rejected — {failure}")
         return result
 
     async def place_oco(self, *, symbol: str, action: str, qty: int, order_type: str,
@@ -541,14 +579,17 @@ class TradovateSession:
             o["stopPrice"] = other["stop_price"]
         body["other"] = o
         data = await self._request("POST", "/order/placeoco", json=body)
-        ok = bool(data and data.get("orderId"))
+        failure = self._order_failure(data) or ("" if data and data.get("orderId") else "no orderId in the answer")
+        ok = not failure
         for leg, kind in ((body, order_type), (o, other["order_type"])):
             state.log_order({"action": leg["action"], "symbol": symbol, "account": name, "qty": qty, "order_type": kind,
                              "price": leg.get("price"), "stop_price": leg.get("stopPrice"),
                              "order_id": (data or {}).get("orderId") if leg is body else (data or {}).get("ocoId"),
                              "status": "submitted" if ok else "rejected", "raw": data})
+        if failure:
+            raise TradovateError(f"{name}: OCO {action} {qty} {symbol} rejected — {failure}")
         return {"order_id": (data or {}).get("orderId"), "oco_id": (data or {}).get("ocoId"),
-                "status": "submitted" if ok else "rejected", "raw": data}
+                "status": "submitted", "raw": data}
 
     async def order_versions(self, order_ids: list[int]) -> dict[int, dict[str, Any]]:
         """Latest order version (qty, type, price, stop) per order id."""
@@ -571,19 +612,26 @@ class TradovateSession:
         if order_type in ("Stop", "StopLimit") and stop_price is not None:
             body["stopPrice"] = stop_price
         data = await self._request("POST", "/order/modifyorder", json=body)
+        failure = self._order_failure(data)
         state.log_order({"action": "Modify", "symbol": "", "account": account_name or self.name,
                          "qty": qty, "order_type": order_type, "price": body.get("price"),
                          "stop_price": body.get("stopPrice"), "order_id": order_id,
-                         "status": "modified", "raw": data})
+                         "status": "rejected" if failure else "modified", "raw": data})
+        if failure:
+            raise TradovateError(f"modify order {order_id} rejected — {failure}")
         return data
 
     async def cancel_order(self, order_id: int) -> dict[str, Any]:
-        return await self._request("POST", "/order/cancelorder", json={"orderId": order_id})
+        data = await self._request("POST", "/order/cancelorder", json={"orderId": order_id})
+        failure = self._order_failure(data)
+        if failure:
+            raise TradovateError(f"cancel order {order_id} rejected — {failure}")
+        return data
 
     async def working_orders(self, account_id: int | None = None, *, account_spec: str | None = None) -> list[dict[str, Any]]:
         _, aid = self._target(account_spec, account_id)
         orders = await self._request("GET", "/order/list") or []
-        active = {"Working", "Pending", "PendingNew", "Suspended"}
+        active = {"Working", "Pending", "PendingNew", "PendingReplace", "PendingCancel", "Suspended"}
         return [o for o in orders
                 if o.get("ordStatus") in active and o.get("accountId") == aid]
 
@@ -609,9 +657,12 @@ class TradovateSession:
         data = await self._request("POST", "/order/liquidateposition",
                                    json={"accountId": aid,
                                          "contractId": contract["id"], "admin": False})
+        failure = self._order_failure(data)
         state.log_order({"action": "Liquidate", "symbol": symbol,
                          "account": account_name or self.name, "account_id": aid,
-                         "qty": 0, "order_type": "Market", "status": "submitted", "raw": data})
+                         "qty": 0, "order_type": "Market", "status": "rejected" if failure else "submitted", "raw": data})
+        if failure:
+            raise TradovateError(f"{account_name or self.name}: liquidate {symbol} rejected — {failure}")
         return data
 
     async def positions(self, *, account_id: int | None = None,

@@ -192,6 +192,7 @@ export default {
     }
     function paintPnl(p, keepPrev = false) {
       if (!p || !p.ts) return;
+      if (!keepPrev && lastPnl && lastPnl.ts === p.ts) return;   // the same snapshot re-emitted by a status poll: nothing to repaint
       lastPnl = p;
       pnlHero.textContent = fmtSigned(p.total, 2);
       pnlHero.className = "journal-hero " + pnlTone(p.total);
@@ -246,7 +247,7 @@ export default {
 
     const refreshPositionsSoon = debounce(() => actions.refreshPositions(), 1500);
     const unsubs = [
-      store.subscribe("pnl", paintPnl, { immediate: true }),
+      store.subscribe("pnl", (p) => paintPnl(p), { immediate: true }),   // subscribers get (value, key): never pass the key as keepPrev
       store.subscribe("status", (s) => {
         if (!s) return;
         const c = s.connection || {};
@@ -283,6 +284,6 @@ export default {
     ].filter(Boolean);
 
     if (store.get("positions") == null) actions.refreshPositions();
-    return () => unsubs.forEach((u) => u());
+    return () => { unsubs.forEach((u) => u()); refreshPositionsSoon.cancel && refreshPositionsSoon.cancel(); };
   },
 };

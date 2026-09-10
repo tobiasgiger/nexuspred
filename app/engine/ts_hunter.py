@@ -13,7 +13,7 @@ from typing import Any
 
 from .. import alerts, config, state
 from ..tradovate import TradovateError
-from .common import SignalError, _cancel_working, _lock, _opposite
+from .common import _close_contract, _place_stop_with_retry, SignalError, _cancel_working, _lock, _opposite
 from ..sizing import account_qty
 
 
@@ -46,12 +46,13 @@ async def handle_entry(payload, side, root, target, trade_id, executors, active_
 
         sl_id = None
         if sl_price is not None:
-            sl = await ex.place_order(
-                symbol=contract, action=exit_side, qty=qty,
-                order_type=sl_type, stop_price=float(sl_price),
-            )
-            acc_orders.append(sl)
-            sl_id = sl.get("order_id")
+            # the entry is live: a failed stop is retried and, if it still fails,
+            # alerted — the account stays tracked so a later full_close reaches it
+            sl = await _place_stop_with_retry(ex, symbol=contract, action=exit_side, qty=qty,
+                                              order_type=sl_type, stop_price=float(sl_price), tag=tag)
+            if sl is not None:
+                acc_orders.append(sl)
+                sl_id = sl.get("order_id")
 
         info = {
             "name": ex.name, "contract": contract, "qty": qty, "entry_qty": qty,
@@ -132,21 +133,26 @@ async def handle_partial_close(payload, trade_id, executors, active_map, tag):
         )
 
         new_remaining = remaining - qty_to_close
+        # the close went through: the position is smaller — record that first,
+        # then bring the stop in line; a failed stop change is reported loudly
         info["remaining_qty"] = new_remaining
         info["qty"] = new_remaining
 
         if info.get("sl_order_id"):
             if new_remaining > 0:
-                await ex.modify_order(
-                    info["sl_order_id"], qty=new_remaining,
-                    order_type=info.get("sl_type", "Stop"), stop_price=info.get("sl_stop"),
-                )
+                try:
+                    await ex.modify_order(
+                        info["sl_order_id"], qty=new_remaining,
+                        order_type=info.get("sl_type", "Stop"), stop_price=info.get("sl_stop"),
+                    )
+                except TradovateError as exc:
+                    state.log_event("error", f"{tag}{ex.name}: stop could not be resized to {new_remaining} after the partial close: {exc} — it still covers {remaining}")
             else:
                 try:
                     await ex.cancel_order(info["sl_order_id"])
-                except TradovateError:
-                    pass
-                info["sl_order_id"] = None
+                    info["sl_order_id"] = None
+                except TradovateError as exc:
+                    state.log_event("error", f"{tag}{ex.name}: stop could not be retired after the position closed: {exc} — cancel it by hand")
 
         return order
 
@@ -193,20 +199,20 @@ async def handle_full_close(payload, trade_id, target, executors, active_map, ta
         targets = [(ex, target) for ex in executors]
 
     async def close_account(ex, contract) -> int:
-        cancelled = await _cancel_working(ex, tag, contract=contract)
-        await ex.liquidate_position(contract)
-        return cancelled
+        return await _close_contract(ex, tag, contract)
 
     results = await asyncio.gather(
         *(close_account(ex, c) for ex, c in targets), return_exceptions=True
     )
     cancelled = sum(r for r in results if isinstance(r, int))
+    failed = [ex.name for (ex, _), r in zip(targets, results) if isinstance(r, Exception)]
     for (ex, _), r in zip(targets, results):
         if isinstance(r, Exception):
-            state.log_event("warn", f"{tag}TS-Hunter full_close failed for {ex.name}: {r}")
+            state.log_event("error", f"{tag}TS-Hunter full_close FAILED for {ex.name}: {r} — the position may still be open")
 
     with _lock:
-        active_map.pop(trade_id, None)
+        if not (failed and len(failed) == len(targets)):
+            active_map.pop(trade_id, None)      # nothing closed at all: keep the record for a retry
 
     reason = payload.get("reason", "")
     suffix = f": {reason}" if reason else ""

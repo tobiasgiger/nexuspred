@@ -166,11 +166,17 @@ function groupDrawer(group, { reload, onClose = null }) {
   }
   paintLive(g.status);
 
-  const act = (path, okMsg, opts = {}) => h("button", { type: "button", class: `btn btn-sm ${opts.cls || ""}`, onClick: async () => {
-    if (opts.confirm && !(await confirmDialog(opts.confirm))) return;
-    try { const r = await api.post(`/api/copy/groups/${g.id}/${path}`); toast(okMsg, "success"); paintLive(r); reload(); }
-    catch (e) { toast(e.message, "error"); }
-  } }, opts.icon ? icon(opts.icon) : null, opts.label);
+  const act = (path, okMsg, opts = {}) => {
+    const btn = h("button", { type: "button", class: `btn btn-sm ${opts.cls || ""}`, onClick: async () => {
+      if (btn.disabled) return;
+      if (opts.confirm && !(await confirmDialog(opts.confirm))) return;
+      btn.disabled = true;                                   // one request per click, never two
+      try { const r = await api.post(`/api/copy/groups/${g.id}/${path}`); toast(okMsg, "success"); paintLive(r); reload(); }
+      catch (e) { toast(e.message, "error"); }
+      finally { btn.disabled = false; }
+    } }, opts.icon ? icon(opts.icon) : null, opts.label);
+    return btn;
+  };
   const actionRow = isNew ? null : h("div", { class: "inline-actions", style: "flex-wrap:wrap;margin-top:8px" },
     act("resume", "Group resumed", { label: "Resume", icon: "play" }),
     act("sync", "Synced to the leader", { label: "Sync now", icon: "refresh", confirm: { title: "Copy the leader's current positions now?", body: "Every follower gets a market order to match the leader's open positions right away (including positions that existed before the group started).", confirmText: "Sync now" } }),
@@ -193,7 +199,7 @@ function groupDrawer(group, { reload, onClose = null }) {
   } }, icon("check"), isNew ? "Create group" : "Save changes");
   const delBtn = isNew ? null : h("button", { type: "button", class: "btn btn-ghost btn-danger", onClick: async () => {
     if (!(await confirmDialog({ title: `Delete "${g.name}"?`, body: "Followers keep whatever positions they hold — nothing is closed.", confirmText: "Delete", danger: true }))) return;
-    try { await api.delete(`/api/copy/groups/${g.id}`); toast("Copy group deleted", "success"); closeDrawer(); reload(); }
+    try { await api.del(`/api/copy/groups/${g.id}`); toast("Copy group deleted", "success"); closeDrawer(); reload(); }
     catch (e) { toast(e.message, "error"); }
   } }, icon("trash"), "Delete");
 
@@ -270,14 +276,24 @@ export default {
       ],
     });
 
+    let lastGroupsJson = "", lastEventsJson = "", outage = false;
     async function load() {
       try {
-        groups = await api.get("/api/copy/groups");
-        table.update(groups);
-      } catch (e) { toast(e.message, "error"); }
+        const fresh = await api.get("/api/copy/groups");
+        if (outage) { outage = false; toast("Copy trading reachable again", "success"); }
+        const json = JSON.stringify(fresh);
+        groups = fresh;
+        if (json !== lastGroupsJson) { lastGroupsJson = json; table.update(groups); }   // no DOM churn on identical polls
+      } catch (e) {
+        if (!outage) { outage = true; toast(e.message, "error"); }                     // one toast per outage, not one per tick
+      }
     }
     async function loadEvents() {
-      try { events.update(await api.get("/api/copy/events?limit=80")); } catch { /* transient */ }
+      try {
+        const fresh = await api.get("/api/copy/events?limit=80");
+        const json = JSON.stringify(fresh);
+        if (json !== lastEventsJson) { lastEventsJson = json; events.update(fresh); }
+      } catch { /* transient */ }
     }
     const addBtn = h("button", { class: "btn btn-primary", onClick: async () => {
       if (!(store.get("tradeAccounts") || []).length) await actions.loadTradeAccounts();
@@ -306,7 +322,8 @@ export default {
       if (!store.get("settings")) await actions.loadSettings().catch(() => {});
       await load();
       await loadEvents();
-      if (params && params.id && !leaving) openFor(params.id);
+      const want = (store.get("route") || {}).params?.id || (params && params.id);   // the deep link current now
+      if (want && !leaving) openFor(want);
     })();
     const timer = setInterval(() => { load(); loadEvents(); }, 5000);
     return () => { leaving = true; clearInterval(timer); unsub(); openId = null; closeDrawer(); boot.catch(() => {}); };

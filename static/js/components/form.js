@@ -52,7 +52,7 @@ export function getValues(form, specs) {
     const el = form.elements[s.name];
     if (!el) continue;
     if (s.type === "switch") out[s.name] = el.checked;
-    else if (s.type === "number") out[s.name] = el.value === "" ? 0 : Number(el.value);
+    else if (s.type === "number") { if (el.value !== "") out[s.name] = Number(el.value); }   // blank = "leave as is", never 0
     else if (s.type === "list") out[s.name] = el.value.split(",").map((x) => x.trim()).filter(Boolean);
     else out[s.name] = el.value;
   }
@@ -103,8 +103,13 @@ export function settingsForm({ sections, values, onSave, saveLabel = "Save chang
     saveBtn.disabled = true;
     saveBtn.textContent = "Saving…";
     try {
-      const next = await onSave(getValues(form, specs));
-      apply(next || getValues(form, specs));
+      // post only what this form changed: a switch flipped elsewhere meanwhile
+      // (the topbar's Trading switch, another device) must not be undone here
+      const all = getValues(form, specs);
+      const changed = {};
+      for (const [k, v] of Object.entries(all)) if (JSON.stringify(v) !== JSON.stringify(saved ? saved[k] : undefined)) changed[k] = v;
+      const next = await onSave(Object.keys(changed).length ? changed : all);
+      apply(next || all);
       toast("Settings saved", "success");
     } catch (err) {
       toast(err.message, "error");

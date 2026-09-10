@@ -8,6 +8,7 @@ import { actions } from "../actions.js";
 import { dataTable } from "../components/table.js";
 import { openDrawer, closeDrawer } from "../components/drawer.js";
 import { STRATEGY_LABEL } from "../templates.js";
+import { sizingOf } from "../sizing.js";
 
 const accountKey = (idx, spec) => `${idx}::${spec}`;
 
@@ -28,7 +29,11 @@ export function openSubscriptionDrawer(item, onDone) {
       { label: "Login", render: (a) => a.token_name || "—" },
       { label: "Account", render: (a) => h("code", null, maskAccount(a.spec) || "—") },
       { label: "Env", render: (a) => tag((a.environment || "—").toUpperCase(), a.environment === "live" ? "live" : "demo") },
-      { label: "Qty ×", render: (a) => h("input", { type: "number", class: "acc-mult input-sm", min: 0.1, step: 0.1, style: "width:80px", value: (selected.get(accountKey(a.token_idx, a.spec)) || {}).qty_multiplier ?? 1, dataset: { key: accountKey(a.token_idx, a.spec) } }) },
+      { label: "Sizing", render: (a) => { const sz = sizingOf(selected.get(accountKey(a.token_idx, a.spec))); return h("select", { class: "acc-mode input-sm", dataset: { key: accountKey(a.token_idx, a.spec) } },
+        h("option", { value: "same", selected: sz.mode === "same" }, "Same (1:1)"), h("option", { value: "multiplier", selected: sz.mode === "multiplier" }, "Multiplier"), h("option", { value: "fixed", selected: sz.mode === "fixed" }, "Fixed")); } },
+      { label: "×", render: (a) => h("input", { type: "number", class: "acc-mult input-sm", min: 0.01, step: 0.01, style: "width:70px", value: sizingOf(selected.get(accountKey(a.token_idx, a.spec))).multiplier, dataset: { key: accountKey(a.token_idx, a.spec) } }) },
+      { label: "Fixed", render: (a) => h("input", { type: "number", class: "acc-fixed input-sm", min: 1, step: 1, style: "width:64px", value: sizingOf(selected.get(accountKey(a.token_idx, a.spec))).fixed, dataset: { key: accountKey(a.token_idx, a.spec) } }) },
+      { label: "Max", render: (a) => h("input", { type: "number", class: "acc-max input-sm", min: 0, step: 1, style: "width:64px", title: "0 = no cap", value: sizingOf(selected.get(accountKey(a.token_idx, a.spec))).max_contracts, dataset: { key: accountKey(a.token_idx, a.spec) } }) },
     ],
   });
   accTable.update(known);

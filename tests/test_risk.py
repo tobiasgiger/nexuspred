@@ -170,7 +170,8 @@ async def test_api_saves_rules_lists_and_unlocks(client, admin):
     r = await client.post("/api/settings", json={"risk_state": {"DEMO11": {"day": "2099-01-01"}}})
     assert r.status_code == 200
     with context.use_area(1):
-        assert config.load_settings().get("risk_state") == {}
+        rec = config.load_settings().get("risk_state", {}).get("DEMO11")
+        assert rec and rec.get("unlocked") is True and rec.get("day") != "2099-01-01"   # the unlock record stays; the API cannot overwrite it
 
 
 def test_trading_day_rolls_at_17_new_york():

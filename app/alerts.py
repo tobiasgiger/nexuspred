@@ -258,6 +258,15 @@ async def risk_triggered(spec: str, kind: str, reason: str, pnl: float, errors: 
                          _send_push(f"Risk guard: {spec}", message, url="/#/settings/accounts"))
 
 
+async def execution_problem(title: str, message: str) -> None:
+    """Something the operator must look at now: a position without its stop, an
+    order whose outcome is unknown, working orders left behind by a close.
+    Always sent (no switch), to every channel."""
+    body = f"🚨 **{title}** — {message}"
+    await asyncio.gather(_send_discord(body), _send_email(f"Fluxbridge: {title}", body),
+                         _send_push(title, message, url="/#/"))
+
+
 async def copy_alert(title: str, message: str, *, email: bool = False) -> None:
     """Copy trading: a follower order was rejected or a group paused itself."""
     s = config.load_settings()

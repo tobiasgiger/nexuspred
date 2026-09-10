@@ -95,6 +95,50 @@ async def _orders_for_contract(ex: Any, orders: list[dict[str, Any]], contract: 
     return mine
 
 
+async def _place_stop_with_retry(ex: Any, *, symbol: str, action: str, qty: int, order_type: str,
+                                 stop_price: float, tag: str, what: str = "stop") -> dict[str, Any] | None:
+    """Place a protective stop; one retry on failure. When it still fails the
+    position is live without protection — that is reported at error level and
+    through every alert channel so the operator acts now. Returns the order or None."""
+    from .. import alerts
+    last: Exception | None = None
+    for attempt in (1, 2):
+        try:
+            return await ex.place_order(symbol=symbol, action=action, qty=qty, order_type=order_type, stop_price=stop_price)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+            if attempt == 1:
+                await asyncio.sleep(0.5)
+    state.log_event("error", f"{tag}{what} for {ex.name} on {symbol} FAILED twice — position is unprotected: {last}")
+    from ..tradovate import _fire
+    _fire(alerts.execution_problem(f"Unprotected position on {ex.name}",
+                                   f"{symbol}: the {what} could not be placed ({last}). Set a stop by hand or close the position."))
+    return None
+
+
+async def _close_contract(ex: Any, tag: str, contract: str) -> int:
+    """Cancel the contract's working orders, then liquidate the position, then
+    retry any cancel that failed — a stop or target left working on a flat
+    position would open a new trade. Failures that survive the retry are
+    reported at error level and alerted. Returns how many orders were cancelled."""
+    from .. import alerts
+    errors: list[str] = []
+    cancelled = await _cancel_working(ex, tag, errors, contract=contract)
+    await ex.liquidate_position(contract)
+    if errors:
+        retry_errors: list[str] = []
+        cancelled += await _cancel_working(ex, tag, retry_errors, contract=contract)
+        if retry_errors:
+            state.log_event("error", f"{tag}{ex.name}: working orders on {contract} could not be cancelled after the close: "
+                                     f"{'; '.join(retry_errors)} — cancel them by hand")
+            from ..tradovate import _fire
+            _fire(alerts.execution_problem(f"Orders left working on {ex.name}",
+                                           f"{contract} was closed but {len(retry_errors)} working order(s) could not be cancelled: {'; '.join(retry_errors)[:300]}"))
+    return cancelled
+
+
 async def _cancel_working(ex: Any, tag: str, errors: list[str] | None = None,
                           contract: str | None = None) -> int:
     """Cancel working orders on one account with all cancels in flight at once.
@@ -108,7 +152,7 @@ async def _cancel_working(ex: Any, tag: str, errors: list[str] | None = None,
         if errors is not None:
             errors.append(f"list orders: {exc}")
         else:
-            state.log_event("warn", f"{tag}Could not list working orders for {ex.name}: {exc}")
+            state.log_event("error", f"{tag}Could not list working orders for {ex.name}: {exc} — nothing cancelled")
         return 0
     if contract:
         orders = await _orders_for_contract(ex, orders, contract, tag)
@@ -119,6 +163,8 @@ async def _cancel_working(ex: Any, tag: str, errors: list[str] | None = None,
         if isinstance(r, TradovateError):
             if errors is not None:
                 errors.append(f"cancel {oid}: {r}")
+            else:
+                state.log_event("error", f"{tag}{ex.name}: cancel of order {oid} failed: {r}")
         elif isinstance(r, BaseException):
             raise r
         else:

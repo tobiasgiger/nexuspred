@@ -26,7 +26,8 @@ export const actions = {
   refreshStatus: () => quiet(async () => {
     const s = await api.get("/api/status");
     setPublicOrigin(s.public_url);
-    if (s.pnl && s.pnl.ts) store.set("pnl", s.pnl);
+    const cur = store.get("pnl");
+    if (s.pnl && s.pnl.ts && !(cur && cur.ts && cur.ts > s.pnl.ts)) store.set("pnl", s.pnl);   // never overwrite a newer stream snapshot
     store.set("status", s);
     return s;
   }),
