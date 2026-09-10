@@ -330,6 +330,26 @@ def init() -> None:
                     latency_ms INTEGER
                 );
                 CREATE INDEX IF NOT EXISTS copy_events_area ON copy_events(area_id, group_id, id);
+                CREATE TABLE IF NOT EXISTS copy_twins (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    area_id INTEGER NOT NULL,
+                    group_id TEXT NOT NULL,
+                    spec TEXT NOT NULL,
+                    leader_order_id INTEGER NOT NULL,
+                    follower_order_id INTEGER NOT NULL,
+                    contract_id INTEGER NOT NULL DEFAULT 0,
+                    symbol TEXT NOT NULL DEFAULT '',
+                    action TEXT NOT NULL DEFAULT '',
+                    qty INTEGER NOT NULL DEFAULT 0,
+                    order_type TEXT NOT NULL DEFAULT '',
+                    price REAL,
+                    stop_price REAL,
+                    version_id INTEGER NOT NULL DEFAULT 0,
+                    oco_with INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(area_id, group_id, spec, leader_order_id)
+                );
                 CREATE TABLE IF NOT EXISTS subscriptions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     area_id INTEGER NOT NULL,
@@ -1076,6 +1096,39 @@ def list_copy_events(area_id: int, group_id: str = "", limit: int = 100) -> list
             rows = c.execute("SELECT * FROM copy_events WHERE area_id=? ORDER BY id DESC LIMIT ?",
                              (area_id, limit)).fetchall()
     return [dict(r) for r in rows]
+
+
+_TWIN_COLS = ("contract_id", "symbol", "action", "qty", "order_type", "price", "stop_price", "version_id", "oco_with")
+
+
+def save_copy_twin(area_id: int, group_id: str, spec: str, leader_order_id: int, follower_order_id: int, **fields: Any) -> None:
+    init()
+    now = _now()
+    vals = {k: fields.get(k) for k in _TWIN_COLS if k in fields}
+    with _connect() as c:
+        c.execute(
+            "INSERT INTO copy_twins(area_id, group_id, spec, leader_order_id, follower_order_id, contract_id, symbol, action, qty, "
+            "order_type, price, stop_price, version_id, oco_with, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(area_id, group_id, spec, leader_order_id) DO UPDATE SET follower_order_id=excluded.follower_order_id, "
+            "contract_id=excluded.contract_id, symbol=excluded.symbol, action=excluded.action, qty=excluded.qty, order_type=excluded.order_type, "
+            "price=excluded.price, stop_price=excluded.stop_price, version_id=excluded.version_id, oco_with=excluded.oco_with, updated_at=excluded.updated_at",
+            (area_id, group_id, spec, int(leader_order_id), int(follower_order_id), int(vals.get("contract_id") or 0),
+             str(vals.get("symbol") or ""), str(vals.get("action") or ""), int(vals.get("qty") or 0), str(vals.get("order_type") or ""),
+             vals.get("price"), vals.get("stop_price"), int(vals.get("version_id") or 0), int(vals.get("oco_with") or 0), now, now))
+
+
+def delete_copy_twin(area_id: int, group_id: str, spec: str, leader_order_id: int) -> None:
+    init()
+    with _connect() as c:
+        c.execute("DELETE FROM copy_twins WHERE area_id=? AND group_id=? AND spec=? AND leader_order_id=?",
+                  (area_id, group_id, spec, int(leader_order_id)))
+
+
+def list_copy_twins(area_id: int, group_id: str) -> list[dict[str, Any]]:
+    init()
+    with _connect() as c:
+        return [dict(r) for r in c.execute("SELECT * FROM copy_twins WHERE area_id=? AND group_id=? ORDER BY id",
+                                           (area_id, group_id)).fetchall()]
 
 
 def prune_copy_events(days: int = 7) -> int:

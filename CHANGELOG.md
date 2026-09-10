@@ -4,6 +4,20 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.38
+- **Copy trading stage 2: working orders are mirrored** (`app/copy_orders.py`, group switch
+  *Mirror working orders*, on for new groups — switch it on for existing ones). Every working
+  limit / stop / stop-limit order of the leader gets a twin on each follower, sized by the
+  group's rule, following the leader's modifications and cancelled when the leader's order is
+  gone. Stop / target pairs become one OCO pair on the follower (`/order/placeoco`), so a
+  filled follower stop cancels the follower target broker-side. On a leader fill the twins
+  are cancelled first and the follower's real broker position decides the market order, so a
+  filled twin is never doubled. Twins are persisted (`copy_twins`), verified after a restart
+  and reconciled every 10 s (missing → re-created, orphans → cancelled, gone at the broker →
+  dropped). Market / trailing / exotic orders, baseline contracts and filtered symbols are
+  skipped with an `order_skip` event. Drawer shows the leader's working orders and each
+  follower's twins. 8 tests.
+
 ## 5.0.0-alpha.37
 - **Rollover with confirmation.** The daily rollover check now proposes the next contract
   per mapped symbol — from the broker's listing when a login is connected (first month after

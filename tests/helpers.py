@@ -25,6 +25,7 @@ class FakeExecutor:
         fail_place: bool = False,
         place_delay: float = 0.0,
         contract_ids: dict[str, int] | None = None,
+        track_working: bool = False,
     ) -> None:
         self.name = name
         self.qty_multiplier = qty_multiplier
@@ -35,6 +36,7 @@ class FakeExecutor:
         self.fail_place = fail_place
         self.place_delay = place_delay
         self.contract_ids = dict(contract_ids or {})
+        self.track_working = track_working   # resting orders appear in working_orders() (copy-trading tests)
 
     # -- helpers ---------------------------------------------------------
     def of(self, kind: str) -> list[dict[str, Any]]:
@@ -53,15 +55,37 @@ class FakeExecutor:
         self._next_id += 1
         rec = {"order_id": self._next_id, "status": "submitted", **kw}
         self.calls.append(("place", rec))
+        if self.track_working and kw.get("order_type") in ("Limit", "Stop", "StopLimit"):
+            self.working.append({"id": self._next_id, "ordStatus": "Working", "accountId": 0, "action": kw.get("action"), "symbol": kw.get("symbol")})
         return rec
 
     async def modify_order(self, order_id: int, **kw: Any) -> dict[str, Any]:
         rec = {"order_id": order_id, **kw}
         self.calls.append(("modify", rec))
+        for o in self.working:
+            if o.get("id") == order_id:
+                o.update({"qty": kw.get("qty"), "price": kw.get("price"), "stop_price": kw.get("stop_price")})
+        return {}
+
+    async def place_oco(self, **kw: Any) -> dict[str, Any]:
+        if self.fail_place:
+            raise TradovateError("placeoco failed")
+        self._next_id += 1
+        first = self._next_id
+        self._next_id += 1
+        rec = {"order_id": first, "oco_id": self._next_id, "status": "submitted", **kw}
+        self.calls.append(("place_oco", rec))
+        if self.track_working:
+            self.working.append({"id": first, "ordStatus": "Working", "accountId": 0, "action": kw.get("action"), "symbol": kw.get("symbol")})
+            self.working.append({"id": self._next_id, "ordStatus": "Working", "accountId": 0, "action": kw["other"]["action"], "symbol": kw.get("symbol"), "ocoId": first})
+        return rec
+
+    async def order_versions(self, order_ids: list[int]) -> dict[str, Any]:
         return {}
 
     async def cancel_order(self, order_id: int) -> dict[str, Any]:
         self.calls.append(("cancel", {"order_id": order_id}))
+        self.working = [o for o in self.working if o.get("id") != order_id]
         return {}
 
     async def working_orders(self) -> list[dict[str, Any]]:

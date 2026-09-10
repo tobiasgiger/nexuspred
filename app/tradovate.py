@@ -426,6 +426,54 @@ class TradovateSession:
         state.log_order(result)
         return result
 
+    async def place_oco(self, *, symbol: str, action: str, qty: int, order_type: str,
+                        price: float | None, stop_price: float | None, other: dict[str, Any],
+                        account_spec: str | None = None, account_id: int | None = None,
+                        account_name: str | None = None) -> dict[str, Any]:
+        """Two orders that cancel each other (``/order/placeoco``): the first from
+        the keyword arguments, the second from ``other`` (``action``, ``order_type``,
+        ``price`` / ``stop_price``). Returns ``{order_id, oco_id, status, raw}``."""
+        spec = account_spec or self.account_spec
+        aid = account_id or self.account_id
+        name = account_name or self.name
+        if not risk.bypassed():
+            locked = risk.is_locked(self.area_id if self.area_id is not None else context.get_area(), spec)
+            if locked:
+                raise TradovateError(f"{name} is locked by its risk guard for today ({locked})")
+        body: dict[str, Any] = {"accountSpec": spec, "accountId": aid, "action": action, "symbol": symbol,
+                                "orderQty": qty, "orderType": order_type, "isAutomated": True}
+        if order_type in ("Limit", "StopLimit") and price is not None:
+            body["price"] = price
+        if order_type in ("Stop", "StopLimit") and stop_price is not None:
+            body["stopPrice"] = stop_price
+        o: dict[str, Any] = {"action": other["action"], "orderType": other["order_type"]}
+        if other["order_type"] in ("Limit", "StopLimit") and other.get("price") is not None:
+            o["price"] = other["price"]
+        if other["order_type"] in ("Stop", "StopLimit") and other.get("stop_price") is not None:
+            o["stopPrice"] = other["stop_price"]
+        body["other"] = o
+        data = await self._request("POST", "/order/placeoco", json=body)
+        ok = bool(data and data.get("orderId"))
+        for leg, kind in ((body, order_type), (o, other["order_type"])):
+            state.log_order({"action": leg["action"], "symbol": symbol, "account": name, "qty": qty, "order_type": kind,
+                             "price": leg.get("price"), "stop_price": leg.get("stopPrice"),
+                             "order_id": (data or {}).get("orderId") if leg is body else (data or {}).get("ocoId"),
+                             "status": "submitted" if ok else "rejected", "raw": data})
+        return {"order_id": (data or {}).get("orderId"), "oco_id": (data or {}).get("ocoId"),
+                "status": "submitted" if ok else "rejected", "raw": data}
+
+    async def order_versions(self, order_ids: list[int]) -> dict[int, dict[str, Any]]:
+        """Latest order version (qty, type, price, stop) per order id."""
+        if not order_ids:
+            return {}
+        raw = await self._request("GET", "/orderVersion/ldeps", params={"masterids": ",".join(str(i) for i in order_ids)}) or []
+        out: dict[int, dict[str, Any]] = {}
+        for v in raw if isinstance(raw, list) else []:
+            oid = int(v.get("orderId") or 0)
+            if oid and (oid not in out or int(v.get("id") or 0) > int(out[oid].get("id") or 0)):
+                out[oid] = v
+        return out
+
     async def modify_order(self, order_id: int, *, qty: int, order_type: str,
                            price: float | None = None, stop_price: float | None = None,
                            account_name: str | None = None) -> dict[str, Any]:
@@ -530,6 +578,12 @@ class AccountExecutor:
 
     async def modify_order(self, order_id: int, **kw: Any) -> dict[str, Any]:
         return await self.session.modify_order(order_id, account_name=self.name, **kw)
+
+    async def place_oco(self, **kw: Any) -> dict[str, Any]:
+        return await self.session.place_oco(account_spec=self.spec, account_id=self.id, account_name=self.name, **kw)
+
+    async def order_versions(self, order_ids: list[int]) -> dict[int, dict[str, Any]]:
+        return await self.session.order_versions(order_ids)
 
     async def cancel_order(self, order_id: int) -> dict[str, Any]:
         return await self.session.cancel_order(order_id)

@@ -42,6 +42,8 @@ def _apply(g: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
         g["feed_loss_flatten_s"] = int(body["feed_loss_flatten_s"])
     if "copy_adds" in body:
         g["copy_adds"] = bool(body["copy_adds"])
+    if "copy_orders" in body:
+        g["copy_orders"] = bool(body["copy_orders"])
     return g
 
 

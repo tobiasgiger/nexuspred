@@ -593,6 +593,19 @@ leader places by hand in the Tradovate UI, stop / target fills and manual closes
   executes through an **execution agent** is polled once a second through that agent, so
   the login's IP rule is kept (*Feed: Auto*; *Poll* forces polling). The table shows the
   feed state and the last mirror **latency** (leader change → follower order sent).
+- **Working orders** (*Mirror working orders*, on by default for new groups): every
+  working **limit / stop / stop-limit** order of the leader gets a twin on each follower,
+  sized by the same rule (proportional to the leader's position when one exists), following
+  the leader's price / size modifications and cancelled the moment the leader's order is no
+  longer working. A leader stop / target pair (OCO) becomes **one OCO pair on the
+  follower**, so the broker itself cancels the follower's target when its stop fills. When a
+  leader order fills, its twins are cancelled first and the follower's **real broker
+  position** decides the market order — a twin that already filled is never doubled. Twins
+  are persisted (`copy_twins`) and verified against the broker after a restart; the
+  10-second reconcile re-creates missing twins, cancels orphans and drops twins the broker
+  no longer holds. Not mirrored: market orders, trailing stops and other exotic types,
+  orders outside the symbol filter and orders on baseline contracts (`order_skip` in the
+  log). Events: `order_mirror`, `order_modify`, `order_cancel`, `order_done`, `order_reject`.
 - **Backstop**: on the WebSocket feed the leader's positions are also read over REST every
   second; a change the socket did not deliver is mirrored right away and logged as `ws_miss`.
   The drawer's **Diagnostics** block shows the leader account id, the sync response and

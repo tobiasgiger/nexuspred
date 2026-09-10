@@ -34,6 +34,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from . import alerts, config, context, db, state, tradovate
+from .copy_orders import OrderMirror
 from .engine.common import _base_root
 from .tradovate import AccountExecutor, TradovateError
 
@@ -60,6 +61,7 @@ def new_group(name: str = "Copy group") -> dict[str, Any]:
         "feed": "auto",                      # auto | websocket | poll
         "feed_loss_flatten_s": 30,
         "copy_adds": True,                   # fixed mode: scale with the leader's adds
+        "copy_orders": True,                 # mirror the leader's working limit / stop orders
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -209,6 +211,7 @@ class GroupRunner:
         self.follower_err_at: dict[str, float] = {}   # spec → monotonic of the last reject
         self.leader_account_id = 0
         self.diag: dict[str, Any] = {"frames": 0, "props": {}, "backstop_catches": 0, "recent": []}
+        self.orders = OrderMirror(self)
         self._stop = asyncio.Event()
 
     # ---- helpers
@@ -301,6 +304,10 @@ class GroupRunner:
                 spec = ids.get(int(p.get("accountId") or 0))
                 if spec and int(p.get("netPos") or 0):
                     self.follower_pos[(spec, int(p.get("contractId") or 0))] = int(p.get("netPos") or 0)
+        try:
+            await self.orders.load()
+        except Exception as exc:  # noqa: BLE001
+            self.orders.error = f"twins: {exc}"[:200]
 
     async def _seed_leader(self, session: Any, account_id: int) -> None:
         """Read the leader's positions. At the first start every open position
@@ -468,8 +475,11 @@ class GroupRunner:
                 await self._on_position(session, int(ent.get("contractId") or 0), int(ent.get("netPos") or 0))
 
     async def _poll_once(self, session: Any, account_id: int, *, source: str = "poll") -> int:
-        """One REST look at the leader's positions; mirrors every change found.
-        Returns how many contracts changed."""
+        """One REST look at the leader's orders and positions; mirrors every
+        change found. Orders go first so the twins of a just-filled leader order
+        are cancelled before the position mirror sizes the follower. Returns how
+        many contracts changed position."""
+        await self.orders.poll(session, account_id)
         raw = await session._request("GET", "/position/list") or []
         self.last_frame = time.monotonic()
         seen: set[int] = set()
@@ -552,14 +562,21 @@ class GroupRunner:
         lock = self.locks.setdefault(spec, asyncio.Lock())
         async with lock:
             target = target_qty(f, net, unit, copy_adds=copy_adds)
-            have = self.follower_pos.get((spec, cid), 0)
-            delta = target - have
-            if delta == 0:
-                return
             ex = self._executor(f)
             if ex is None:
                 self.follower_err[spec] = "login disabled or account gone"
                 self._record("reject", follower=spec, symbol=name, detail="login disabled or account gone")
+                return
+            if self.orders.touched_recently(spec, cid):
+                # a twin on this contract may just have filled: cancel what is
+                # still working and take the broker's position, not our memory
+                await self.orders.cancel_all(reason="leader position changed", spec=spec, cid=cid)
+                actual = await self._broker_net(ex, cid)
+                if actual is not None:
+                    self.follower_pos[(spec, cid)] = actual
+            have = self.follower_pos.get((spec, cid), 0)
+            delta = target - have
+            if delta == 0:
                 return
             with context.use_area(self.area_id):
                 try:
@@ -590,6 +607,17 @@ class GroupRunner:
             self._record("mirror", follower=spec, symbol=name, latency_ms=latency,
                          detail=f"{reason} → {'Buy' if delta > 0 else 'Sell'} {abs(delta)} (now {target:+d})")
 
+    async def _broker_net(self, ex: Any, cid: int) -> Optional[int]:
+        """The follower's real net position for a contract (None if unreadable)."""
+        try:
+            raw = await ex.session._request("GET", "/position/list") or []
+        except Exception:  # noqa: BLE001
+            return None
+        for p in raw if isinstance(raw, list) else []:
+            if int(p.get("accountId") or 0) == int(ex.id or 0) and int(p.get("contractId") or 0) == cid:
+                return int(p.get("netPos") or 0)
+        return 0
+
     # ---- reconcile / watchdog / actions
     async def _reconcile_loop(self) -> None:
         while not self._stop.is_set():
@@ -607,6 +635,12 @@ class GroupRunner:
         if self.paused or not self.feed_ok:
             return 0
         fixes = 0
+        session = self._leader_session()
+        if session is not None and self.orders.enabled:
+            try:
+                fixes += await self.orders.reconcile(session, self.leader_account_id)
+            except Exception as exc:  # noqa: BLE001
+                self.orders.error = f"reconcile: {exc}"[:200]
         by_session: dict[int, list[dict[str, Any]]] = {}
         for f in self.group["followers"]:
             if f.get("enabled", True):
@@ -632,6 +666,8 @@ class GroupRunner:
                 for cid, net in list(self.leader_net.items()):
                     if cid in self.baseline or not self._wanted(cid):
                         continue
+                    if self.orders.twins_for(f["spec"], cid):
+                        continue                                # a working twin explains a size gap
                     key = (f["spec"], cid)
                     have = actual.get(key, 0)
                     self.follower_pos[key] = have               # trust the broker
@@ -660,8 +696,10 @@ class GroupRunner:
             await alerts.copy_alert(f"Copy group paused: {self.group['name']}", self.pause_reason, email=True)
 
     async def flatten_followers(self, *, reason: str) -> int:
-        """Close every mirrored contract on every follower (market). Returns orders sent."""
+        """Cancel every twin, then close every mirrored contract on every follower
+        (market). Returns orders sent."""
         sent = 0
+        await self.orders.cancel_all(reason=f"flatten: {reason}")
         contracts = {cid for cid, n in self.leader_net.items() if cid not in self.baseline} | {k[1] for k, v in self.follower_pos.items() if v}
         for f in self.group["followers"]:
             for cid in contracts:
@@ -708,11 +746,13 @@ class GroupRunner:
                 have = self.follower_pos.get((f["spec"], cid), 0)
                 rows.append({"symbol": name, "leader": net, "target": target, "actual": have, "baseline": cid in self.baseline})
             followers.append({"spec": f["spec"], "enabled": f.get("enabled", True), "error": self.follower_err.get(f["spec"], ""),
-                              "positions": rows})
+                              "positions": rows, "orders": self.orders.status(f["spec"])})
         return {"id": self.id, "running": bool(self.tasks), "feed": self.feed_kind, "feed_ok": self.feed_ok,
                 "paused": self.paused, "pause_reason": self.pause_reason, "error": self.error,
                 "last_event_ts": self.last_event_ts, "latency_ms": self.last_latency_ms,
                 "diag": {**self.diag, "leader_account_id": self.leader_account_id, "baseline": sorted(self.contract_names.get(c, str(c)) for c in self.baseline)},
+                "orders_enabled": self.orders.enabled, "orders_error": self.orders.error,
+                "leader_orders": self.orders.leader_status(),
                 "leader_positions": [{"symbol": self.contract_names.get(c, str(c)), "net": n, "baseline": c in self.baseline}
                                      for c, n in self.leader_net.items() if n],
                 "followers": followers}

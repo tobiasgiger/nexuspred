@@ -24,7 +24,9 @@ function knownRoots(settings) {
   for (const r of (settings && settings.allowed_symbols) || []) out.add(baseRoot(r));
   return [...out].filter(Boolean).sort();
 }
-const KIND_TONE = { mirror: "on", feed_up: "on", resumed: "on", reject: "off", feed_lost: "warn", paused: "warn", drift: "warn", flatten: "warn", ws_miss: "warn", filtered: "", skipped: "", ignored: "" };
+const KIND_TONE = { mirror: "on", feed_up: "on", resumed: "on", reject: "off", feed_lost: "warn", paused: "warn", drift: "warn", flatten: "warn", ws_miss: "warn", filtered: "", skipped: "", ignored: "",
+  order_mirror: "on", order_modify: "accent", order_cancel: "", order_done: "", order_skip: "", order_reject: "off" };
+const orderText = (o) => `${o.action} ${o.qty} ${o.type}${o.price != null ? ` @ ${o.price}` : ""}${o.stop != null ? ` stop ${o.stop}` : ""}${o.oco ? " · OCO" : ""}`;
 
 function feedTag(g) {
   const s = g.status;
@@ -71,6 +73,7 @@ function groupDrawer(group, { reload, onClose = null }) {
     h("option", { value: "poll", selected: g.feed === "poll" }, "Poll every second"));
   const lossInp = h("input", { type: "number", min: 5, max: 600, value: g.feed_loss_flatten_s ?? 30, style: "width:120px" });
   const addsSw = h("input", { type: "checkbox", class: "switch", checked: g.copy_adds !== false });
+  const ordersSw = h("input", { type: "checkbox", class: "switch", checked: !!g.copy_orders });
 
   // --- Followers
   const selected = new Map((g.followers || []).map((f) => [accountKey(f.token_idx, f.spec), f]));
@@ -109,7 +112,7 @@ function groupDrawer(group, { reload, onClose = null }) {
       name: nameInp.value.trim() || g.name, enabled: enabledSw.checked,
       leader: lead ? { token_idx: lead.token_idx, spec: lead.spec, account_id: lead.id } : undefined,
       symbols: collectSymbols(), followers: collectFollowers(), feed: feedSel.value,
-      feed_loss_flatten_s: Number(lossInp.value) || 30, copy_adds: addsSw.checked,
+      feed_loss_flatten_s: Number(lossInp.value) || 30, copy_adds: addsSw.checked, copy_orders: ordersSw.checked,
     };
   };
 
@@ -126,8 +129,13 @@ function groupDrawer(group, { reload, onClose = null }) {
     if (st.pause_reason) notes.push(h("div", { class: "callout warn" }, st.pause_reason));
     if (st.error) notes.push(h("div", { class: "callout danger" }, st.error));
     const rows = [];
+    if (st.orders_error) notes.push(h("div", { class: "callout danger" }, "Orders: ", st.orders_error));
     for (const f of st.followers || []) {
       if (f.error) rows.push(h("div", { class: "callout danger" }, h("code", null, maskAccount(f.spec)), " ", f.error));
+      for (const o of f.orders || []) {
+        rows.push(h("div", { class: "cp-pos" }, h("code", null, maskAccount(f.spec)), h("span", null, o.symbol), tag("working order", "accent"), h("span", null, orderText(o)),
+          h("span", { class: "muted" }, `twin of leader #${o.leader_order_id}`)));
+      }
       for (const p of f.positions || []) {
         rows.push(h("div", { class: "cp-pos" }, h("code", null, maskAccount(f.spec)), h("span", null, p.symbol),
           h("span", { class: "muted" }, `leader ${signed(p.leader)}`), h("span", null, `target ${signed(p.target)}`),
@@ -148,6 +156,7 @@ function groupDrawer(group, { reload, onClose = null }) {
     liveBox.append(head, notes, (st.leader_positions || []).length
       ? h("div", { class: "muted", style: "font-size:12px;margin-bottom:6px" }, "Leader: ", st.leader_positions.map((p) => `${p.symbol} ${signed(p.net)}${p.baseline ? " (baseline)" : ""}`).join(" · "))
       : h("div", { class: "muted", style: "font-size:12px;margin-bottom:6px" }, "Leader is flat."),
+      (st.leader_orders || []).length ? h("div", { class: "muted", style: "font-size:12px;margin-bottom:6px" }, "Leader working orders: ", st.leader_orders.map((o) => `${o.symbol} ${orderText(o)}`).join(" · ")) : null,
       rows.length ? rows : null, diagBox);
   }
   paintLive(g.status);
@@ -208,6 +217,7 @@ function groupDrawer(group, { reload, onClose = null }) {
       h("div", { class: "grid grid-2" },
         h("div", { class: "field" }, h("label", null, "Flatten followers after feed loss (seconds)"), lossInp, h("div", { class: "field-hint" }, "No leader feed for this long → every follower's mirrored position is closed at market and the group pauses.")),
         h("label", { class: "switch-row" }, h("span", null, "Fixed mode follows adds / reductions", h("small", null, "On: 2 fixed contracts become 4 when the leader doubles up. Off: always the fixed size.")), addsSw)),
+      h("label", { class: "switch-row" }, h("span", null, "Mirror working orders (limits, stops, brackets)", h("small", null, "Every working limit / stop order of the leader gets a twin on each follower, sized by the same rule, following the leader's modifications and cancelled when the leader's order is gone. A stop / target pair becomes an OCO pair on the follower. When a leader order fills, the follower's twin is cancelled first and the follower's real broker position decides the market order — a twin that already filled is never doubled.")), ordersSw),
       h("h3", null, "Followers"),
       h("p", { class: "hint" }, "Multiplier: leader size × factor (rounded, never below 1 while the leader holds). Fixed: this many contracts for the leader's entry. Max caps the size; Direction copies only longs or only shorts."),
       fTable.el,
@@ -267,7 +277,7 @@ export default {
     const addBtn = h("button", { class: "btn btn-primary", onClick: async () => {
       if (!(store.get("tradeAccounts") || []).length) await actions.loadTradeAccounts();
       if (!store.get("settings")) await actions.loadSettings().catch(() => {});
-      groupDrawer({ name: `Copy group ${groups.length + 1}`, enabled: false, followers: [], symbols: [], feed: "auto", feed_loss_flatten_s: 30, copy_adds: true }, { reload: () => { load(); loadEvents(); }, onClose: null });
+      groupDrawer({ name: `Copy group ${groups.length + 1}`, enabled: false, followers: [], symbols: [], feed: "auto", feed_loss_flatten_s: 30, copy_adds: true, copy_orders: true }, { reload: () => { load(); loadEvents(); }, onClose: null });
     } }, icon("plus"), "Add copy group");
 
     root.append(

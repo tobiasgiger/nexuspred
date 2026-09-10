@@ -33,6 +33,8 @@ class Sess:
             raise RuntimeError("offline")
         if path == "/position/list":
             return [dict(p) for p in self.positions]
+        if path == "/order/list":
+            return []
         if path == "/contract/item":
             return {"name": {901: "MNQZ6", 902: "ESZ6"}.get(kw["params"]["id"], "?")}
         if path == "/user/list":
