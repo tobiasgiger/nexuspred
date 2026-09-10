@@ -435,18 +435,38 @@ class TradovateSession:
                                        c.get("expirationDate") or c.get("name", "")))
         return candidates[0]["name"]
 
+    # ------------------------------------------------------------ targeting
+    def _target(self, account_spec: str | None, account_id: int | None) -> tuple[str, int]:
+        """(spec, id) of the account a call is meant for. A call that names a
+        trade account (``account_spec``) must never drift to the login's primary
+        account: the id is taken from the call, else from the discovered account
+        list by spec — and if it is still unknown the call is refused. Only a
+        call without any spec (the legacy single-account path) uses the primary."""
+        if account_spec:
+            aid = int(account_id or 0)
+            if not aid:
+                for a in self.accounts:
+                    if a.get("spec") == account_spec and a.get("id"):
+                        aid = int(a["id"])
+                        break
+            if not aid and account_spec == self.account_spec and self.account_id:
+                aid = int(self.account_id)
+            if not aid:
+                raise TradovateError(f"[{self.name}] no Tradovate account id known for {account_spec} — run Connect & Verify")
+            return account_spec, aid
+        return self.account_spec, int(account_id or self.account_id or 0)
+
     # ---------------------------------------------------------------- orders
     async def place_order(self, *, symbol: str, action: str, qty: int, order_type: str,
                           price: float | None = None, stop_price: float | None = None,
                           account_spec: str | None = None, account_id: int | None = None,
                           account_name: str | None = None) -> dict[str, Any]:
-        spec = account_spec or self.account_spec
-        aid = account_id or self.account_id
+        spec, aid = self._target(account_spec, account_id)
         name = account_name or self.name
         if not risk.bypassed():
             locked = risk.is_locked(self.area_id if self.area_id is not None else context.get_area(), spec)
             if locked:
-                state.log_order({"action": action, "symbol": symbol, "account": name, "qty": qty,
+                state.log_order({"action": action, "symbol": symbol, "account": name, "account_id": aid, "qty": qty,
                                  "order_type": order_type, "price": price, "stop_price": stop_price,
                                  "order_id": None, "status": "rejected", "raw": {"errorText": f"risk guard: {locked}"}})
                 raise TradovateError(f"{name} is locked by its risk guard for today ({locked})")
@@ -463,7 +483,7 @@ class TradovateSession:
             body["stopPrice"] = sent_stop
         data = await self._request("POST", "/order/placeorder", json=body)
         result = {
-            "action": action, "symbol": symbol, "account": name, "qty": qty,
+            "action": action, "symbol": symbol, "account": name, "account_id": aid, "qty": qty,
             "order_type": order_type, "price": sent_price, "stop_price": sent_stop,
             "order_id": (data or {}).get("orderId"),
             "status": "submitted" if data and data.get("orderId") else "rejected",
@@ -479,8 +499,7 @@ class TradovateSession:
         """Two orders that cancel each other (``/order/placeoco``): the first from
         the keyword arguments, the second from ``other`` (``action``, ``order_type``,
         ``price`` / ``stop_price``). Returns ``{order_id, oco_id, status, raw}``."""
-        spec = account_spec or self.account_spec
-        aid = account_id or self.account_id
+        spec, aid = self._target(account_spec, account_id)
         name = account_name or self.name
         if not risk.bypassed():
             locked = risk.is_locked(self.area_id if self.area_id is not None else context.get_area(), spec)
@@ -538,8 +557,8 @@ class TradovateSession:
     async def cancel_order(self, order_id: int) -> dict[str, Any]:
         return await self._request("POST", "/order/cancelorder", json={"orderId": order_id})
 
-    async def working_orders(self, account_id: int | None = None) -> list[dict[str, Any]]:
-        aid = account_id or self.account_id
+    async def working_orders(self, account_id: int | None = None, *, account_spec: str | None = None) -> list[dict[str, Any]]:
+        _, aid = self._target(account_spec, account_id)
         orders = await self._request("GET", "/order/list") or []
         active = {"Working", "Pending", "PendingNew", "Suspended"}
         return [o for o in orders
@@ -559,8 +578,8 @@ class TradovateSession:
         return cid
 
     async def liquidate_position(self, symbol: str, *, account_id: int | None = None,
-                                 account_name: str | None = None) -> dict[str, Any]:
-        aid = account_id or self.account_id
+                                 account_name: str | None = None, account_spec: str | None = None) -> dict[str, Any]:
+        _, aid = self._target(account_spec, account_id)
         contract = await self._request("GET", "/contract/find", params={"name": symbol})
         if not contract or not contract.get("id"):
             raise TradovateError(f"Cannot resolve contract id for {symbol}")
@@ -568,13 +587,13 @@ class TradovateSession:
                                    json={"accountId": aid,
                                          "contractId": contract["id"], "admin": False})
         state.log_order({"action": "Liquidate", "symbol": symbol,
-                         "account": account_name or self.name,
+                         "account": account_name or self.name, "account_id": aid,
                          "qty": 0, "order_type": "Market", "status": "submitted", "raw": data})
         return data
 
     async def positions(self, *, account_id: int | None = None,
-                        account_name: str | None = None) -> list[dict[str, Any]]:
-        aid = account_id or self.account_id
+                        account_name: str | None = None, account_spec: str | None = None) -> list[dict[str, Any]]:
+        _, aid = self._target(account_spec, account_id)
         name = account_name or self.name
         raw = await self._request("GET", "/position/list") or []
         names: dict[int, str] = {}
@@ -609,7 +628,13 @@ class AccountExecutor:
     def __init__(self, session: "TradovateSession", account: dict[str, Any]) -> None:
         self.session = session
         self.spec = account.get("spec") or session.account_spec
-        self.id = account.get("id") or session.account_id
+        aid = int(account.get("id") or 0)
+        if not aid and self.spec:
+            # never inherit the login's primary account: look the id up by spec
+            aid = next((int(a["id"]) for a in session.accounts if a.get("spec") == self.spec and a.get("id")), 0)
+            if not aid and self.spec == session.account_spec:
+                aid = int(session.account_id or 0)
+        self.id = aid
         self.qty_multiplier = account.get("qty_multiplier", 1) or 1
         # Unique per trade account (Tradovate specs are unique); used to key the
         # bridge's active-trade tracking and per-account order results.
@@ -635,17 +660,17 @@ class AccountExecutor:
         return await self.session.cancel_order(order_id)
 
     async def working_orders(self) -> list[dict[str, Any]]:
-        return await self.session.working_orders(account_id=self.id)
+        return await self.session.working_orders(account_id=self.id, account_spec=self.spec)
 
     async def contract_id(self, symbol: str) -> int:
         return await self.session.contract_id(symbol)
 
     async def liquidate_position(self, symbol: str) -> dict[str, Any]:
         return await self.session.liquidate_position(
-            symbol, account_id=self.id, account_name=self.name)
+            symbol, account_id=self.id, account_name=self.name, account_spec=self.spec)
 
     async def positions(self) -> list[dict[str, Any]]:
-        return await self.session.positions(account_id=self.id, account_name=self.name)
+        return await self.session.positions(account_id=self.id, account_name=self.name, account_spec=self.spec)
 
 
 class SessionManager:

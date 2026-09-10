@@ -4,6 +4,17 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.43
+- **A close can no longer hit the wrong account.** Every account-scoped Tradovate call
+  (`liquidateposition`, working-order list, positions, `placeorder`, `placeoco`) fell
+  back to the login's *primary* account when the routed account entry carried no
+  Tradovate id — so a `close_all` / Discord *close* for account B could flatten account
+  A of the same login. Now the id is taken from the call, else looked up by account
+  name in the login's discovered accounts, and if it is still unknown the call is
+  **refused** with "no Tradovate account id known — run Connect & Verify"; only the
+  legacy single-account path (no account named) uses the primary. The order log records
+  the account id every order and liquidation went to.
+
 ## 5.0.0-alpha.42
 - **Far fewer Tradovate requests.** The live P&L poll fetched, every 5 s per login, the
   risk record, the position list and one cash snapshot **per account** — with a dozen
