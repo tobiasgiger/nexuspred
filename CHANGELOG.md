@@ -4,6 +4,16 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.46
+- **Audit fixes, part 2: stable login ids.** Every Tradovate login now carries a permanent
+  id (`lid`), assigned automatically on the first load after the update. Webhook routes,
+  copy-group leaders and followers and marketplace subscriptions are stamped with the id
+  of the login they point at and resolved by it — reordering or deleting logins can no
+  longer move a route onto a different login (previously routes were addressed by list
+  position). Saving the login table matches rows by id, so removing one login never hands
+  its token or account list to the next one. Token renewals and re-discoveries write by
+  id too; a login deleted in the meantime is never written into another one.
+
 ## 5.0.0-alpha.45
 - **Audit fixes, part 1.** *Connect & Verify* no longer drops an account's risk rules
   (they now survive re-discovery). Bracket take-profit slices never add up to more than

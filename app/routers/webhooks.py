@@ -61,7 +61,15 @@ async def webhook(token: str, request: Request) -> JSONResponse:
 def _routed_account(a: dict[str, Any]) -> dict[str, Any]:
     """One routed (login, account) entry with its sizing rule; raises ValueError."""
     sz = sizing.normalize(a)
-    return {"token_idx": int(a["token_idx"]), "spec": str(a.get("spec", "")), "enabled": bool(a.get("enabled")),
+    s = config.load_settings()
+    idx = int(a["token_idx"])
+    lid = str(a.get("lid") or "")
+    if lid and config.login_index(s, lid) is not None:
+        idx = config.login_index(s, lid)
+    elif not lid:
+        tokens = s.get("token_accounts") or []
+        lid = str(tokens[idx].get("lid") or "") if 0 <= idx < len(tokens) else ""
+    return {"token_idx": idx, "lid": lid, "spec": str(a.get("spec", "")), "enabled": bool(a.get("enabled")),
             "qty_multiplier": sizing.effective_multiplier(sz), "sizing": sz}
 
 

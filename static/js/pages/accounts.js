@@ -22,7 +22,7 @@ export default {
       return h("div", { style: "display:flex;gap:4px;align-items:center" }, inp, eye);
     };
     const row = (a = {}) => {
-      const tr = h("tr", null,
+      const tr = h("tr", { dataset: { lid: a.lid || "" } },
         h("td", null, h("input", { type: "checkbox", class: "switch ta-enabled", checked: !!a.enabled, title: "Login enabled" })),
         h("td", null, h("input", { class: "ta-name input-sm", value: a.name || "", placeholder: "Account 1", style: "min-width:120px" })),
         h("td", null, h("select", { class: "ta-env input-sm", style: "min-width:90px" }, h("option", { value: "demo", selected: a.environment !== "live" }, "Demo"), h("option", { value: "live", selected: a.environment === "live" }, "Live"))),
@@ -44,6 +44,7 @@ export default {
     };
     const paint = (list) => { tbody.replaceChildren(); tbody.append(...(list && list.length ? list : [{}]).map(row)); dirty = false; saveHint.textContent = ""; };
     const collect = () => [...tbody.querySelectorAll("tr")].map((tr) => ({
+      lid: tr.dataset.lid || "",
       enabled: tr.querySelector(".ta-enabled").checked,
       name: tr.querySelector(".ta-name").value.trim(),
       environment: tr.querySelector(".ta-env").value,

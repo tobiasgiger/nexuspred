@@ -88,7 +88,7 @@ def normalize_follower(f: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("fixed contracts must be between 1 and 1000")
     if not (0 <= mx <= 1000):
         raise ValueError("max contracts must be between 0 and 1000")
-    return {"token_idx": int(f["token_idx"]), "spec": str(f["spec"]), "account_id": int(f.get("account_id") or 0),
+    return {"token_idx": int(f["token_idx"]), "lid": str(f.get("lid") or ""), "spec": str(f["spec"]), "account_id": int(f.get("account_id") or 0),
             "enabled": bool(f.get("enabled", True)), "mode": mode, "multiplier": round(mult, 4),
             "fixed": fixed, "max_contracts": mx, "direction": direction}
 
@@ -105,29 +105,35 @@ def save_groups(groups: list[dict[str, Any]], area_id: Optional[int] = None) -> 
 def validate_group(g: dict[str, Any], all_groups: list[dict[str, Any]], accounts: list[dict[str, Any]]) -> None:
     """Raise ValueError on an inconsistent group (unknown accounts, leader among
     followers, a chain that would feed a leader from its own followers)."""
-    known = {(int(a["token_idx"]), str(a["spec"])) for a in accounts}
-    lead = (int(g["leader"]["token_idx"]), str(g["leader"]["spec"]))
+    idx_to_lid = {int(a["token_idx"]): str(a.get("lid") or "") for a in accounts if a.get("lid")}
+
+    def key(entry: dict[str, Any]) -> tuple[str, str]:
+        """(login id, account) — an entry without an id is resolved by its index."""
+        idx = int(entry["token_idx"])
+        return (str(entry.get("lid") or idx_to_lid.get(idx) or idx), str(entry["spec"]))
+    known = {key(a) for a in accounts}
+    lead = key(g["leader"])
     if lead not in known:
         raise ValueError("Leader account is not a discovered trade account")
     if not g["followers"]:
         raise ValueError("Add at least one follower account")
     seen = set()
     for f in g["followers"]:
-        key = (int(f["token_idx"]), str(f["spec"]))
-        if key not in known:
+        k = key(f)
+        if k not in known:
             raise ValueError(f"Follower {f['spec']} is not a discovered trade account")
-        if key == lead:
+        if k == lead:
             raise ValueError("The leader cannot be its own follower")
-        if key in seen:
+        if k in seen:
             raise ValueError(f"Follower {f['spec']} is listed twice")
-        seen.add(key)
+        seen.add(k)
     if not (5 <= int(g.get("feed_loss_flatten_s") or 30) <= 600):
         raise ValueError("feed-loss flatten must be between 5 and 600 seconds")
     # cycle check across groups: leader → followers edges
     edges: dict[tuple[int, str], set[tuple[int, str]]] = {}
     for og in [*(x for x in all_groups if x.get("id") != g.get("id")), g]:
-        ol = (int(og["leader"]["token_idx"]), str(og["leader"]["spec"]))
-        edges.setdefault(ol, set()).update((int(f["token_idx"]), str(f["spec"])) for f in og.get("followers", []))
+        ol = key(og["leader"])
+        edges.setdefault(ol, set()).update(key(f) for f in og.get("followers", []))
     stack, visited = list(edges.get(lead, ())), set()
     while stack:
         n = stack.pop()
@@ -228,9 +234,20 @@ class GroupRunner:
 
     # ---- helpers
     def _leader_session(self) -> Optional[tradovate.TradovateSession]:
-        sessions = tradovate.manager_for(self.area_id).all()
-        idx = int(self.group["leader"]["token_idx"])
-        return sessions[idx] if 0 <= idx < len(sessions) and sessions[idx].enabled else None
+        mgr = tradovate.manager_for(self.area_id)
+        lead = self.group["leader"]
+        sessions = mgr.all()
+        s = None
+        if lead.get("lid"):
+            s = next((x for x in sessions if getattr(x, "lid", "") == lead["lid"]), None)
+        if s is None:
+            # by position only for routes without an id, or logins that carry none
+            # (never onto another login that has its own id)
+            idx = int(lead["token_idx"])
+            cand = sessions[idx] if 0 <= idx < len(sessions) else None
+            if cand is not None and (not lead.get("lid") or not getattr(cand, "lid", "")):
+                s = cand
+        return s if s is not None and s.enabled else None
 
     async def _leader_account_id(self, session: Any) -> int:
         """Tradovate's numeric id of the leader account (settings first, then
@@ -250,7 +267,10 @@ class GroupRunner:
         return 0
 
     def _executor(self, f: dict[str, Any]) -> Optional[AccountExecutor]:
-        return tradovate.manager_for(self.area_id).executor_for(int(f["token_idx"]), str(f["spec"]), 1)
+        mgr = tradovate.manager_for(self.area_id)
+        if f.get("lid") and hasattr(mgr, "session_for"):
+            return mgr.executor_for(int(f["token_idx"]), str(f["spec"]), 1, lid=f["lid"])
+        return mgr.executor_for(int(f["token_idx"]), str(f["spec"]), 1)
 
     def _wanted(self, contract_id: int) -> bool:
         roots = [str(r).upper() for r in (self.group.get("symbols") or [])]

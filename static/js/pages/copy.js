@@ -102,7 +102,7 @@ function groupDrawer(group, { reload, onClose = null }) {
     const key = accountKey(a.token_idx, a.spec);
     const on = pick("cp-on", key);
     if (!on || !on.checked) return null;
-    return { token_idx: a.token_idx, spec: a.spec, account_id: a.id, enabled: true,
+    return { token_idx: a.token_idx, lid: a.lid || "", spec: a.spec, account_id: a.id, enabled: true,
       mode: pick("cp-mode", key).value, multiplier: Number(pick("cp-mult", key).value) || 1,
       fixed: Number(pick("cp-fixed", key).value) || 1, max_contracts: Number(pick("cp-max", key).value) || 0,
       direction: pick("cp-dir", key).value };
@@ -112,7 +112,7 @@ function groupDrawer(group, { reload, onClose = null }) {
     const lead = known.find((a) => accountKey(a.token_idx, a.spec) === leaderSel.value);
     return {
       name: nameInp.value.trim() || g.name, enabled: enabledSw.checked,
-      leader: lead ? { token_idx: lead.token_idx, spec: lead.spec, account_id: lead.id } : undefined,
+      leader: lead ? { token_idx: lead.token_idx, lid: lead.lid || "", spec: lead.spec, account_id: lead.id } : undefined,
       symbols: collectSymbols(), followers: collectFollowers(), feed: feedSel.value,
       feed_loss_flatten_s: Number(lossInp.value) || 30, copy_adds: addsSw.checked, copy_orders: ordersSw.checked,
     };

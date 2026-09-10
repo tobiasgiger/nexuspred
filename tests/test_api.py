@@ -222,6 +222,7 @@ async def test_webhook_crud(client):
     up = r.json()
     assert up["name"] == "S1b" and up["enabled"] is False and up["strategy"] == "ts_hunter"
     assert up["default_qty"] == 1 and up["tp_qty"] == 3
+    assert isinstance(up["accounts"][0].pop("lid"), str)
     assert up["accounts"] == [{"token_idx": 0, "spec": "A1", "enabled": True, "qty_multiplier": 2.0,
                                "sizing": {"mode": "multiplier", "multiplier": 2.0, "fixed": 1, "max_contracts": 0}}]
 
@@ -254,6 +255,7 @@ async def test_token_accounts_save_preserves_masked_tokens(client):
                                                        "enabled": False}])
     with context.use_area(1):
         t = config.load_settings()["token_accounts"][0]
+    assert t.pop("lid").startswith("lg_")
     assert t == {"name": "L1x", "environment": "demo", "access_token": "secret1", "md_token": "m1",
                  "enabled": False, "qty_multiplier": 1.0, "account_spec": "", "account_id": 0, "token_expires": "",
                  "accounts": [], "agent_id": 0}

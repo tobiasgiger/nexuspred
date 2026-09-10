@@ -374,6 +374,11 @@ orders are tagged **SIM** in the Monitor. No credentials or `trading_enabled` re
 
 ## Accounts, tokens & health
 
+Every login has a permanent id (`lid`). Webhook routes, copy groups and subscriptions
+point at logins by that id, so the login table can be reordered or shortened without a
+route landing on another login.
+
+
 **Token-only, multi-account.** There is no username/password — each **login** is
 authenticated by its **own Tradovate access token**. Add logins under
 **Settings → Tradovate Accounts**, one row each:

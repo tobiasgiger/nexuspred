@@ -60,7 +60,8 @@ def test_sharing_normalisation_and_visibility():
     assert marketplace.sharing_of({})["enabled"] is False
     assert marketplace.visible_to(marketplace.sharing_of({"sharing": {"enabled": True, "visibility": "bogus"}}), 99)
     assert not marketplace.visible_to(marketplace.sharing_of({"sharing": {"enabled": False}}), 1)
-    assert marketplace.clean_accounts([{"token_idx": "0", "spec": "A", "qty_multiplier": "1.5"}, {"spec": ""}, "junk"]) == [
+    cleaned = marketplace.clean_accounts([{"token_idx": "0", "spec": "A", "qty_multiplier": "1.5"}, {"spec": ""}, "junk"])
+    assert [{k: v for k, v in c.items() if k != "lid"} for c in cleaned] == [
         {"token_idx": 0, "spec": "A", "enabled": True, "qty_multiplier": 1.5,
          "sizing": {"mode": "multiplier", "multiplier": 1.5, "fixed": 1, "max_contracts": 0}}]
 
@@ -186,7 +187,7 @@ async def test_marketplace_api_flow(two_areas, client, sub_client):
                               json={"accounts": [{"token_idx": 0, "spec": "S1", "qty_multiplier": "1.5"}, {"spec": ""}], "enabled": True})
     assert r.status_code == 200
     sub = r.json()
-    assert sub["accounts"] == [{"token_idx": 0, "spec": "S1", "enabled": True, "qty_multiplier": 1.5,
+    assert [{k: v for k, v in a.items() if k != "lid"} for a in sub["accounts"]] == [{"token_idx": 0, "spec": "S1", "enabled": True, "qty_multiplier": 1.5,
                                 "sizing": {"mode": "multiplier", "multiplier": 1.5, "fixed": 1, "max_contracts": 0}}]
     assert sub["active"] is True and sub["webhook"]["title"] == "Alpha Scalper"
     assert (await sub_client.get("/api/marketplace")).json()[0]["subscription"]["id"] == sub["id"]

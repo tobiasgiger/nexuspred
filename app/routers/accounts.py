@@ -24,7 +24,7 @@ def trade_accounts_overview() -> list[dict[str, Any]]:
                       "enabled": True, "qty_multiplier": t.get("qty_multiplier", 1)}]
         for a in accts:
             out.append({
-                "token_idx": idx, "token_name": tname, "environment": env,
+                "token_idx": idx, "lid": t.get("lid") or "", "token_name": tname, "environment": env,
                 "token_enabled": bool(t.get("enabled")), "connected": tconn,
                 "agent_id": int(t.get("agent_id") or 0),
                 "spec": a.get("spec") or a.get("account_spec") or "",
@@ -49,9 +49,19 @@ async def api_save_token_accounts(request: Request) -> list[dict[str, Any]]:
     value, so editing other fields doesn't wipe the tokens."""
     incoming = await request.json()
     existing = config.load_settings().get("token_accounts") or []
+    by_lid = {t.get("lid"): t for t in existing if t.get("lid")}
+    claimed = {a.get("lid") for a in incoming if isinstance(a, dict) and a.get("lid")}
     cleaned: list[dict[str, Any]] = []
     for i, a in enumerate(incoming):
-        prev = existing[i] if i < len(existing) else {}
+        # A row names the login it edits by its stable id; a row without one is
+        # new — unless it comes from a client that never sent ids, in which case
+        # the old position match applies, but never onto a login another row claims.
+        if a.get("lid") and a["lid"] in by_lid:
+            prev = by_lid[a["lid"]]
+        elif not a.get("lid") and i < len(existing) and existing[i].get("lid") not in claimed:
+            prev = existing[i]
+        else:
+            prev = {}
         access = a.get("access_token", "")
         md = a.get("md_token", "")
         cleaned.append({
@@ -66,6 +76,7 @@ async def api_save_token_accounts(request: Request) -> list[dict[str, Any]]:
             "token_expires": prev.get("token_expires", ""),
             "agent_id": _own_agent(a.get("agent_id")),
             "accounts": prev.get("accounts") or [],
+            "lid": prev.get("lid") or config._new_lid(),
         })
     config.save_settings({"token_accounts": cleaned})
     tradovate.manager().reload()
@@ -102,11 +113,14 @@ async def api_save_trade_accounts(request: Request) -> list[dict[str, Any]]:
     incoming = await request.json()
     tokens = list(config.load_settings().get("token_accounts") or [])
     by_token: dict[int, dict[str, Any]] = {}
+    current = config.load_settings()
     for item in incoming:
-        try:
-            idx = int(item.get("token_idx"))
-        except (TypeError, ValueError):
-            continue
+        idx = config.login_index(current, item.get("lid")) if isinstance(item, dict) else None
+        if idx is None:
+            try:
+                idx = int(item.get("token_idx"))
+            except (TypeError, ValueError):
+                continue
         by_token.setdefault(idx, {})[item.get("spec", "")] = item
 
     for idx, updates in by_token.items():

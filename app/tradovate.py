@@ -97,6 +97,7 @@ def _fingerprint(entry: dict[str, Any]) -> str:
     """The parts of a token_accounts entry that shape a session (everything but
     the credentials, which are adopted in place — see ``adopt_credentials``)."""
     return json.dumps({
+        "lid": entry.get("lid") or "",
         "name": entry.get("name") or "",
         "environment": entry.get("environment") or "demo",
         "enabled": bool(entry.get("enabled")),
@@ -125,6 +126,7 @@ class TradovateSession:
     def __init__(self, idx: int, entry: dict[str, Any], area_id: int | None = None) -> None:
         self.idx = idx
         self.area_id = area_id
+        self.lid = entry.get("lid") or ""
         self.name = entry.get("name") or f"account {idx + 1}"
         self.environment = entry.get("environment") or "demo"
         self.enabled = bool(entry.get("enabled"))
@@ -294,7 +296,7 @@ class TradovateSession:
         # Persist best-effort so a redeploy keeps the renewed token.
         try:
             config.update_token_account(
-                self.idx, area_id=self.area_id,
+                self.idx, area_id=self.area_id, lid=self.lid,
                 access_token=self._token, md_token=self._md_token or "",
                 token_expires=self._token_expires.isoformat(),
             )
@@ -377,7 +379,7 @@ class TradovateSession:
                 self.account_id = primary["id"]
             try:
                 config.update_token_account(
-                    self.idx, area_id=self.area_id, accounts=self.accounts,
+                    self.idx, area_id=self.area_id, lid=self.lid, accounts=self.accounts,
                     account_spec=self.account_spec, account_id=self.account_id)
                 self._refresh_fingerprint()
             except OSError:
@@ -747,18 +749,28 @@ class SessionManager:
                     out.append(AccountExecutor(s, a))
         return out
 
+    def session_for(self, lid: str | None, token_idx: int | None = None) -> TradovateSession | None:
+        """A login by its stable id, else by position (legacy routes)."""
+        sessions = self.all()
+        if lid:
+            for s in sessions:
+                if s.lid == lid:
+                    return s
+            return None
+        if token_idx is not None and 0 <= token_idx < len(sessions):
+            return sessions[token_idx]
+        return None
+
     def executor_for(
-        self, token_idx: int, spec: str, qty_multiplier: float = 1, sizing: dict[str, Any] | None = None
+        self, token_idx: int, spec: str, qty_multiplier: float = 1, sizing: dict[str, Any] | None = None,
+        lid: str | None = None
     ) -> AccountExecutor | None:
         """Build an executor for one specific (login, trade account) pair, with a
         caller-supplied qty multiplier — used by per-webhook routing, independent
         of that account's own execution toggle under Settings → Trade Accounts.
         Returns None if the login or account no longer exists (e.g. deleted)."""
-        sessions = self.all()
-        if not (0 <= token_idx < len(sessions)):
-            return None
-        session = sessions[token_idx]
-        if not session.enabled:
+        session = self.session_for(lid, token_idx)
+        if session is None or not session.enabled:
             return None
         account = next((a for a in session.accounts if a.get("spec") == spec), None)
         if account is None:

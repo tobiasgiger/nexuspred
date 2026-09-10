@@ -116,8 +116,16 @@ def clean_accounts(raw: Any) -> list[dict[str, Any]]:
             continue
         try:
             sz = sizing.normalize(a)
+            s = config.load_settings()
+            idx = int(a["token_idx"])
+            lid = str(a.get("lid") or "")
+            if lid and config.login_index(s, lid) is not None:
+                idx = config.login_index(s, lid)
+            elif not lid:
+                tokens = s.get("token_accounts") or []
+                lid = str(tokens[idx].get("lid") or "") if 0 <= idx < len(tokens) else ""
             out.append({
-                "token_idx": int(a["token_idx"]),
+                "token_idx": idx, "lid": lid,
                 "spec": str(a.get("spec", "")),
                 "enabled": bool(a.get("enabled", True)),
                 "qty_multiplier": sizing.effective_multiplier(sz),

@@ -116,7 +116,7 @@ def _webhook_executors(webhook: dict[str, Any]) -> list[Any]:
         if not a.get("enabled"):
             continue
         ex = manager().executor_for(
-            a.get("token_idx"), a.get("spec"), a.get("qty_multiplier", 1), sizing=a.get("sizing")
+            a.get("token_idx"), a.get("spec"), a.get("qty_multiplier", 1), sizing=a.get("sizing"), lid=a.get("lid")
         )
         if ex is None:
             state.log_event(

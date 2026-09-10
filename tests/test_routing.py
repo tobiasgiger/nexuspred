@@ -67,10 +67,11 @@ def test_migrate_legacy_webhook_builds_default_from_enabled_accounts(accounts):
     assert wh["name"] == "Default" and wh["strategy"] == "bracket" and wh["enabled"] is True
     assert wh["default_qty"] == 5 and wh["tp_qty"] == 2
     assert wh["token"] != "change-me" and len(wh["token"]) >= 16
-    assert wh["accounts"] == [
+    assert [{k: v for k, v in a.items() if k != "lid"} for a in wh["accounts"]] == [
         {"token_idx": 0, "spec": "A1", "enabled": True, "qty_multiplier": 1.0},
         {"token_idx": 1, "spec": "B1", "enabled": True, "qty_multiplier": 1.0},
     ]
+    assert [a["lid"] for a in wh["accounts"]] == [t["lid"] for t in s["token_accounts"][:2]]
     config.migrate_legacy_webhook()  # idempotent
     assert len(config.load_settings()["webhooks"]) == 1
 

@@ -230,6 +230,72 @@ def _resolve_area(area_id: int | None) -> int:
     return area_id if area_id is not None else context.get_area()
 
 
+def _new_lid() -> str:
+    import secrets as _secrets
+    return "lg_" + _secrets.token_urlsafe(6)
+
+
+def ensure_login_ids(s: dict[str, Any]) -> bool:
+    """Give every login a stable id (``lid``). Returns True when one was added."""
+    changed = False
+    for t in s.get("token_accounts") or []:
+        if isinstance(t, dict) and not t.get("lid"):
+            t["lid"] = _new_lid()
+            changed = True
+    return changed
+
+
+def login_index(s: dict[str, Any], lid: str | None) -> int | None:
+    """Position of a login in ``token_accounts`` by its id, or None."""
+    if not lid:
+        return None
+    for i, t in enumerate(s.get("token_accounts") or []):
+        if isinstance(t, dict) and t.get("lid") == lid:
+            return i
+    return None
+
+
+def _stamp(entry: dict[str, Any], s: dict[str, Any], lids: list[str | None]) -> bool:
+    """Make one route entry index-independent: learn the ``lid`` from its
+    ``token_idx`` once, afterwards keep ``token_idx`` in line with the ``lid``
+    (logins may be reordered or deleted). Returns True when it changed."""
+    if not isinstance(entry, dict):
+        return False
+    changed = False
+    lid = entry.get("lid")
+    if lid:
+        idx = login_index(s, lid)
+        if idx is not None and entry.get("token_idx") != idx:
+            entry["token_idx"] = idx
+            changed = True
+        return changed
+    try:
+        idx = int(entry.get("token_idx"))
+    except (TypeError, ValueError):
+        return False
+    if 0 <= idx < len(lids) and lids[idx]:
+        entry["lid"] = lids[idx]
+        changed = True
+    return changed
+
+
+def stamp_routes(s: dict[str, Any]) -> bool:
+    """Apply :func:`_stamp` to every account route (webhooks, copy groups)."""
+    lids = [t.get("lid") if isinstance(t, dict) else None for t in (s.get("token_accounts") or [])]
+    changed = False
+    for wh in s.get("webhooks") or []:
+        for a in (wh.get("accounts") or []) if isinstance(wh, dict) else []:
+            changed |= _stamp(a, s, lids)
+    for g in s.get("copy_groups") or []:
+        if not isinstance(g, dict):
+            continue
+        if isinstance(g.get("leader"), dict):
+            changed |= _stamp(g["leader"], s, lids)
+        for f in g.get("followers") or []:
+            changed |= _stamp(f, s, lids)
+    return changed
+
+
 def load_settings(area_id: int | None = None, force: bool = False) -> dict[str, Any]:
     """Return an area's settings, merged over defaults (defaults to the current
     context area). Cached per area.
@@ -249,6 +315,11 @@ def load_settings(area_id: int | None = None, force: bool = False) -> dict[str, 
             merged.update(db.get_area_settings(aid) or {})
         except Exception:  # noqa: BLE001 - a DB hiccup shouldn't crash a read
             pass
+        try:
+            if ensure_login_ids(merged) | stamp_routes(merged):
+                _persist(aid, merged)       # self-healing: ids and indices stay consistent
+        except Exception:  # noqa: BLE001 - never let the migration break a read
+            pass
         _cache[aid] = merged
         return copy.deepcopy(merged)
 
@@ -258,6 +329,11 @@ def _persist(aid: int, current: dict[str, Any]) -> None:
     global _generation
     from . import db
 
+    try:
+        ensure_login_ids(current)
+        stamp_routes(current)           # every write leaves ids and route indices consistent
+    except Exception:  # noqa: BLE001
+        pass
     db.save_area_settings(aid, current)
     _cache[aid] = current
     _generation += 1
@@ -444,13 +520,19 @@ def public_settings(area_id: int | None = None) -> dict[str, Any]:
     return out
 
 
-def update_token_account(idx: int, area_id: int | None = None, **fields: Any) -> None:
-    """Persist fields (e.g. a renewed token) into token_accounts[idx] of an area.
-    Best-effort, thread-safe read-modify-write so concurrent renewals don't clobber."""
+def update_token_account(idx: int, area_id: int | None = None, *, lid: str | None = None, **fields: Any) -> None:
+    """Persist fields (e.g. a renewed token) into one login of an area — found by
+    its stable ``lid`` when given, else by position. Best-effort, thread-safe
+    read-modify-write so concurrent renewals don't clobber."""
     aid = _resolve_area(area_id)
     with _lock:
         current = load_settings(area_id=aid, force=True)
         accounts = list(current.get("token_accounts") or [])
+        by_lid = login_index(current, lid)
+        if by_lid is not None:
+            idx = by_lid
+        elif lid and any(a.get("lid") for a in accounts):
+            return                          # this login was deleted meanwhile: never write into another one
         if 0 <= idx < len(accounts):
             accounts[idx] = {**accounts[idx], **fields}
             current["token_accounts"] = accounts

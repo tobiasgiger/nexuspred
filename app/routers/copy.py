@@ -27,7 +27,7 @@ def _apply(g: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
         g["enabled"] = bool(body["enabled"])
     if "leader" in body:
         lead = body["leader"] or {}
-        g["leader"] = {"token_idx": int(lead["token_idx"]), "spec": str(lead["spec"]),
+        g["leader"] = {"token_idx": int(lead["token_idx"]), "lid": str(lead.get("lid") or ""), "spec": str(lead["spec"]),
                        "account_id": int(lead.get("account_id") or 0)}
     if "symbols" in body:
         raw = body["symbols"]
