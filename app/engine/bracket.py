@@ -41,10 +41,13 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
 
         # 2) TP limit orders + protective stop, placed in parallel.
         bracket: list[tuple[str, Any]] = []
+        remaining = entry_qty                       # the TP slices together never exceed the entry
         for key in ("tp1", "tp2", "tp3"):
-            if payload.get(key) is not None:
+            if payload.get(key) is not None and remaining > 0:
+                slice_qty = min(tp_qty, remaining)
+                remaining -= slice_qty
                 bracket.append(("tp", ex.place_order(
-                    symbol=contract, action=exit_side, qty=tp_qty,
+                    symbol=contract, action=exit_side, qty=slice_qty,
                     order_type=s.get("tp_order_type", "Limit"), price=float(payload[key]))))
         if payload.get("sl") is not None:
             bracket.append(("sl", ex.place_order(

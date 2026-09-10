@@ -33,7 +33,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from . import alerts, config, context, db, state, tradovate
+from . import alerts, config, context, db, risk, state, tradovate
 from .copy_orders import OrderMirror
 from .engine.common import _base_root
 from .tradovate import AccountExecutor, RateLimited, TradovateError
@@ -770,6 +770,8 @@ class GroupRunner:
             for f in fs:
                 if time.monotonic() - self.follower_err_at.get(f["spec"], -1e9) < REJECT_HOLDOFF_S:
                     continue                                    # just rejected: don't hammer the broker
+                if risk.is_locked(self.area_id, f["spec"]):
+                    continue                                    # the risk guard closed this account for today
                 for cid, net in list(self.leader_net.items()):
                     if cid in self.baseline or not self._wanted(cid):
                         continue

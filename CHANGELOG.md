@@ -4,6 +4,18 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.45
+- **Audit fixes, part 1.** *Connect & Verify* no longer drops an account's risk rules
+  (they now survive re-discovery). Bracket take-profit slices never add up to more than
+  the entry (surplus TPs are dropped) — with a fractional multiplier or fixed sizing they
+  could open a reverse position. A risk rule keeps the live P&L poll running even when
+  `pnl_poll_seconds` is 0. Orders, modifications, cancels and liquidations skip the
+  per-login pacing queue and are refused immediately while a 429 penalty runs instead
+  of executing a minute late. A bare root (`MNQ`) never resolves to a contract past its
+  roll date. Copy-trading reconcile leaves followers locked by the risk guard alone.
+  A symbol-scoped close whose working orders carry no contract information now leaves
+  them in place with an error event instead of cancelling every order on the account.
+
 ## 5.0.0-alpha.44
 - **Per-account sizing on webhooks and marketplace subscriptions** (`app/sizing.py`).
   Each routed account picks **Same** (1:1 the signal's contracts), **Multiplier** (signal ×

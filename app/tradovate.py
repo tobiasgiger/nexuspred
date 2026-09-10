@@ -17,6 +17,7 @@ from typing import Any
 from . import alerts, config, context, http, risk, sizing, state
 
 REQUEST_SPACING_S = 0.2   # minimum gap between two requests of one login (5/s)
+PRIORITY_PATHS = ("/order/placeorder", "/order/placeoco", "/order/modifyorder", "/order/cancelorder", "/order/liquidateposition")
 LIVE_BASE = "https://live.tradovateapi.com/v1"
 DEMO_BASE = "https://demo.tradovateapi.com/v1"
 
@@ -201,12 +202,19 @@ class TradovateSession:
         uses this login shares that budget, so one busy loop cannot get the
         whole login banned."""
         import time as _time
-        async with self._pace_lock:
-            now = _time.monotonic()
-            wait = max(self.penalty_until - now, self._last_sent + REQUEST_SPACING_S - now)
-            if wait > 0:
-                await asyncio.sleep(min(wait, 120.0))
-            self._last_sent = _time.monotonic()
+        if path.startswith(PRIORITY_PATHS):
+            # orders, cancels, liquidations: never queue behind polls, and never
+            # execute a minute late — a running penalty is an immediate refusal
+            left = self.penalty_until - _time.monotonic()
+            if left > 0:
+                raise RateLimited(path, "", left)
+        else:
+            async with self._pace_lock:
+                now = _time.monotonic()
+                wait = max(self.penalty_until - now, self._last_sent + REQUEST_SPACING_S - now)
+                if wait > 0:
+                    await asyncio.sleep(min(wait, 120.0))
+                self._last_sent = _time.monotonic()
         try:
             return await self._request_raw(method, path, auth=auth, **kwargs)
         except RateLimited as exc:
@@ -337,10 +345,12 @@ class TradovateSession:
         merged: list[dict[str, Any]] = []
         for a in discovered:
             spec = a.get("name") or ""
-            old = prev.get(spec)
-            mult = float((old or {}).get("qty_multiplier", self.qty_multiplier) or 1)
-            merged.append({"spec": spec, "id": a.get("id") or 0,
-                           "enabled": True, "qty_multiplier": mult})
+            old = prev.get(spec) or {}
+            mult = float(old.get("qty_multiplier", self.qty_multiplier) or 1)
+            entry = {"spec": spec, "id": a.get("id") or 0, "enabled": True, "qty_multiplier": mult}
+            if old.get("risk"):
+                entry["risk"] = dict(old["risk"])          # per-account settings survive a re-discovery
+            merged.append(entry)
         self.accounts = merged
 
     async def _set_connected(self, connected: bool, **fields: Any) -> None:
@@ -417,9 +427,17 @@ class TradovateSession:
         return resolved
 
     async def _resolve_contract_uncached(self, root_or_symbol: str) -> str:
+        from . import rollover
+        dated = rollover.parse_contract(root_or_symbol) is not None   # an exact contract: taken as given
+
+        def still_ahead(name: str) -> bool:
+            p = rollover.parse_contract(name)
+            if not p:
+                return True
+            return rollover.roll_date(*p)[0] >= datetime.now(timezone.utc).date()
         try:
             found = await self._request("GET", "/contract/find", params={"name": root_or_symbol})
-            if found and found.get("name"):
+            if found and found.get("name") and (dated or still_ahead(found["name"])):
                 return found["name"]
         except TradovateError:
             pass
@@ -429,6 +447,9 @@ class TradovateSession:
         except TradovateError as exc:
             raise TradovateError(f"No contract found for '{root_or_symbol}': {exc}")
         candidates = [c for c in (suggestions or []) if c.get("name", "").startswith(root_or_symbol)]
+        ahead = [c for c in candidates if still_ahead(c.get("name", ""))]
+        if ahead:
+            candidates = ahead                     # skip months already past their roll date
         if not candidates:
             raise TradovateError(f"No contract found for '{root_or_symbol}'")
         candidates.sort(key=lambda c: (_front_month_key(c.get("name", ""), root_or_symbol),

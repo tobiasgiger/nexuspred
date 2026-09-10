@@ -297,7 +297,7 @@ async def test_cancel_working_is_concurrent_and_collects_errors():
 @pytest.fixture
 def executing(area, monkeypatch):
     config.save_settings({"trading_enabled": True})
-    fake = FakeExecutor("A", working=[{"id": 11}])
+    fake = FakeExecutor("A", working=[{"id": 11, "symbol": "MNQU6"}])
     monkeypatch.setattr(signals, "_webhook_executors", lambda wh: [fake])
 
     async def no_alert(*a, **k):

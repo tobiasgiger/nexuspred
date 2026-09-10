@@ -183,7 +183,7 @@ async def test_all_accounts_failing_tracks_nothing_and_alerts_nothing(live):
 
 
 async def test_simple_close_all_cancels_liquidates_and_untracks(live):
-    a = FakeExecutor("A", working=[{"id": 5}, {"id": 6}])
+    a = FakeExecutor("A", working=[{"id": 5, "symbol": "MNQU6"}, {"id": 6, "symbol": "MNQU6"}])
     live.use(a)
     w = wh(id="wh_c")
     await signals.process({"action": "buy", "symbol": "MNQ1!", "qty": 1}, w)
@@ -341,7 +341,7 @@ async def test_trail_active_resizes_stop_price_unchanged(live):
 
 
 async def test_bracket_close_all_pops_tracking(live):
-    a = FakeExecutor("A", working=[{"id": 1}])
+    a = FakeExecutor("A", working=[{"id": 1, "symbol": "MNQU6"}])
     live.use(a)
     w = wh("bracket", id="wh_z")
     await signals.process(ENTRY, w)
@@ -516,7 +516,7 @@ async def test_ts_hunter_partial_close_untracked_is_skipped(live):
 
 
 async def test_ts_hunter_full_close_untracked_flattens_every_executor(live):
-    a, b = FakeExecutor("A", working=[{"id": 9}]), FakeExecutor("B")
+    a, b = FakeExecutor("A", working=[{"id": 9, "symbol": "MNQ"}]), FakeExecutor("B")
     live.use(a, b)
     r = await signals.process({"event": "management", "action": "full_close", "symbol": "MNQ", "trade_id": "ghost"}, ts())
     assert r["accounts"] == 2 and r["cancelled"] == 1
@@ -644,15 +644,16 @@ async def test_close_all_matches_orders_by_symbol_too(live):
     assert r["cancelled"] == 1 and [c["order_id"] for c in a.of("cancel")] == [7]
 
 
-async def test_close_all_without_contract_info_still_cancels_all(live):
-    """No contractId and no symbol on the orders → keep the old account-wide
-    behaviour, so this contract's stops can't re-fill after the liquidation."""
+async def test_close_all_without_contract_info_leaves_orders_and_reports(live):
+    """No contractId and no symbol on the orders → nothing is cancelled (that could
+    strip other symbols' stops); an error event points at the account."""
     a = FakeExecutor("A", working=[{"id": 5}, {"id": 6}])
     live.use(a)
     w = wh(id="wh_blind")
     await signals.process({"action": "buy", "symbol": "MNQ1!", "qty": 1}, w)
     r = await signals.process({"action": "close_all", "symbol": "MNQ1!"}, w)
-    assert r["cancelled"] == 2 and [c["order_id"] for c in a.of("cancel")] == [5, 6]
+    assert r["cancelled"] == 0 and not a.of("cancel")
+    assert any("none cancelled" in e["message"] for e in state.recent_events())
 
 
 async def test_cancel_working_without_contract_is_account_wide():

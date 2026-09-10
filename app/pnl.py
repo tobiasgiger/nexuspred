@@ -177,9 +177,9 @@ async def pnl_loop() -> None:
                 s = config.load_settings(area_id=aid)
                 await watch.tick(aid)   # agent transitions + daily summary (no broker calls)
                 fast = float(s.get("pnl_poll_seconds", 5) or 0)
-                if fast <= 0:
-                    continue  # switched off for this area
-                fast = max(2.0, fast)
+                if fast <= 0 and not risk.any_active(s):
+                    continue  # switched off for this area (a risk rule keeps it running regardless)
+                fast = max(2.0, fast if fast > 0 else 5.0)
                 # Fast while a dashboard is open — or while trade alerts need a
                 # timely view of the broker's positions.
                 watched = state.subscriber_count(aid) or watch.trade_alerts_enabled(s) or risk.any_active(s)

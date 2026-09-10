@@ -84,10 +84,11 @@ async def _orders_for_contract(ex: Any, orders: list[dict[str, Any]], contract: 
             mine.append(o)
     if orders and not identifiable:
         # Nothing about these orders says which contract they belong to (no
-        # contractId, no symbol): keep the old account-wide behaviour rather
-        # than leave this contract's stops working after the liquidation.
-        state.log_event("warn", f"{tag}Working orders on {ex.name} carry no contract — cancelling all of them")
-        return list(orders)
+        # contractId, no symbol). Cancelling them all could strip the stops of
+        # unrelated positions, so they are left alone and reported loudly.
+        state.log_event("error", f"{tag}Working orders on {ex.name} carry no contract — none cancelled; "
+                                 f"check the account for stops / targets left on {contract}")
+        return []
     if len(mine) < identifiable:
         state.log_event("info", f"{tag}Keeping {identifiable - len(mine)} working order(s) on {ex.name} "
                                 f"that belong to other contracts than {contract}")

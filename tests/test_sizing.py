@@ -45,7 +45,7 @@ def test_account_qty_rules():
 
 
 async def test_fixed_mode_on_a_bracket_scales_the_slices(live):
-    """Entry 3 with three TP slices of 1 on a fixed-2 account: entry 2, each TP 1, stop 2."""
+    """Entry 3 with three TP slices of 1 on a fixed-2 account: entry 2, two TPs of 1 (the third would exceed the entry), stop 2."""
     a = FakeExecutor("A")
     a.sizing = sizing.normalize({"sizing": {"mode": "fixed", "fixed": 2}})
     live.use(a)
@@ -53,7 +53,7 @@ async def test_fixed_mode_on_a_bracket_scales_the_slices(live):
     await signals.process({**ENTRY, "qty": 3}, wh("bracket", default_qty=3, tp_qty=1))
     placed = a.of("place")
     assert placed[0]["qty"] == 2 and placed[0]["order_type"] == "Market"
-    assert [p["qty"] for p in placed if p["order_type"] == "Limit"] == [1, 1, 1]
+    assert [p["qty"] for p in placed if p["order_type"] == "Limit"] == [1, 1]     # slices never exceed the entry of 2
     assert [p["qty"] for p in placed if p["order_type"] == "Stop"] == [2]
 
 
