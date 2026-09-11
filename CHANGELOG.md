@@ -4,6 +4,12 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.51
+- **Copy trading: first follower seed on a freshly booted host.** The reseed throttle
+  took "never seeded" (0) for "seeded a moment ago" while the host's monotonic clock was
+  still below 60 s after boot, so the first seed — and with it the restored twins — could
+  be skipped right after a restart. Seen as a flaky CI failure; fixed with a test.
+
 ## 5.0.0-alpha.50
 - **Code review, part 2: persistence, security, background loops.**
   - *Settings can no longer be wiped.* A settings save that starts from an unreadable

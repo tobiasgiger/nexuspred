@@ -353,7 +353,8 @@ class GroupRunner:
         Each login's picture is rebuilt from scratch, so a position that is gone
         at the broker is gone here too. Re-seeds are throttled while the leader
         seed keeps failing."""
-        if not force and time.monotonic() - self._followers_seeded_at < FOLLOWER_RESEED_S:
+        # 0.0 = never seeded: on a freshly booted host monotonic() itself can be < FOLLOWER_RESEED_S
+        if not force and self._followers_seeded_at and time.monotonic() - self._followers_seeded_at < FOLLOWER_RESEED_S:
             return
         by_session: dict[int, list[dict[str, Any]]] = {}
         for f in self.group["followers"]:

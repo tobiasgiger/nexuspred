@@ -435,3 +435,17 @@ async def test_socket_events_during_an_apply_are_not_lost(world):
         "entity": {"id": 96, "accountId": 1, "contractId": 901, "action": "Buy", "ordStatus": "Filled"}}})
     await asyncio.sleep(0.5)
     assert ("F1", 96) not in r.orders.twins and 96 not in r.orders.ent_orders and 96 not in r.orders.ent_versions
+
+
+async def test_first_follower_seed_runs_on_a_freshly_booted_host(world, monkeypatch):
+    """monotonic() counts from boot: below the reseed interval it must not read as
+    'seeded a moment ago' (CI runners boot seconds before the tests start)."""
+    lead, ex = world["lead"], world["ex"]
+    r = await _runner(world)
+    lead.add_order(55, "Buy", 1, "Limit", price=21000.0)
+    await r._poll_once(lead, 1)
+    assert db.list_copy_twins(1, r.id)
+    monkeypatch.setattr(cp.time, "monotonic", lambda: 5.0)
+    r2 = cp.GroupRunner(1, {**r.group})
+    await r2._seed_followers()
+    assert set(r2.orders.twins) == {("F1", 55)}
