@@ -25,28 +25,24 @@ _loop_tasks: list[asyncio.Task] = []
 
 async def _startup() -> None:
     db.init()
-    # The other-broker journal adapters need to be active before either the
-    # scheduled importer or a manual Journal import can run.
     journal_other.install()
+    marketplace_safety.install()
 
     # Repair persisted copy bindings and stale marketplace ACL state before any
-    # live copy runner starts. This is deliberately state-only: positions are
-    # never touched during startup repair.
+    # live copy runner starts. Positions are never touched during startup repair.
     try:
         for aid in db.all_area_ids():
             copy_bindings.repair(aid)
         await marketplace_safety.reconcile_all(sync=False)
-    except Exception as exc:  # noqa: BLE001 - startup continues, but no failure is silent
+    except Exception as exc:  # noqa: BLE001
         state.log_event("warn", f"copy/marketplace safety repair failed: {exc}")
 
-    # Default each area's alert "Notify email" to its owner's address where unset.
     try:
         if db.backfill_alert_emails():
             for aid in db.all_area_ids():
                 config.invalidate(aid)
-    except Exception as exc:  # noqa: BLE001 - never let a migration block startup
+    except Exception as exc:  # noqa: BLE001
         state.log_event("warn", f"alert-email backfill failed: {exc}")
-    # One-shot: collapse journal trades that alpha.18–26 imported twice (report + fill pairs).
     try:
         if not db.meta_get("journal_dedupe_v1"):
             for aid in db.all_area_ids():
@@ -57,7 +53,6 @@ async def _startup() -> None:
             db.meta_set("journal_dedupe_v1", "done")
     except Exception as exc:  # noqa: BLE001
         state.log_event("warn", f"journal dedupe failed: {exc}")
-    # Encrypt secrets written by earlier versions (idempotent, one pass).
     try:
         try:
             push.available() and push.public_key()
@@ -71,7 +66,6 @@ async def _startup() -> None:
                                     "environment so the key lives outside the DB file.")
     except Exception as exc:  # noqa: BLE001
         state.log_event("warn", f"secret encryption pass failed: {exc}")
-    # Durable signal/order history: prune, refill the live buffers, start the writer.
     try:
         db.prune_copy_events()
         pruned = history.prune()
@@ -170,7 +164,19 @@ async def _auth_middleware(request: Request, call_next):
     request.state.area_id = area
     tok = context.set_area(area)
     try:
-        return await call_next(request)
+        response = await call_next(request)
+        if response.status_code < 400:
+            # Connect & Verify can rediscover broker account ids. Repair every
+            # stored/runtime copy binding before returning control to the user.
+            if request.method == "POST" and path == "/api/connect":
+                await copy_bindings.refresh(area)
+            # A selected-user ACL change must remove revoked copy followers now,
+            # not on the next process restart or only in the marketplace UI.
+            if request.method == "PUT" and path.startswith("/api/copy/groups/") and path.endswith("/sharing"):
+                group_id = path[len("/api/copy/groups/"):-len("/sharing")].strip("/")
+                if group_id:
+                    await marketplace_safety.reconcile_copy_group(area, group_id)
+        return response
     finally:
         context.reset_area(tok)
 
