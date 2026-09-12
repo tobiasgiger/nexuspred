@@ -14,6 +14,14 @@ from .. import config, context, db, journal, journal_csv
 router = APIRouter(prefix="/api/journal", tags=["journal"])
 
 _PRESETS = ("today", "week", "month", "30d", "90d", "ytd", "all")
+_CSV_TEXT_COLS = {"account_name", "account_spec", "environment", "symbol", "root", "side", "source", "note", "tags"}
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_text(value: Any) -> str:
+    """Neutralise spreadsheet formula prefixes in user-controlled CSV text."""
+    text = "" if value is None else str(value)
+    return "'" + text if text.startswith(_CSV_FORMULA_PREFIXES) else text
 
 
 def _bounds(range_: str, frm: str, to: str) -> tuple[str, str]:
@@ -203,6 +211,10 @@ async def api_export(range: str = "all", frm: str = "", to: str = "", account: s
     w = csv.writer(buf)
     w.writerow(cols)
     for t in trades:
-        w.writerow([",".join(t[c]) if c == "tags" else t.get(c, "") for c in cols])
+        row = []
+        for c in cols:
+            value = ",".join(t[c]) if c == "tags" else t.get(c, "")
+            row.append(_csv_text(value) if c in _CSV_TEXT_COLS else value)
+        w.writerow(row)
     return Response(content=buf.getvalue(), media_type="text/csv",
                     headers={"Content-Disposition": 'attachment; filename="journal.csv"'})
