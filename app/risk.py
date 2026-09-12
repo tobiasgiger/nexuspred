@@ -207,30 +207,12 @@ def evaluate(r: dict[str, Any], total: float, now_local: datetime, now_ny: Optio
 
 
 async def flatten_account(session: Any, account: dict[str, Any]) -> tuple[int, int, list[str]]:
-    """Cancel every working order and close every position of one account.
-    Returns (cancelled, flattened, errors)."""
-    from .engine.common import _cancel_working
-    from .tradovate import AccountExecutor, TradovateError
+    """Cancel every working order, close every position, then verify order cleanup."""
+    from .engine.common import _flatten_account
+    from .tradovate import AccountExecutor
     ex = AccountExecutor(session, account)
-    errors: list[str] = []
     with bypass():
-        cancelled = await _cancel_working(ex, "", errors)
-        try:
-            positions = await ex.positions()
-        except TradovateError as exc:
-            errors.append(f"list positions: {exc}")
-            positions = []
-        symbols = [p.get("symbol") for p in positions if p.get("symbol")]
-        results = await asyncio.gather(*(ex.liquidate_position(s) for s in symbols), return_exceptions=True)
-    flattened = 0
-    for sym, r in zip(symbols, results):
-        if isinstance(r, TradovateError):
-            errors.append(f"flatten {sym}: {r}")
-        elif isinstance(r, BaseException):
-            errors.append(f"flatten {sym}: {type(r).__name__}: {r}")
-        else:
-            flattened += 1
-    return cancelled, flattened, errors
+        return await _flatten_account(ex, "")
 
 
 _warned_no_id: set[tuple[int, str]] = set()

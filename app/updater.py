@@ -118,6 +118,11 @@ async def apply_update() -> dict[str, Any]:
         }
 
     old_version = config.get_version()
+    old_head_ok, old_head_out = await asyncio.to_thread(_run, ["git", "rev-parse", "HEAD"])
+    old_head = old_head_out.splitlines()[0].strip() if old_head_ok and old_head_out.strip() else ""
+    if not old_head:
+        return {"success": False,
+                "message": f"Could not determine the current git revision; update was not started: {old_head_out}"}
     state.log_event("info", f"Applying update from GitHub (current v{old_version})…")
 
     ok, fetch_out = await asyncio.to_thread(
@@ -134,10 +139,30 @@ async def apply_update() -> dict[str, Any]:
     if not ok:
         return {"success": False, "message": f"git update failed: {pull_out}"}
 
-    # Best-effort dependency refresh; ignore failures so a restart still happens.
-    await asyncio.to_thread(
+    dep_ok, dep_out = await asyncio.to_thread(
         _run, [sys.executable, "-m", "pip", "install", "-q", "-r", "requirements.txt"]
     )
+    if not dep_ok:
+        # New source must never be restarted with dependencies that failed to
+        # install. Roll the working tree back and restore the previous dependency
+        # set best-effort; leave the running process on the known-good code.
+        rb_ok, rb_out = await asyncio.to_thread(_run, ["git", "reset", "--hard", old_head])
+        rollback_detail = rb_out
+        if rb_ok:
+            await asyncio.to_thread(
+                _run, [sys.executable, "-m", "pip", "install", "-q", "-r", "requirements.txt"]
+            )
+            config.get_version(force=True)
+        else:
+            rollback_detail = f"rollback failed: {rb_out}"
+        state.log_event("error", f"Update dependency install failed; restart cancelled: {dep_out}; {rollback_detail}")
+        return {
+            "success": False,
+            "message": "Dependency installation failed. The update was rolled back and no restart was scheduled."
+                       if rb_ok else "Dependency installation failed and rollback failed. No restart was scheduled; restore the checkout manually.",
+            "previous_version": old_version,
+            "log": dep_out,
+        }
 
     new_version = config.get_version(force=True)
     state.log_event("info", f"Updated v{old_version} → v{new_version}; restarting…")

@@ -8,9 +8,19 @@ import asyncio
 from typing import Any
 
 from .. import alerts, config, state
-from ..tradovate import TradovateError, _fire
+from ..tradovate import OrderOutcomeUnknown, TradovateError, _fire
 from .common import _place_stop_with_retry, SignalError, _lock, _opposite, _tp_index_from_event, _trade_key
 from ..sizing import account_qty
+
+
+def _optional_price(payload: dict[str, Any], key: str) -> float | None:
+    value = payload.get(key)
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise SignalError(f"Invalid {key} '{value}'") from exc
 
 
 async def handle_entry(payload, action, root, target, executors, active_map, tag, webhook, *, settings=None):
@@ -30,6 +40,13 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
     exit_side = _opposite(action)
     sl_type = s.get("sl_order_type", "Stop")
 
+    # Validate every numeric field before the first broker side effect. Previously
+    # a malformed TP/SL could raise only after the market entry had already been
+    # submitted, leaving a live position that was then omitted from tracking.
+    entry_price = _optional_price(payload, "entry")
+    tp_prices = {key: _optional_price(payload, key) for key in ("tp1", "tp2", "tp3")}
+    sl_price = _optional_price(payload, "sl")
+
     async def place_for(ex):
         contract = await ex.resolve_contract(target)
         entry_qty = account_qty(ex, base_qty)
@@ -38,7 +55,7 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
         # 1) Market entry first (so the position exists before the brackets).
         entry = await ex.place_order(
             symbol=contract, action=entry_side, qty=entry_qty,
-            order_type=s.get("entry_order_type", "Market"), price=payload.get("entry"),
+            order_type=s.get("entry_order_type", "Market"), price=entry_price,
         )
         acc_orders = [entry]
 
@@ -46,14 +63,16 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
         bracket: list[tuple[str, Any]] = []
         remaining = entry_qty                       # the TP slices together never exceed the entry
         for key in ("tp1", "tp2", "tp3"):
-            if payload.get(key) is not None and remaining > 0:
+            price = tp_prices[key]
+            if price is not None and remaining > 0:
                 slice_qty = min(tp_qty, remaining)
                 remaining -= slice_qty
                 bracket.append(("tp", ex.place_order(
                     symbol=contract, action=exit_side, qty=slice_qty,
-                    order_type=s.get("tp_order_type", "Limit"), price=float(payload[key]))))
+                    order_type=s.get("tp_order_type", "Limit"), price=price)))
         tp_ids: list[int] = []
         sl_id = None
+        protection_error = ""
         if bracket:
             kinds = [k for k, _ in bracket]
             results = await asyncio.gather(*(c for _, c in bracket), return_exceptions=True)
@@ -64,23 +83,30 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
                 acc_orders.append(res)
                 if kind == "tp" and res.get("order_id"):
                     tp_ids.append(res["order_id"])
-        if payload.get("sl") is not None:
-            # the protective stop is placed on its own, with a retry and a loud
-            # alert when it fails: the entry is live by now
-            sl = await _place_stop_with_retry(ex, symbol=contract, action=exit_side, qty=entry_qty,
-                                              order_type=sl_type, stop_price=float(payload["sl"]), tag=tag)
+        if sl_price is not None:
+            # the entry is already live. A known failed stop is retried once. If
+            # the broker answer is lost, do NOT retry, but also do NOT forget the
+            # confirmed entry: keep it tracked for reconciliation/full_close.
+            try:
+                sl = await _place_stop_with_retry(ex, symbol=contract, action=exit_side, qty=entry_qty,
+                                                  order_type=sl_type, stop_price=sl_price, tag=tag)
+            except OrderOutcomeUnknown as exc:
+                sl = None
+                protection_error = str(exc)
+                state.log_event("error", f"{tag}{ex.name}: protective stop outcome unknown after confirmed entry: {exc}")
             if sl is not None:
                 acc_orders.append(sl)
                 sl_id = sl.get("order_id")
 
         info = {
             "name": ex.name, "contract": contract, "entry_qty": entry_qty,
-            "tp_qty": tp_qty, "qty": entry_qty, "entry_price": payload.get("entry"),
-            "sl_order_id": sl_id, "sl_type": sl_type,
-            "sl_stop": float(payload["sl"]) if payload.get("sl") is not None else None,
+            "tp_qty": tp_qty, "qty": entry_qty, "entry_price": entry_price,
+            "sl_order_id": sl_id, "sl_type": sl_type, "sl_stop": sl_price,
             "tp_order_ids": tp_ids,
         }
-        return ex.name, info, acc_orders, contract
+        if protection_error:
+            info["protection_outcome_unknown"] = True
+        return ex.name, info, acc_orders, contract, protection_error
 
     # All enabled accounts execute simultaneously.
     results = await asyncio.gather(*(place_for(ex) for ex in executors), return_exceptions=True)
@@ -88,15 +114,19 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
     orders: list[dict[str, Any]] = []
     acct_state: dict[str, dict[str, Any]] = {}
     summary: list[dict[str, Any]] = []
+    failed: list[str] = []
     contract = target
     for ex, res in zip(executors, results):
         if isinstance(res, Exception):
+            failed.append(ex.name)
             state.log_event("error", f"{tag}Entry failed for {ex.name}: {res}")
             continue
-        name, info, acc_orders, contract = res
+        name, info, acc_orders, contract, protection_error = res
         acct_state[name] = info
         orders.extend(acc_orders)
         summary.append({"account": name, "qty": info["entry_qty"]})
+        if protection_error:
+            failed.append(name)
 
     if acct_state:
         key = _trade_key(webhook["id"], root)
@@ -113,8 +143,12 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
     )
     if acct_state and not tag:
         _fire(alerts.trade_executed(webhook.get("name", "?"), action, contract, list(acct_state), settings=s))   # never wait for SMTP
-    return {"status": "ok", "action": action, "contract": contract,
-            "accounts": summary, "orders": orders, "simulated": tag != ""}
+    failed = list(dict.fromkeys(failed))
+    out = {"status": "error" if failed else "ok", "action": action, "contract": contract,
+           "accounts": summary, "orders": orders, "simulated": tag != ""}
+    if failed:
+        out["failed"] = failed
+    return out
 
 
 def _remaining_qty(info: dict[str, Any], tp_index: int | None) -> int:
@@ -147,6 +181,12 @@ async def handle_move_sl(payload, root, executors, active_map, tag, webhook):
     use_entry = bool(s.get("breakeven_to_entry", True)) and _is_breakeven_move(payload, tp_index)
     if not use_entry and new_sl is None:
         raise SignalError("move_sl signal missing 'new_sl'")
+    requested_stop = None
+    if not use_entry:
+        try:
+            requested_stop = float(new_sl)
+        except (TypeError, ValueError) as exc:
+            raise SignalError(f"Invalid new_sl '{new_sl}'") from exc
 
     async def move_account(ex):
         info = active["accounts"].get(ex.name)
@@ -155,8 +195,8 @@ async def handle_move_sl(payload, root, executors, active_map, tag, webhook):
         entry_price = info.get("entry_price")
         if use_entry and entry_price is not None:
             stop = float(entry_price)
-        elif new_sl is not None:
-            stop = float(new_sl)
+        elif requested_stop is not None:
+            stop = requested_stop
         else:
             state.log_event("warn", f"{tag}move_sl for {root}: no stop price available")
             return None
@@ -185,21 +225,26 @@ async def handle_move_sl(payload, root, executors, active_map, tag, webhook):
     stops = [r for r in results if isinstance(r, (int, float))]
     moved = len(stops)
     last_stop = stops[-1] if stops else None
-    for r in results:
+    failed = []
+    for ex, r in zip(executors, results):
         if isinstance(r, Exception):
-            state.log_event("warn", f"{tag}move_sl modify failed for {root}: {r}")
+            failed.append(ex.name)
+            state.log_event("warn", f"{tag}move_sl modify failed for {root} on {ex.name}: {r}")
 
     where = "break-even/entry" if use_entry else "new_sl"
     state.log_event(
         "info", f"{tag}Stop-loss for {root} moved to {last_stop} ({where}, "
         f"qty→remaining) on {moved} account(s)"
     )
-    return {"status": "ok", "action": "move_sl", "new_sl": last_stop,
-            "breakeven_to_entry": use_entry, "accounts": moved, "simulated": tag != ""}
+    out = {"status": "error" if failed else "ok", "action": "move_sl", "new_sl": last_stop,
+           "breakeven_to_entry": use_entry, "accounts": moved, "simulated": tag != ""}
+    if failed:
+        out["failed"] = failed
+    return out
 
 
 async def handle_trail_active(payload, root, executors, active_map, tag, webhook):
-    """TP2 (trail_active): resize the stop to the remaining position; price unchanged."""
+    """Resize the tracked stop to the remaining position; price unchanged."""
     key = _trade_key(webhook["id"], root)
     with _lock:
         active = active_map.get(key)
@@ -214,6 +259,13 @@ async def handle_trail_active(payload, root, executors, active_map, tag, webhook
         if not info or not info.get("sl_order_id"):
             return False
         qty = _remaining_qty(info, tp_index)
+        if qty <= 0:
+            # A zero-sized modify is not a retirement. Cancel the stop so it
+            # cannot open a reverse position after the final target filled.
+            await ex.cancel_order(info["sl_order_id"])
+            info["sl_order_id"] = None
+            info["qty"] = 0
+            return True
         await ex.modify_order(
             info["sl_order_id"], qty=qty,
             order_type=info.get("sl_type", "Stop"), stop_price=info.get("sl_stop"),
@@ -225,10 +277,17 @@ async def handle_trail_active(payload, root, executors, active_map, tag, webhook
         *(resize_account(ex) for ex in executors), return_exceptions=True
     )
     resized = sum(1 for r in results if r is True)
+    failed = [ex.name for ex, r in zip(executors, results) if isinstance(r, Exception)]
+    for ex, r in zip(executors, results):
+        if isinstance(r, Exception):
+            state.log_event("error", f"{tag}trail_active failed for {root} on {ex.name}: {r}")
 
     state.log_event(
         "info", f"{tag}Trailing active for {root} — stop-loss qty→remaining "
         f"on {resized} account(s)"
     )
-    return {"status": "ok", "action": "trail_active", "accounts": resized,
-            "simulated": tag != ""}
+    out = {"status": "error" if failed else "ok", "action": "trail_active", "accounts": resized,
+           "simulated": tag != ""}
+    if failed:
+        out["failed"] = failed
+    return out

@@ -14,14 +14,31 @@ import asyncio
 from typing import Any
 
 from .. import alerts, config, state
-from ..tradovate import TradovateError, _fire
+from ..tradovate import OrderOutcomeUnknown, TradovateError, _fire
 from .common import OrdersLeftWorking, _close_contract, _close_untracked, _place_stop_with_retry, SignalError, _cancel_working, _lock, _opposite
 from ..sizing import account_qty
+
+
+def _nested_optional_float(payload: dict[str, Any], parent: str, key: str) -> float | None:
+    raw = payload.get(parent)
+    if raw in (None, ""):
+        return None
+    if not isinstance(raw, dict):
+        raise SignalError(f"'{parent}' must be an object")
+    value = raw.get(key)
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise SignalError(f"Invalid {parent}.{key} '{value}'") from exc
 
 
 async def handle_entry(payload, side, root, target, trade_id, executors, active_map, tag, webhook, *, settings=None):
     s = settings if settings is not None else config.load_settings()
     risk = payload.get("risk") or {}
+    if not isinstance(risk, dict):
+        raise SignalError("'risk' must be an object")
     try:
         base_qty = float(risk.get("value"))
     except (TypeError, ValueError):
@@ -35,8 +52,10 @@ async def handle_entry(payload, side, root, target, trade_id, executors, active_
         state.log_event("warn", f"{tag}[{webhook.get('name', '?')}] TS-Hunter trade {trade_id} ignored — an active trade with that id is already tracked")
         return {"status": "skipped", "reason": "active_trade_exists", "action": "signal", "trade_id": trade_id}
 
-    sl_price = (payload.get("sl") or {}).get("value")
-    entry_price_ref = (payload.get("tv") or {}).get("entry_price")
+    # Validate optional numeric metadata before the market entry. A malformed SL
+    # or entry reference must never turn into an untracked live position.
+    sl_price = _nested_optional_float(payload, "sl", "value")
+    entry_price_ref = _nested_optional_float(payload, "tv", "entry_price")
 
     entry_side = "Buy" if side == "buy" else "Sell"
     exit_side = _opposite(side)
@@ -53,11 +72,18 @@ async def handle_entry(payload, side, root, target, trade_id, executors, active_
         acc_orders = [entry]
 
         sl_id = None
+        protection_error = ""
         if sl_price is not None:
-            # the entry is live: a failed stop is retried and, if it still fails,
-            # alerted — the account stays tracked so a later full_close reaches it
-            sl = await _place_stop_with_retry(ex, symbol=contract, action=exit_side, qty=qty,
-                                              order_type=sl_type, stop_price=float(sl_price), tag=tag)
+            # The entry is already live. A known failed stop is retried once. If
+            # the broker answer is lost, do NOT retry and do NOT forget the
+            # confirmed entry: keep it tracked for reconciliation/full_close.
+            try:
+                sl = await _place_stop_with_retry(ex, symbol=contract, action=exit_side, qty=qty,
+                                                  order_type=sl_type, stop_price=sl_price, tag=tag)
+            except OrderOutcomeUnknown as exc:
+                sl = None
+                protection_error = str(exc)
+                state.log_event("error", f"{tag}{ex.name}: TS-Hunter protective stop outcome unknown after confirmed entry: {exc}")
             if sl is not None:
                 acc_orders.append(sl)
                 sl_id = sl.get("order_id")
@@ -65,26 +91,30 @@ async def handle_entry(payload, side, root, target, trade_id, executors, active_
         info = {
             "name": ex.name, "contract": contract, "qty": qty, "entry_qty": qty,
             "remaining_qty": qty, "sl_order_id": sl_id, "sl_type": sl_type,
-            "sl_stop": float(sl_price) if sl_price is not None else None,
-            "entry_price": float(entry_price_ref) if entry_price_ref is not None else None,
-            "tp_order_ids": [],
+            "sl_stop": sl_price, "entry_price": entry_price_ref, "tp_order_ids": [],
         }
-        return ex.name, info, acc_orders, contract
+        if protection_error:
+            info["protection_outcome_unknown"] = True
+        return ex.name, info, acc_orders, contract, protection_error
 
     results = await asyncio.gather(*(place_for(ex) for ex in executors), return_exceptions=True)
 
     orders: list[dict[str, Any]] = []
     acct_state: dict[str, dict[str, Any]] = {}
     summary: list[dict[str, Any]] = []
+    failed: list[str] = []
     contract = target
     for ex, res in zip(executors, results):
         if isinstance(res, Exception):
+            failed.append(ex.name)
             state.log_event("error", f"{tag}TS-Hunter entry failed for {ex.name}: {res}")
             continue
-        name, info, acc_orders, contract = res
+        name, info, acc_orders, contract, protection_error = res
         acct_state[name] = info
         orders.extend(acc_orders)
         summary.append({"account": name, "qty": info["qty"]})
+        if protection_error:
+            failed.append(name)
 
     if acct_state:
         with _lock:
@@ -100,8 +130,12 @@ async def handle_entry(payload, side, root, target, trade_id, executors, active_
     )
     if acct_state and not tag:
         _fire(alerts.trade_executed(webhook.get("name", "?"), side, contract, list(acct_state), settings=s))   # never wait for SMTP
-    return {"status": "ok", "action": "signal", "contract": contract, "trade_id": trade_id,
-            "accounts": summary, "orders": orders, "simulated": tag != ""}
+    failed = list(dict.fromkeys(failed))
+    out = {"status": "error" if failed else "ok", "action": "signal", "contract": contract, "trade_id": trade_id,
+           "accounts": summary, "orders": orders, "simulated": tag != ""}
+    if failed:
+        out["failed"] = failed
+    return out
 
 
 async def handle_partial_close(payload, trade_id, executors, active_map, tag):
@@ -141,10 +175,11 @@ async def handle_partial_close(payload, trade_id, executors, active_map, tag):
         )
 
         new_remaining = remaining - qty_to_close
-        # the close went through: the position is smaller — record that first,
-        # then bring the stop in line; a failed stop change is reported loudly
+        # The close was accepted: local position size follows that confirmed broker
+        # operation. A protection failure is returned separately and never hidden.
         info["remaining_qty"] = new_remaining
         info["qty"] = new_remaining
+        protection_error = ""
 
         if info.get("sl_order_id"):
             if new_remaining > 0:
@@ -154,36 +189,47 @@ async def handle_partial_close(payload, trade_id, executors, active_map, tag):
                         order_type=info.get("sl_type", "Stop"), stop_price=info.get("sl_stop"),
                     )
                 except TradovateError as exc:
+                    protection_error = str(exc)
                     state.log_event("error", f"{tag}{ex.name}: stop could not be resized to {new_remaining} after the partial close: {exc} — it still covers {remaining}")
             else:
                 try:
                     await ex.cancel_order(info["sl_order_id"])
                     info["sl_order_id"] = None
                 except TradovateError as exc:
+                    protection_error = str(exc)
                     state.log_event("error", f"{tag}{ex.name}: stop could not be retired after the position closed: {exc} — cancel it by hand")
 
-        return order
+        return order, protection_error
 
     names = list(active["accounts"])
     results = await asyncio.gather(*(close_for(n) for n in names), return_exceptions=True)
 
     orders: list[dict[str, Any]] = []
     closed_accounts: list[str] = []
+    failed: list[str] = []
     for name, r in zip(names, results):
         if isinstance(r, Exception):
+            failed.append(name)
             state.log_event("warn", f"{tag}TS-Hunter partial close failed for {name}: {r}")
             continue
         if r is not None:
-            orders.append(r)
+            order, protection_error = r
+            orders.append(order)
             closed_accounts.append(name)
+            if protection_error:
+                failed.append(name)
 
     state.log_event(
         "info", f"{tag}TS-Hunter {stage or 'partial close'} for trade {trade_id}: "
         f"{percent:.2f}% of remaining closed on {len(closed_accounts)} account(s)"
+        + (f"; protection unresolved on {', '.join(failed)}" if failed else "")
     )
-    return {"status": "ok", "action": "partial_close_percent", "lifecycle_stage": stage,
-            "trade_id": trade_id, "accounts": closed_accounts, "orders": orders,
-            "simulated": tag != ""}
+    out = {"status": "error" if failed else "ok", "action": "partial_close_percent", "lifecycle_stage": stage,
+           "trade_id": trade_id, "accounts": closed_accounts, "orders": orders,
+           "simulated": tag != ""}
+    if failed:
+        out["failed"] = failed
+    return out
 
 
 async def handle_full_close(payload, trade_id, target, executors, active_map, tag):

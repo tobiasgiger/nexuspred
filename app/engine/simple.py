@@ -28,6 +28,11 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
     entry_side = "Buy" if action == "buy" else "Sell"
     order_type = s.get("entry_order_type", "Market")
     price = payload.get("entry", payload.get("price"))
+    if price is not None:
+        try:
+            price = float(price)
+        except (TypeError, ValueError) as exc:
+            raise SignalError(f"Invalid entry price '{price}'") from exc
 
     async def place_for(ex):
         contract = await ex.resolve_contract(target)
@@ -47,9 +52,11 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
     orders: list[dict[str, Any]] = []
     acct_state: dict[str, dict[str, Any]] = {}
     summary: list[dict[str, Any]] = []
+    failed: list[str] = []
     contract = target
     for ex, res in zip(executors, results):
         if isinstance(res, Exception):
+            failed.append(ex.name)
             state.log_event("error", f"{tag}Entry failed for {ex.name}: {res}")
             continue
         name, info, acc_orders, contract = res
@@ -72,5 +79,8 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
     )
     if acct_state and not tag:
         _fire(alerts.trade_executed(webhook.get("name", "?"), action, contract, list(acct_state), settings=s))   # never wait for SMTP
-    return {"status": "ok", "action": action, "contract": contract,
-            "accounts": summary, "orders": orders, "simulated": tag != ""}
+    out = {"status": "error" if failed else "ok", "action": action, "contract": contract,
+           "accounts": summary, "orders": orders, "simulated": tag != ""}
+    if failed:
+        out["failed"] = failed
+    return out

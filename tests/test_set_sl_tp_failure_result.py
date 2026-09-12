@@ -28,6 +28,7 @@ async def test_set_sl_tp_does_not_report_no_position_when_placement_fails(admin)
         "reason": "protection_update_failed",
         "action": "set_sl_tp",
         "accounts": 0,
+        "failed": ["A"],
         "sl": 100.0,
         "tp": None,
         "simulated": False,

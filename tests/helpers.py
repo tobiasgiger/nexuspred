@@ -114,6 +114,39 @@ class FakeExecutor:
         self._next_id += 1
         rec = {"order_id": self._next_id, "status": "submitted", **kw}
         self.calls.append(("place", rec))
+
+        # When copy-trading tests explicitly seed broker truth for an existing
+        # follower position, a full opposite-side market order represents a fill
+        # that flattens that broker position. Entries and partial reductions are
+        # deliberately not synthesized: tests that exercise stale snapshots keep
+        # full control over those states.
+        session = getattr(self, "session", None)
+        account_id = int(getattr(self, "id", 0) or 0)
+        if (
+            kw.get("order_type") == "Market"
+            and session is not None
+            and account_id
+            and isinstance(getattr(session, "positions", None), list)
+            and hasattr(session, "contract_info")
+        ):
+            for position in session.positions:
+                if int(position.get("accountId") or 0) != account_id:
+                    continue
+                net = int(position.get("netPos") or 0)
+                if not net:
+                    continue
+                try:
+                    info = await session.contract_info(int(position.get("contractId") or 0))
+                except Exception:  # noqa: BLE001 - optional test-helper fidelity only
+                    continue
+                if str((info or {}).get("name") or "") != str(kw.get("symbol") or ""):
+                    continue
+                action = str(kw.get("action") or "")
+                closing = (net > 0 and action == "Sell") or (net < 0 and action == "Buy")
+                if closing and int(kw.get("qty") or 0) == abs(net):
+                    position["netPos"] = 0
+                break
+
         if self.track_working and kw.get("order_type") in ("Limit", "Stop", "StopLimit"):
             self.working.append({"id": self._next_id, "ordStatus": "Working", "accountId": 0, "action": kw.get("action"), "symbol": kw.get("symbol")})
         return rec
@@ -159,6 +192,10 @@ class FakeExecutor:
 
     async def liquidate_position(self, symbol: str) -> dict[str, Any]:
         self.calls.append(("liquidate", {"symbol": symbol}))
+        # A successful liquidation means broker truth is flat for this symbol.
+        # Keep the fake faithful to that contract so reconciliation tests do not
+        # have to special-case successful broker mutations.
+        self._positions = [p for p in self._positions if str(p.get("symbol") or "") != str(symbol)]
         return {}
 
     async def positions(self) -> list[dict[str, Any]]:

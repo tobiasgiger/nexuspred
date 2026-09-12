@@ -171,7 +171,8 @@ async def test_entry_failure_on_one_account_is_isolated(live):
     a, b = FakeExecutor("A"), FakeExecutor("B", fail_place=True)
     live.use(a, b)
     r = await signals.process({"action": "buy", "symbol": "MNQ1!", "qty": 1}, wh(id="wh_x"))
-    assert r["status"] == "ok" and r["accounts"] == [{"account": "A", "qty": 1}]
+    assert r["status"] == "error" and r["failed"] == ["B"]
+    assert r["accounts"] == [{"account": "A", "qty": 1}]
     assert list(active("wh_x:MNQ")["accounts"]) == ["A"]
     await settle()                        # trade alerts are sent off the request path
     assert live.alerts[-1][3] == ["A"]
@@ -180,7 +181,8 @@ async def test_entry_failure_on_one_account_is_isolated(live):
 async def test_all_accounts_failing_tracks_nothing_and_alerts_nothing(live):
     live.use(FakeExecutor("A", fail_place=True))
     r = await signals.process({"action": "buy", "symbol": "MNQ1!", "qty": 1}, wh(id="wh_x"))
-    assert r["status"] == "ok" and r["accounts"] == [] and r["orders"] == []
+    assert r["status"] == "error" and r["failed"] == ["A"]
+    assert r["accounts"] == [] and r["orders"] == []
     await settle()                        # trade alerts are sent off the request path
     assert "wh_x:MNQ" not in active() and live.alerts == []
 
@@ -367,10 +369,12 @@ async def test_set_sl_tp_places_stop_and_target_from_live_position(live):
     info = active("wh_st:MNQ")["accounts"]["A"]
     assert info["sl_order_id"] == stop["order_id"] and info["tp_order_ids"] == [tgt["order_id"]]
 
-    # A repeated move cancels the previous orders and places fresh ones.
+    # Repeated stop updates modify the tracked order in place: there is never a
+    # period with two full-size protective stops working at the broker.
     await signals.process({"action": "set_sl_tp", "symbol": "MNQ1!", "new_sl": 95.0}, w)
-    assert [c["order_id"] for c in a.of("cancel")] == [stop["order_id"]]
-    assert a.of("place")[-1]["stop_price"] == 95.0
+    assert a.of("cancel") == []
+    assert a.of("modify")[-1] == {"order_id": stop["order_id"], "qty": 2,
+                                  "order_type": "Stop", "stop_price": 95.0}
 
 
 async def test_set_sl_tp_short_position_exits_with_buy(live):

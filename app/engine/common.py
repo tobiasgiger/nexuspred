@@ -7,7 +7,7 @@ import threading
 from typing import Any
 
 from .. import state
-from ..tradovate import TradovateError
+from ..tradovate import OrderOutcomeUnknown, TradovateError
 
 
 class SignalError(Exception):
@@ -96,19 +96,26 @@ async def _orders_for_contract(ex: Any, orders: list[dict[str, Any]], contract: 
 
 
 STOP_PENALTY_WAIT_S = 30.0        # the longest a protective stop waits for a 429 penalty before its retry
+FLATTEN_VERIFY_DELAY_S = 0.25     # short broker-feed settle delay; liquidation itself is never retried
 
 
 async def _place_stop_with_retry(ex: Any, *, symbol: str, action: str, qty: int, order_type: str,
                                  stop_price: float, tag: str, what: str = "stop") -> dict[str, Any] | None:
-    """Place a protective stop; one retry on failure. When it still fails the
-    position is live without protection — that is reported at error level and
-    through every alert channel so the operator acts now. Returns the order or None."""
+    """Place a protective stop; one retry on a *known* failure.
+
+    An :class:`OrderOutcomeUnknown` is never retried: the first request may have
+    reached the broker, so a second placement could create a duplicate stop.
+    Known failures get the existing single retry. When that still fails the
+    live position is reported as unprotected and the operator is alerted.
+    """
     from .. import alerts
     last: Exception | None = None
     for attempt in (1, 2):
         try:
             return await ex.place_order(symbol=symbol, action=action, qty=qty, order_type=order_type, stop_price=stop_price)
         except asyncio.CancelledError:
+            raise
+        except OrderOutcomeUnknown:
             raise
         except Exception as exc:  # noqa: BLE001
             last = exc
@@ -179,6 +186,107 @@ async def _close_untracked(executors: list[Any], tracked_names: set[str], tag: s
         elif r:
             closed.append(ex.name)
     return closed, failed
+
+
+async def _flatten_account(ex: Any, tag: str = "") -> tuple[int, int, list[str]]:
+    """Best-effort account-wide emergency flatten reconciled against broker truth.
+
+    Each position observed before the flatten receives at most one liquidation
+    request. A transport-level :class:`OrderOutcomeUnknown` is never replayed.
+    Instead, submitted and uncertain liquidations are checked against subsequent
+    broker position snapshots; only a confirmed-flat symbol counts as flattened.
+    Working orders are then re-read and only orders still reported working are
+    cancelled again. Residual or unreadable exposure is returned as an error.
+    """
+    # First-pass order cleanup is preparatory. A failed/uncertain cancel is not
+    # final until the post-close broker read confirms whether the order remains.
+    pre_cleanup_errors: list[str] = []
+    cancelled = await _cancel_working(ex, tag, pre_cleanup_errors)
+    errors: list[str] = []
+
+    try:
+        positions = await ex.positions()
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - emergency path records and continues
+        errors.append(f"list positions: {exc}")
+        positions = []
+
+    # One liquidation per observed contract. Duplicate broker rows must never
+    # result in duplicate close requests.
+    symbols = list(dict.fromkeys(
+        str(p.get("symbol")) for p in positions or []
+        if p.get("symbol") and p.get("netPos")
+    ))
+    results = await asyncio.gather(*(ex.liquidate_position(symbol) for symbol in symbols), return_exceptions=True)
+
+    verify: set[str] = set()
+    uncertain: set[str] = set()
+    for symbol, result in zip(symbols, results):
+        if isinstance(result, asyncio.CancelledError):
+            raise result
+        if isinstance(result, OrderOutcomeUnknown):
+            uncertain.add(symbol)
+            verify.add(symbol)
+        elif isinstance(result, TradovateError):
+            # Preserve the established known-rejection wording for callers/tests.
+            errors.append(f"flatten {symbol}: {result}")
+        elif isinstance(result, BaseException):
+            errors.append(f"flatten {symbol}: {type(result).__name__}: {result}")
+        else:
+            verify.add(symbol)
+
+    # A request result is not proof of a fill. Give the broker feed a few short
+    # reads to settle, but never send a second liquidation for the same symbol.
+    remaining = set(verify)
+    last_live: dict[str, Any] = {}
+    last_verify_error: Exception | None = None
+    for attempt in range(3 if verify else 0):
+        try:
+            rows = await ex.positions()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - unresolved exposure is reported below
+            last_verify_error = exc
+        else:
+            last_verify_error = None
+            last_live = {
+                str(p.get("symbol")): p.get("netPos")
+                for p in rows or []
+                if p.get("symbol") and p.get("netPos")
+            }
+            remaining = {symbol for symbol in verify if last_live.get(symbol)}
+            if not remaining:
+                break
+        if attempt < 2:
+            await asyncio.sleep(FLATTEN_VERIFY_DELAY_S)
+
+    flattened = len(verify - remaining)
+    for symbol in sorted(remaining):
+        if last_verify_error is not None:
+            if symbol in uncertain:
+                errors.append(
+                    f"flatten {symbol}: outcome unknown; broker position could not be verified: {last_verify_error}"
+                )
+            else:
+                errors.append(
+                    f"flatten {symbol}: submitted but broker position could not be verified: {last_verify_error}"
+                )
+            continue
+        net = last_live.get(symbol)
+        if symbol in uncertain:
+            errors.append(f"flatten {symbol}: outcome unknown; broker still shows position {net}")
+        else:
+            errors.append(f"flatten {symbol}: broker still shows position {net} after liquidation")
+
+    # Re-read working orders after liquidation. This is reconciliation, not a
+    # blind cancel retry: only orders the broker still reports working are sent
+    # another cancel request. A clean second sweep resolves transient first-pass
+    # cancellation/listing failures.
+    post_errors: list[str] = []
+    cancelled += await _cancel_working(ex, tag, post_errors)
+    errors.extend(f"post-close {err}" for err in post_errors)
+    return cancelled, flattened, errors
 
 
 async def _cancel_working(ex: Any, tag: str, errors: list[str] | None = None,
