@@ -38,7 +38,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from . import alerts, config, context, http, risk, state
-from .tradovate import RateLimited, TradovateError, _fire
+from .tradovate import OrderOutcomeUnknown, RateLimited, TradovateError, _fire
 
 SNAPSHOT_TTL_S = 3.0              # one Position/searchOpen and Account/search per login per P&L tick, not per account
 
@@ -88,6 +88,14 @@ def _num(v: Any, default: Any = 0.0) -> Any:
         return float(v)
     except (TypeError, ValueError):
         return default
+
+
+def _outcome_unknown(name: str, operation: str, detail: Any) -> OrderOutcomeUnknown:
+    """An order mutation lost its answer after it may have reached ProjectX."""
+    msg = f"{name}: {operation} — outcome unknown, CHECK THE ACCOUNT ({detail})"
+    state.log_event("error", msg)
+    _fire(alerts.execution_problem(f"Order outcome unknown on {name}", msg))
+    return OrderOutcomeUnknown(msg)
 
 
 def split_symbol(symbol: str) -> tuple[str, str, str]:
@@ -598,15 +606,11 @@ class ProjectXSession:
                 failure = str(data.get("errorMessage") or "no orderId in the answer")
         except TradovateError as exc:
             data, failure = {"errorText": str(exc)}, str(exc)
-        except (httpx.TimeoutException, asyncio.TimeoutError):
-            unknown = f"{name}: {action} {qty} {symbol} {order_type} timed out — outcome unknown, CHECK THE ACCOUNT"
+        except (httpx.TransportError, asyncio.TimeoutError) as exc:
             state.log_order({"action": action, "symbol": str(symbol).upper(), "account": name, "account_id": aid, "qty": qty,
                              "order_type": order_type, "price": sent_price, "stop_price": sent_stop, "order_id": None,
-                             "status": "unknown", "raw": {"errorText": "timeout"}})
-            state.log_event("error", unknown)
-            from .tradovate import OrderOutcomeUnknown, _fire
-            _fire(alerts.execution_problem(f"Order outcome unknown on {name}", unknown))
-            raise OrderOutcomeUnknown(unknown) from None
+                             "status": "unknown", "raw": {"errorText": str(exc) or type(exc).__name__}})
+            raise _outcome_unknown(name, f"{action} {qty} {symbol} {order_type}", exc) from exc
         result = {"action": action, "symbol": str(symbol).upper(), "account": name, "account_id": aid, "qty": qty, "order_type": order_type,
                   "price": sent_price, "stop_price": sent_stop, "order_id": int(data["orderId"]) if not failure else None,
                   "status": "rejected" if failure else "submitted", "raw": data}
@@ -628,11 +632,19 @@ class ProjectXSession:
             second = await self.place_order(symbol=symbol, action=other["action"], qty=qty, order_type=other["order_type"], price=other.get("price"),
                                             stop_price=other.get("stop_price"), account_spec=account_spec, account_id=account_id,
                                             account_name=account_name, linked_order_id=first["order_id"])
-        except TradovateError:
+        except OrderOutcomeUnknown:
+            # Leg 2 may be live. Cancelling leg 1 would knowingly destroy the one
+            # side we can identify while leaving the uncertain side at the broker.
+            raise
+        except TradovateError as original:
             try:
                 await self.cancel_order(int(first["order_id"]), account_id=account_id, account_spec=account_spec)
-            except Exception:  # noqa: BLE001
-                pass
+            except OrderOutcomeUnknown as cleanup:
+                raise cleanup from original
+            except TradovateError as cleanup:
+                raise TradovateError(
+                    f"second OCO leg failed ({original}); first leg {first['order_id']} cleanup also failed: {cleanup}"
+                ) from cleanup
             raise
         return {"order_id": first["order_id"], "oco_id": second["order_id"], "status": "submitted", "linked": True,
                 "raw": {"first": first.get("raw"), "second": second.get("raw")}}
@@ -646,15 +658,23 @@ class ProjectXSession:
                            price: float | None = None, stop_price: float | None = None,
                            account_name: str | None = None, account_id: int | None = None, account_spec: str | None = None) -> dict[str, Any]:
         aid = await self._find_account(order_id, account_id, account_spec)
+        name = account_name or self.name
         body = {"accountId": aid, "orderId": int(order_id), "size": int(qty),
                 "limitPrice": price if order_type in ("Limit", "StopLimit") else None,
                 "stopPrice": stop_price if order_type in ("Stop", "StopLimit") else None, "trailPrice": None}
         failure, data = "", None
         try:
             data = await self._post("/api/Order/modify", body)
+        except OrderOutcomeUnknown:
+            raise
+        except (httpx.TransportError, asyncio.TimeoutError) as exc:
+            state.log_order({"action": "Modify", "symbol": "", "account": name, "qty": qty, "order_type": order_type,
+                             "price": body["limitPrice"], "stop_price": body["stopPrice"], "order_id": order_id,
+                             "status": "unknown", "raw": {"errorText": str(exc) or type(exc).__name__}})
+            raise _outcome_unknown(name, f"modify order {order_id}", exc) from exc
         except TradovateError as exc:
             failure = str(exc)
-        state.log_order({"action": "Modify", "symbol": "", "account": account_name or self.name, "qty": qty, "order_type": order_type,
+        state.log_order({"action": "Modify", "symbol": "", "account": name, "qty": qty, "order_type": order_type,
                          "price": body["limitPrice"], "stop_price": body["stopPrice"], "order_id": order_id,
                          "status": "rejected" if failure else "modified", "raw": data})
         if failure:
@@ -677,8 +697,13 @@ class ProjectXSession:
 
     async def cancel_order(self, order_id: int, *, account_id: int | None = None, account_spec: str | None = None) -> dict[str, Any]:
         aid = await self._find_account(order_id, account_id, account_spec)
+        name = account_spec or self.name
         try:
             await self._post("/api/Order/cancel", {"accountId": aid, "orderId": int(order_id)})
+        except OrderOutcomeUnknown:
+            raise
+        except (httpx.TransportError, asyncio.TimeoutError) as exc:
+            raise _outcome_unknown(name, f"cancel order {order_id}", exc) from exc
         except TradovateError as exc:
             raise TradovateError(f"cancel order {order_id} rejected — {exc}") from exc
         return {"order_id": order_id, "status": "cancelled"}
@@ -686,16 +711,23 @@ class ProjectXSession:
     async def liquidate_position(self, symbol: str, *, account_id: int | None = None,
                                  account_name: str | None = None, account_spec: str | None = None) -> dict[str, Any]:
         spec, aid = self._acct(account_spec, account_id)
+        name = account_name or self.name
         rec = await self._contract_for(symbol)
         failure, data = "", None
         try:
             data = await self._post("/api/Position/closeContract", {"accountId": aid, "contractId": rec["id"]})
+        except OrderOutcomeUnknown:
+            raise
+        except (httpx.TransportError, asyncio.TimeoutError) as exc:
+            state.log_order({"action": "Liquidate", "symbol": str(symbol).upper(), "account": name, "account_id": aid, "qty": 0,
+                             "order_type": "Market", "status": "unknown", "raw": {"errorText": str(exc) or type(exc).__name__}})
+            raise _outcome_unknown(name, f"liquidate {symbol}", exc) from exc
         except TradovateError as exc:
             failure = str(exc)
-        state.log_order({"action": "Liquidate", "symbol": str(symbol).upper(), "account": account_name or self.name, "account_id": aid, "qty": 0,
+        state.log_order({"action": "Liquidate", "symbol": str(symbol).upper(), "account": name, "account_id": aid, "qty": 0,
                          "order_type": "Market", "status": "rejected" if failure else "submitted", "raw": data})
         if failure:
-            raise TradovateError(f"{account_name or self.name}: liquidate {symbol} rejected — {failure}")
+            raise TradovateError(f"{name}: liquidate {symbol} rejected — {failure}")
         return {"status": "submitted"}
 
     async def positions(self, *, account_id: int | None = None, account_name: str | None = None,
