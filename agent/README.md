@@ -22,6 +22,25 @@ itself keeps running wherever it runs.
 
 Keep the zip private — it contains the agent's token (revoke it in the bridge if it leaks).
 
+## Install (Linux / macOS VPS) — one line
+
+In the bridge open **Settings → Execution Agents**, enter a name and press **Linux
+one-liner**. Copy the command it shows and run it on the VPS as root:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tobiasgiger/nexuspred/main/deploy/install-agent.sh \
+  | sudo bash -s -- --bridge https://bridge.example.com --code ABCD-2345 --name "VPS 1"
+```
+
+It installs Python 3 if missing, downloads the agent into `/opt/fluxbridge-agent`, pairs
+with the code (the token lands in `agent.json`, mode 600, owned by the service user
+`fluxagent`) and installs a sandboxed systemd service that starts on boot and restarts on
+exit. On macOS the same line (without `sudo`) installs into `~/fluxbridge-agent` with a
+launchd agent. The agent is online in the bridge within seconds.
+
+Afterwards: `fluxbridge-agent status | logs -f | restart | update | uninstall`. Re-running
+the install line without `--code` updates the agent script and keeps the pairing.
+
 ## Alternative: plain agent + pairing code
 
 Download *Plain agent (no token)*, install Python 3 (tick **Add python.exe to PATH**),

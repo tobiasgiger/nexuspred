@@ -92,6 +92,20 @@ systemd the bridge shuts down cleanly after the pull and the service brings it b
 If you forgot the secret: install without `--session-secret`, restore, and re-enter each
 Tradovate token in the dashboard. Everything else in the backup is plain data.
 
+## Execution agents on Linux / macOS (one line)
+
+Agents make a login trade from another machine's IP. **Settings → Execution Agents →
+Linux one-liner** shows a ready-made command with a fresh pairing code:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tobiasgiger/nexuspred/main/deploy/install-agent.sh \
+  | sudo bash -s -- --bridge https://bridge.example.com --code ABCD-2345 --name "VPS 1"
+```
+
+Python is installed if missing, the agent pairs, and a systemd service (macOS: launchd)
+keeps it running. Manage it with `fluxbridge-agent status | logs -f | update | uninstall`.
+Details in `agent/README.md`.
+
 ## Backups off the server
 
 The daily backups sit on the same disk as the database. To keep a copy elsewhere, sync the

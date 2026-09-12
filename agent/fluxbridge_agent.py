@@ -17,6 +17,10 @@ First run (interactive):
 Or non-interactive:
     python fluxbridge_agent.py --bridge https://bridge.example.com --code ABCD-2345 --name "VPS 1"
 
+Linux / macOS, one line (Settings -> Execution Agents -> "Linux one-liner"):
+    curl -fsSL https://raw.githubusercontent.com/tobiasgiger/nexuspred/main/deploy/install-agent.sh \
+      | sudo bash -s -- --bridge https://bridge.example.com --code ABCD-2345
+
 Preconfigured (Settings -> Execution Agents -> "Download preconfigured agent"):
     the zip already contains agent.json with the bridge URL and this agent's
     token - just start it, nothing to type.
@@ -36,7 +40,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 # The only hosts this agent will ever talk to on the bridge's behalf. Even a
 # compromised bridge (or a stolen bridge session) cannot turn this VPS into a
@@ -179,6 +183,7 @@ def main() -> int:
     ap.add_argument("--code", help="pairing code from Settings -> Execution Agents")
     ap.add_argument("--name", help="a name for this agent (e.g. the VPS name)")
     ap.add_argument("--once", action="store_true", help="poll once and exit (for tests)")
+    ap.add_argument("--pair-only", action="store_true", help="pair (write agent.json) and exit without polling — used by the installers")
     args = ap.parse_args()
 
     cfg = load_config()
@@ -203,6 +208,9 @@ def main() -> int:
             log(f"Pairing failed: {exc}")
             return 1
 
+    if args.pair_only:
+        log(f"Agent '{cfg.get('name')}' paired with {cfg['bridge']} — config saved to {CONFIG_FILE}")
+        return 0
     log(f"Agent '{cfg.get('name')}' v{VERSION} polling {cfg['bridge']} ...")
     backoff = 2.0
     while True:

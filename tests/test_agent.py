@@ -339,3 +339,23 @@ async def test_deleting_a_user_revokes_their_agents(client, anon_client, admin):
     db.delete_user(u2["id"])
     async with _agent_client(paired["token"]) as ac:
         assert (await ac.get("/api/agent/jobs?wait=0")).status_code == 401
+
+
+def test_agent_pair_only_writes_config_and_exits(tmp_path, monkeypatch):
+    """The installers pair with --pair-only: config written, no polling loop."""
+    import importlib.util, pathlib, sys
+    spec = importlib.util.spec_from_file_location("fluxbridge_agent_po", pathlib.Path("agent/fluxbridge_agent.py"))
+    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+    mod.CONFIG_FILE = str(tmp_path / "agent.json"); mod.LOG_FILE = str(tmp_path / "agent.log")
+    calls = []
+
+    def fake_call(cfg, method, path, body=None, timeout=40.0):
+        calls.append((method, path, body))
+        assert path == "/api/agent/pair" and body["code"] == "ABCD-2345"
+        return {"token": "fba_test", "agent_id": 9, "name": body["name"]}
+    mod.bridge_call = fake_call
+    monkeypatch.setattr(sys, "argv", ["agent", "--bridge", "https://bridge.example.com", "--code", "ABCD-2345", "--name", "VPS 1", "--pair-only"])
+    assert mod.main() == 0
+    cfg = json.loads((tmp_path / "agent.json").read_text())
+    assert cfg["token"] == "fba_test" and cfg["bridge"] == "https://bridge.example.com" and cfg["name"] == "VPS 1"
+    assert [c[1] for c in calls] == ["/api/agent/pair"]           # never polled for jobs

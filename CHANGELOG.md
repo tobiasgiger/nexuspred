@@ -4,6 +4,15 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.54
+- **Execution agent for Linux / macOS in one line.** **Settings → Execution Agents →
+  Linux one-liner** shows a ready-made command with a fresh pairing code;
+  `deploy/install-agent.sh` installs Python if missing, downloads the agent, pairs it
+  (token in `agent.json`, mode 600, own service user) and installs a sandboxed systemd
+  service (macOS: launchd) that starts on boot and restarts on exit. `fluxbridge-agent
+  status | logs | restart | update | uninstall` manages it; re-running the line updates the
+  agent and keeps the pairing. Agent 1.3.0 adds `--pair-only` for installers.
+
 ## 5.0.0-alpha.53
 - **Self-hosting in one line.** `deploy/install-server.sh` turns a Debian / Ubuntu server
   into a running bridge: Caddy with automatic HTTPS (TradingView needs a valid certificate),

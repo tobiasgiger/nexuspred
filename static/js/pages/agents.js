@@ -27,6 +27,21 @@ export default {
       } catch (e) { toast(e.message, "error"); }
     }
 
+    async function linuxOneLiner() {
+      try {
+        const r = await api.post("/api/agents/pairing-code", { name: nameInput.value.trim() });
+        const cmd = `curl -fsSL https://raw.githubusercontent.com/tobiasgiger/nexuspred/main/deploy/install-agent.sh | sudo bash -s -- --bridge ${window.location.origin} --code ${r.code} --name "${r.name.replace(/"/g, "")}"`;
+        clear(codeBox);
+        codeBox.append(
+          h("div", null, "Linux / macOS: run this on the VPS as root — it installs Python if needed, pairs as ", h("strong", null, r.name), " and starts a service (boot + restart). Valid ", String(Math.round(r.expires_in / 60)), " minutes, single use:"),
+          h("pre", { style: "margin-top:8px;white-space:pre-wrap;word-break:break-all;font-size:12.5px" }, cmd),
+          h("div", { style: "display:flex;gap:10px;align-items:center;flex-wrap:wrap" },
+            h("button", { type: "button", class: "btn btn-sm btn-primary", onClick: async () => toast((await copyText(cmd)) ? "Command copied" : "Copy failed", "success") }, icon("copy"), "Copy command"),
+            h("span", { class: "muted", style: "font-size:12.5px" }, "Afterwards: ", h("code", null, "fluxbridge-agent status | logs -f | update | uninstall"))));
+        codeBox.classList.remove("hidden");
+      } catch (e) { toast(e.message, "error"); }
+    }
+
     async function downloadPreconfigured() {
       const name = nameInput.value.trim() || "agent";
       dlBtn.disabled = true; dlBtn.textContent = "Preparing…";
@@ -78,8 +93,10 @@ export default {
       pageHead("Execution Agents", "Run a small helper on a VPS and route a login's Tradovate calls through it, so each account trades from its own IP. The agent pairs with a one-time code and never sees your dashboard login.", [
         h("a", { class: "btn btn-ghost", href: "/api/agents/download.zip", title: "Plain agent files without token (pair with a code)" }, icon("download"), "Plain agent (no token)"),
       ]),
-      card({ title: "Add an agent", hint: "Easiest: name it and download the preconfigured agent — the zip already contains the bridge URL, this agent's token and the Windows .exe. Unzip on the VPS, start it, then assign logins under Tradovate Accounts → Execute via. Alternative: a pairing code, typed into the plain agent on first start." },
-        h("div", { class: "form-actions" }, nameInput, dlBtn, h("button", { type: "button", class: "btn", onClick: newCode }, icon("key"), "New pairing code")),
+      card({ title: "Add an agent", hint: "Windows VPS: name it and download the preconfigured agent — the zip already contains the bridge URL, this agent's token and the .exe. Linux / macOS VPS: name it and press Linux one-liner — one command installs, pairs and starts the agent as a service. Then assign logins under Tradovate Accounts → Execute via. Alternative: a pairing code, typed into the plain agent on first start." },
+        h("div", { class: "form-actions" }, nameInput, dlBtn,
+          h("button", { type: "button", class: "btn", onClick: linuxOneLiner, title: "One command that installs, pairs and starts the agent as a service" }, icon("terminal"), "Linux one-liner"),
+          h("button", { type: "button", class: "btn", onClick: newCode }, icon("key"), "New pairing code")),
         codeBox),
       card({ title: "Paired agents", hint: "Online = polled the bridge within the last 45 seconds. Everything an assigned login does with Tradovate (orders, token renewal, health checks, P&L) goes through its agent; if the agent is offline those calls fail loudly instead of using the bridge's IP.", actions: [
         h("button", { type: "button", class: "btn btn-ghost btn-sm", onClick: load }, icon("refresh"), "Refresh"),
