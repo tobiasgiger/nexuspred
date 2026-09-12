@@ -17,7 +17,7 @@ itself keeps running wherever it runs.
 2. Unzip anywhere on the VPS (e.g. `C:\fluxbridge-agent`) and double-click
    `start-agent.bat` (or `fluxbridge-agent.exe`). It starts polling immediately and shows
    up as *online* in the bridge within seconds.
-3. Under **Settings → Tradovate Accounts**, set **Execute via** to the new agent for the
+3. Under **Settings → Broker Accounts**, set **Execute via** to the new agent for the
    logins that should use this VPS, then **Save logins**.
 
 Keep the zip private — it contains the agent's token (revoke it in the bridge if it leaks).

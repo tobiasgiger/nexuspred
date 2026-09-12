@@ -1,7 +1,7 @@
 """Per-trade-account risk guard: daily loss limit, daily profit limit and a
 fixed flatten time.
 
-Configured per trade account under Settings → Tradovate Accounts (``risk`` key
+Configured per trade account under Settings → Broker Accounts (``risk`` key
 on the account entry: ``loss_limit``, ``profit_limit`` in account currency,
 ``flatten_at`` as ``HH:MM`` local time in ``journal_timezone``; 0 / empty =
 off). The guard rides on the live P&L poll: whenever today's P&L (realised +

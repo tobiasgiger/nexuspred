@@ -30,7 +30,7 @@ export const general = {
           { name: "breakeven_to_entry", type: "switch", label: "Break-even = entry price", hint: "On a TP1 / “breakeven” move_sl, set the stop to the original entry instead of the signal's new_sl." },
           { name: "allowed_symbols", type: "list", label: "Allowed symbols (unmapped)", placeholder: "MNQ, MES", hint: "Comma separated. Symbols not in the Symbol Mapping are only accepted if their root is listed here." },
         ] },
-        { title: "Connection", hint: "Fluxbridge connects to Tradovate with one access token per login (no username/password). Add logins under Tradovate Accounts, then Connect & Verify.", fields: [
+        { title: "Connection", hint: "Fluxbridge connects to each broker login separately — Tradovate with an access token (no username/password), Rithmic and ProjectX with credentials. Add logins under Broker Accounts, then Connect & Verify.", fields: [
           { name: "health_check_interval", type: "number", label: "Health check / token refresh interval (seconds)", min: 0, placeholder: "60 (0 = off)", hint: "How often sessions are verified and tokens renewed ahead of expiry." },
           { name: "pnl_poll_seconds", type: "number", label: "Live P&L refresh (seconds)", min: 0, placeholder: "5 (0 = off)", width: "160px", hint: "How often the Overview's Today's P&L card asks Tradovate for realised / open P&L while a dashboard is open (idle: once a minute)." },
         ], after: h("div", { class: "form-actions" }, connectBtn) },
@@ -127,7 +127,7 @@ function alertAccountsPanel() {
     clear(list);
     const accounts = store.get("tradeAccounts") || [];
     allSwitch.checked = allMode();
-    if (!accounts.length) { list.append(h("p", { class: "hint" }, "No trade accounts discovered yet — connect a login under Tradovate Accounts first.")); return; }
+    if (!accounts.length) { list.append(h("p", { class: "hint" }, "No trade accounts discovered yet — connect a login under Broker Accounts first.")); return; }
     for (const a of accounts) {
       const id = `alert-acct-${a.spec}`;
       const box = h("input", { type: "checkbox", id, checked: allMode() || selected.has(a.spec), disabled: allMode(), onChange: (e) => {

@@ -1,4 +1,4 @@
-/* Settings → Tradovate Accounts: token logins + the discovered trade accounts. */
+/* Settings → Broker Accounts: broker logins (Tradovate / Rithmic / ProjectX) + the discovered trade accounts. */
 import { h, card, tag, toast, confirmDialog, pageHead } from "../ui.js";
 import { maskAccount } from "../privacy.js";
 import { icon } from "../icons.js";
@@ -9,7 +9,7 @@ import { dataTable } from "../components/table.js";
 import { openDrawer, closeDrawer } from "../components/drawer.js";
 
 export default {
-  title: "Tradovate Accounts",
+  title: "Broker Accounts",
   render(root) {
     const tbody = h("tbody");
     let agents = [];  // paired execution agents (admin-managed); loaded once, rows read it
@@ -162,7 +162,7 @@ export default {
     });
 
     root.append(
-      pageHead("Tradovate Accounts", "One row per Tradovate login, each with its own access token (auto-renewed). Every signal fans out to the accounts a webhook routes to, in parallel.", [
+      pageHead("Broker Accounts", "One row per broker login — Tradovate (access token, auto-renewed), Rithmic or ProjectX (credentials). Every signal fans out to the accounts a webhook routes to, in parallel.", [
         h("button", { type: "button", class: "btn", onClick: () => { tbody.append(row()); markDirty(); } }, icon("plus"), "Add login"),
       ]),
       card({ title: "Token logins", hint: "Paste the access token (and optionally the check token) from the Tradovate web trader — see Tools for the extractor. Masked tokens keep their stored value when you save." },

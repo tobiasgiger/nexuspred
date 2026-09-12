@@ -4,6 +4,15 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.63
+- **Broker Accounts.** The menu entry, page and every hint now say *Broker Accounts*
+  instead of *Tradovate Accounts* — the page manages Tradovate, Rithmic and ProjectX logins.
+- **Calendar fixes.** The currency and impact filters rendered as
+  `[object HTMLLabelElement]` text instead of checkboxes; they are checkboxes again. An
+  empty range now explains itself: the feed publishes one week at a time, so on a weekend
+  "Next 7 days" says up to which day the calendar is covered and that next week's events
+  arrive on Sunday evening.
+
 ## 5.0.0-alpha.62
 - **Close tracking per account** (PR #10 by andrasmining, merged). A `close_all` /
   TS-Hunter `full_close` with a mixed outcome keeps the accounts whose close failed in

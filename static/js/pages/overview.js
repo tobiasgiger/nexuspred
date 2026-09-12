@@ -33,7 +33,7 @@ export default {
     if (k.discord) { k.discord.el.classList.add("clickable"); k.discord.el.addEventListener("click", () => navigate("/discord")); }
 
     const sessions = dataTable({
-      empty: "No logins configured — add one under Settings → Tradovate Accounts.",
+      empty: "No logins configured — add one under Settings → Broker Accounts.",
       columns: [
         { label: "Login", render: (x) => h("span", { class: "health-row" }, h("span", { class: `dot ${x.connected ? "on" : ""}` }), x.name || "—") },
         { label: "Env", render: (x) => tag((x.environment || "—").toUpperCase(), x.environment === "live" ? "live" : "demo") },
@@ -221,7 +221,7 @@ export default {
           cell("max drawdown", ddCell(a), ch("dd_room"))));
       }
       if (!keepPrev) prevValues = next;
-      if (!accounts.length) pnlRows.append(h("div", { class: "muted" }, "No connected trade account — connect a login under Settings → Tradovate Accounts."));
+      if (!accounts.length) pnlRows.append(h("div", { class: "muted" }, "No connected trade account — connect a login under Settings → Broker Accounts."));
       else if (hideIdle && idle === accounts.length) pnlRows.append(h("div", { class: "muted" }, "All accounts are idle today — untick “Hide idle” to see them."));
       pnlStamp.textContent = `updated ${fmtTime(p.ts)}`;
     }

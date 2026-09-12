@@ -26,7 +26,7 @@ export default {
     const checked = (box) => [...box.querySelectorAll("input:checked")].map((i) => i.value);
     const paintChecks = (box, values, selected) => {
       clear(box);
-      box.append(values.map((v) => h("label", { style: "display:flex;gap:5px;align-items:center" }, h("input", { type: "checkbox", value: v, checked: selected.includes(v), onChange: load }), v)));
+      box.append(...values.map((v) => h("label", { style: "display:flex;gap:5px;align-items:center" }, h("input", { type: "checkbox", value: v, checked: selected.includes(v), onChange: load }), v)));
     };
     paintChecks(impBox, impacts, ["High", "Medium"]);
 
@@ -72,6 +72,14 @@ export default {
         let last = "";
         const rows = r.events.map((e) => { const k = dayKey(e.at); const first = k !== last; last = k; return { ...e, _first: first }; });
         table.update(rows);
+        if (!rows.length) {
+          // the feed publishes one week at a time: say so instead of showing an empty week
+          const cell = table.tbody.querySelector("td.empty");
+          const feedTo = r.status.feed_to ? new Date(r.status.feed_to) : null;
+          const rangeEndsAfterFeed = feedTo && !["today", "past7"].includes(v) && (Date.now() + Number(v) * 86400e3 > feedTo.getTime());
+          if (cell && rangeEndsAfterFeed) cell.textContent = `No events match the filters in this range. The calendar currently covers up to ${feedTo.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })} — the feed publishes next week's events on Sunday evening; press Refresh calendar then.`;
+          else if (cell && r.status.feed_events === 0) cell.textContent = "No calendar loaded yet — press Refresh calendar.";
+        }
         countEl.textContent = `${rows.length} event${rows.length === 1 ? "" : "s"} · ${rows.filter((e) => e.relevant).length} lock-relevant`;
         try { localStorage.setItem("fb.calendar.range", v); } catch { /* ignore */ }
       } catch (e) { toast(e.message, "error"); }

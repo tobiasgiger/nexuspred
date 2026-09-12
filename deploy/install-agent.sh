@@ -203,5 +203,5 @@ fi
 
 echo
 echo "  The agent appears as online in the bridge within seconds. Assign logins to it under"
-echo "  Settings → Tradovate Accounts → Execute via, then Save logins."
+echo "  Settings → Broker Accounts → Execute via, then Save logins."
 echo

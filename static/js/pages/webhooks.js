@@ -65,7 +65,7 @@ function webhookDrawer(wh, { navigate }) {
   // --- Accounts
   const selected = new Map((w.accounts || []).map((a) => [accountKey(a.token_idx, a.spec), a]));
   const accTable = dataTable({
-    empty: "No trade accounts discovered yet — add a login under Settings → Tradovate Accounts and Connect & Verify.",
+    empty: "No trade accounts discovered yet — add a login under Settings → Broker Accounts and Connect & Verify.",
     columns: [
       { label: "Route", render: (a) => h("input", { type: "checkbox", class: "switch acc-on", checked: !!(selected.get(accountKey(a.token_idx, a.spec)) || {}).enabled, dataset: { key: accountKey(a.token_idx, a.spec) } }) },
       { label: "Login", render: (a) => a.token_name || "—" },
@@ -321,7 +321,7 @@ export default {
       card({ title: "Subscribed signals", actions: [h("button", { class: "btn btn-ghost btn-sm", onClick: () => navigate("/marketplace") }, icon("store"), "Marketplace")],
         hint: "Signals published by other users that run on your accounts. Your own Trading switch, symbol mapping, alerts and logs apply." }, subsTable.el),
       h("div", { class: "callout" }, h("strong", null, "simple"), " executes buy/sell for the qty in the alert (no TP/SL) · ",
-        h("strong", null, "bracket"), " adds TP/SL orders from tp1/tp2/tp3/sl · ", h("strong", null, "TS-Hunter"), " matches the TS-Hunter Pine contract. Accounts come from Settings → Tradovate Accounts."),
+        h("strong", null, "bracket"), " adds TP/SL orders from tp1/tp2/tp3/sl · ", h("strong", null, "TS-Hunter"), " matches the TS-Hunter Pine contract. Accounts come from Settings → Broker Accounts."),
     );
 
     let openId = null;

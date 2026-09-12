@@ -105,7 +105,7 @@ alerts run unchanged on a Rithmic login (verified with a scripted client in
 `tests/test_rithmic.py`).
 
 What to do with the first real credentials (paper system first):
-1. Settings → Tradovate Accounts → add a login, Broker *Rithmic*, Env *Demo*, user +
+1. Settings → Broker Accounts → add a login, Broker *Rithmic*, Env *Demo*, user +
    password, system `Rithmic Paper Trading` (or the name your prop firm gives), gateway
    `paper`; Save, Connect & Verify. The accounts appear; the status shows the system.
 2. Route a webhook to one account and send a test signal from the Simulator's payload

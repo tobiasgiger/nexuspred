@@ -19,7 +19,7 @@ export const NAV = [
   { group: "Configuration", items: [
     { path: "/settings", label: "Settings", icon: "settings", children: [
       { path: "/settings/general", label: "General & Trading" },
-      { path: "/settings/accounts", label: "Tradovate Accounts" },
+      { path: "/settings/accounts", label: "Broker Accounts" },
       { path: "/settings/symbols", label: "Symbol Mapping" },
       { path: "/settings/discord", label: "Discord Listener", gate: "discord" },
       { path: "/settings/alerts", label: "Alerts" },

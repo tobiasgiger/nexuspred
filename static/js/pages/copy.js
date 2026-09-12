@@ -84,7 +84,7 @@ function groupDrawer(group, { reload, onClose = null }) {
   const selected = new Map((g.followers || []).map((f) => [accountKey(f.token_idx, f.spec), f]));
   const fTable = dataTable({
     compact: true,
-    empty: "No trade accounts discovered yet — add a login under Settings → Tradovate Accounts and Connect & Verify.",
+    empty: "No trade accounts discovered yet — add a login under Settings → Broker Accounts and Connect & Verify.",
     columns: [
       { label: "Follow", render: (a) => h("input", { type: "checkbox", class: "switch cp-on", checked: !!(selected.get(accountKey(a.token_idx, a.spec)) || {}).enabled && selected.has(accountKey(a.token_idx, a.spec)), dataset: { key: accountKey(a.token_idx, a.spec) } }) },
       { label: "Account", render: (a) => h("span", null, h("code", null, maskAccount(a.spec)), h("small", { class: "muted", style: "display:block" }, `${a.token_name} · ${(a.environment || "").toUpperCase()}`)) },

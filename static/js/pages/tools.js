@@ -107,7 +107,7 @@ export default {
         payloadTa, h("div", { class: "form-actions" }, sendBtn), testResult),
       dsCard,
       card({ title: "Browser token extractor (Chrome / Edge)", actions: [h("a", { class: "btn btn-primary", href: "/api/extension/token-extractor.zip", download: "" }, icon("download"), "Download extension (.zip)")] },
-        h("p", { class: "hint" }, "A small browser extension that reads your own tokens from a logged-in tab — the Discord user token (Settings → Discord Listener) and the Tradovate token + checkToken (Settings → Tradovate Accounts). It runs 100% locally and never sends anything anywhere. Each token is like a password for that account — only paste it back into this bridge."),
+        h("p", { class: "hint" }, "A small browser extension that reads your own tokens from a logged-in tab — the Discord user token (Settings → Discord Listener) and the Tradovate token + checkToken (Settings → Broker Accounts). It runs 100% locally and never sends anything anywhere. Each token is like a password for that account — only paste it back into this bridge."),
         h("h3", null, "Install (one time)"),
         h("ol", { class: "steps" },
           h("li", null, h("span", { class: "step-num" }, "1"), h("div", null, h("strong", null, "Download"), " the .zip above and unzip it — you get a ", h("code", null, "token-extractor"), " folder.")),

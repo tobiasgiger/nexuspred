@@ -70,7 +70,7 @@ access control, and a built-in GitHub auto-updater.
 
 ### ProjectX accounts (TopstepX, Bulenox, Alpha Futures … — beta)
 
-Logins can point at a **ProjectX** gateway: Settings → Tradovate Accounts → Broker
+Logins can point at a **ProjectX** gateway: Settings → Broker Accounts → Broker
 *ProjectX*, user name, API key and the firm (`topstep`, `bulenox`, `alphaticks`, …).
 Webhooks, copy trading, risk guard and P&L work the same; the bridge polls the REST API.
 Not yet verified with a real key; see [docs/PROJECTX.md](docs/PROJECTX.md).
@@ -78,7 +78,7 @@ Not yet verified with a real key; see [docs/PROJECTX.md](docs/PROJECTX.md).
 ### Rithmic accounts (beta)
 
 Logins can point at **Rithmic** (Apex, Topstep, MFFU … on R|Trader) instead of Tradovate:
-Settings → Tradovate Accounts → Broker *Rithmic*, then user, password, the system name your
+Settings → Broker Accounts → Broker *Rithmic*, then user, password, the system name your
 firm gives and the gateway (`chicago`, `europe`, `paper`). Everything else — webhooks, copy
 trading, risk guard, P&L — works the same. Not yet verified against a live Rithmic system;
 see [docs/RITHMIC.md](docs/RITHMIC.md) for the checklist and limits.
@@ -165,7 +165,7 @@ is a tiny helper you run on a VPS (a Windows .exe built by CI, or the plain Pyth
 script): **Settings → Execution Agents → Download preconfigured agent** gives you a zip
 with the token already inside — unzip, start, done — or pair the plain agent with a
 one-time code. Its token is only valid for the relay endpoints (`/api/agent/…`), and it
-long-polls the bridge over outbound HTTPS. Assign a login to it under **Tradovate Accounts → Execute via** and
+long-polls the bridge over outbound HTTPS. Assign a login to it under **Broker Accounts → Execute via** and
 every Tradovate call of that login — orders, token renewal, health checks, P&L — is
 executed by the agent from its IP. An offline agent makes those calls fail loudly (event
 log + alert); the bridge never silently falls back to its own address. Setup steps for
@@ -240,7 +240,7 @@ placed through the simulator are not journaled (they never reach Tradovate).
   key in the DB (weakest — set one of the env vars on any public host). Rotating the
   key makes stored tokens unreadable; re-enter them afterwards.
 
-1. Go to **Settings → Tradovate Accounts** → add one login per Tradovate account with its
+1. Go to **Settings → Broker Accounts** → add one login per Tradovate account with its
    own access token (start in **Demo**), save, then **Connect & Verify** — the trade
    accounts under each login are discovered automatically.
 2. Go to **Webhooks** → **Add webhook** for each strategy, pick its strategy type
@@ -407,7 +407,7 @@ route landing on another login.
 
 **Token-only, multi-account.** There is no username/password — each **login** is
 authenticated by its **own Tradovate access token**. Add logins under
-**Settings → Tradovate Accounts**, one row each:
+**Settings → Broker Accounts**, one row each:
 
 - **Name**, **Environment** (Demo/Live), **Access token** (and optional **Check token**),
   **Enabled** (master switch for that login), and a default **quantity multiplier**.
@@ -617,7 +617,7 @@ alone. The rollover alert (Discord / email / push) points to that page.
 ---
 ## Risk guard (per trade account)
 
-Settings → Tradovate Accounts → *Discovered trade accounts* → **Risk guard** sets, per
+Settings → Broker Accounts → *Discovered trade accounts* → **Risk guard** sets, per
 account, a **daily loss limit**, a **daily profit target** and a **flatten time**. The
 guard rides on the live P&L poll (a few seconds while a rule is set) and uses the
 broker's own figures — today's realised + open P&L. When a rule fires the account is

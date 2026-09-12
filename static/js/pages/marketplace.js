@@ -23,7 +23,7 @@ export function openSubscriptionDrawer(item, onDone) {
   const selected = new Map(((sub && sub.accounts) || []).map((a) => [accountKey(a.token_idx, a.spec), a]));
   const enabledSw = h("input", { type: "checkbox", class: "switch", checked: sub ? !!sub.enabled : true });
   const accTable = dataTable({
-    empty: "No trade accounts discovered yet — add a login under Settings → Tradovate Accounts and Connect & Verify.",
+    empty: "No trade accounts discovered yet — add a login under Settings → Broker Accounts and Connect & Verify.",
     columns: [
       { label: "Route", render: (a) => h("input", { type: "checkbox", class: "switch acc-on", checked: !!(selected.get(accountKey(a.token_idx, a.spec)) || {}).enabled, dataset: { key: accountKey(a.token_idx, a.spec) } }) },
       { label: "Login", render: (a) => a.token_name || "—" },
@@ -93,7 +93,7 @@ export function openCopySubscriptionDrawer(item, onDone) {
   const q = (cls, spec) => accTable.tbody.querySelector(`.${cls}[data-spec="${CSS.escape(spec)}"]`);
   const accTable = dataTable({
     compact: true,
-    empty: "No trade accounts discovered yet — add a login under Settings → Tradovate Accounts and Connect & Verify.",
+    empty: "No trade accounts discovered yet — add a login under Settings → Broker Accounts and Connect & Verify.",
     columns: [
       { label: "Follow", render: (a) => h("input", { type: "checkbox", class: "switch cs-on", checked: selected.has(String(a.spec)) && (selected.get(String(a.spec)).enabled !== false), dataset: { spec: a.spec } }) },
       { label: "Account", render: (a) => h("span", null, h("code", null, maskAccount(a.spec)), h("small", { class: "muted", style: "display:block" }, `${a.token_name} · ${(a.environment || "").toUpperCase()}`)) },

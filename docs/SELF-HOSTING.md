@@ -86,7 +86,7 @@ systemd the bridge shuts down cleanly after the pull and the service brings it b
 5. Point the DNS record of the old host name at the new server (or keep the new name and
    update the webhook URLs in TradingView). With the same host name nothing changes in
    TradingView, Discord or the marketplace subscriptions.
-6. Log in, check **Settings → Tradovate Accounts → Connect & Verify** for every login,
+6. Log in, check **Settings → Broker Accounts → Connect & Verify** for every login,
    then stop the Render service.
 
 If you forgot the secret: install without `--session-secret`, restore, and re-enter each

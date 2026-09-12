@@ -8,7 +8,7 @@ is right; field-level details are to be confirmed on a practice account.
 
 ## Setting up a login
 
-Settings → Tradovate Accounts → *Add login*, Broker **ProjectX (Topstep …)**:
+Settings → Broker Accounts → *Add login*, Broker **ProjectX (Topstep …)**:
 
 | Field | Value |
 |---|---|
