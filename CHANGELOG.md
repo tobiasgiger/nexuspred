@@ -4,6 +4,15 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.69
+- **Five fixes by andrasmining merged** (PRs #13–#17). A TS-Hunter entry whose trade id is
+  already tracked is skipped instead of overwriting the first position's stop tracking;
+  a set_sl_tp that could not place the protective orders reports `error` instead of "no
+  open position"; the bracket's remaining quantity follows the broker's stop modification
+  instead of preceding it; journal CSV exports neutralise spreadsheet formula prefixes;
+  a registration that loses the single-use invite race no longer leaves an orphaned
+  account behind (now combined with the enforced two-factor enrolment).
+
 ## 5.0.0-alpha.68
 - **Two-factor authentication.** New accounts (first-run setup and invite sign-up) must
   enrol with an authenticator app before they can use the dashboard: QR code / key,
