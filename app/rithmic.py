@@ -30,8 +30,8 @@ import zlib
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from . import alerts, config, context, risk, state
-from .tradovate import TradovateError, _fire
+from . import alerts, broker, config, context, risk, state
+from .tradovate import OrderOutcomeUnknown, TradovateError, _fire
 
 log = logging.getLogger(__name__)
 
@@ -61,14 +61,6 @@ _WORKING = {"OPEN", "WORKING", "PENDING", "OPEN PENDING", "MODIFY PENDING", "CAN
 _GONE = {"COMPLETE", "COMPLETED", "FILLED", "CANCELLED", "CANCELED", "REJECTED", "EXPIRED", "DELETED"}
 
 
-def _int_id(text: str) -> int:
-    """A stable positive int for a Rithmic string id (numeric strings stay numeric)."""
-    t = str(text or "").strip()
-    if t.isdigit() and len(t) < 18:
-        return int(t)
-    return (zlib.crc32(t.encode("utf-8")) & 0x7FFFFFFF) or 1
-
-
 def _root(symbol: str) -> str:
     s = str(symbol or "").upper()
     if len(s) >= 3 and s[-1].isdigit() and s[-2] in _MONTHS:          # one-digit year (MNQZ6)
@@ -89,13 +81,6 @@ def _rithmic_symbol(symbol: str) -> str:
 def exchange_for(symbol: str, overrides: Optional[dict[str, str]] = None) -> str:
     root = _root(symbol)
     return (overrides or {}).get(root) or EXCHANGES.get(root, "CME")
-
-
-def _num(v: Any, default: float = 0.0) -> float:
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return default
 
 
 def _rp_error(responses: Any) -> str:
@@ -136,15 +121,19 @@ def _disconnect_later(client: Any) -> None:
         except Exception:  # noqa: BLE001
             pass
     try:
-        from .tradovate import _fire
         _fire(run())
     except RuntimeError:                                # no running loop (tests, shutdown)
         pass
 
 
-class RithmicSession:
+_int_id = broker.int_id
+_num = broker.num
+
+
+class RithmicSession(broker.BrokerSessionBase):
     """One Rithmic login (see module docstring)."""
     kind = "rithmic"
+    fingerprint_of = staticmethod(lambda entry: _fingerprint(entry))
 
     def __init__(self, idx: int, entry: dict[str, Any], area_id: int | None = None) -> None:
         self.idx = idx
@@ -197,11 +186,6 @@ class RithmicSession:
             old, self._client = self._client, None          # next call logs in with the new credentials
             if old is not None:
                 _disconnect_later(old)                      # never leave the old sockets (and Rithmic's login count) behind
-
-    def _refresh_fingerprint(self) -> None:
-        entries = config.load_settings(area_id=self.area_id).get("token_accounts") or []
-        if 0 <= self.idx < len(entries):
-            self.fingerprint = _fingerprint(entries[self.idx])
 
     def has_token(self) -> bool:
         return bool(self.user and self.password)
@@ -262,15 +246,6 @@ class RithmicSession:
                 raise
             self._client = client
             return client
-
-    async def _set_connected(self, connected: bool, **fields: Any) -> None:
-        had_prior = state.has_session(self.name)
-        was = state.session_status(self.name).get("connected") if had_prior else None
-        state.set_session_status(self.name, connected=connected, agent_id=0, broker="rithmic", **fields)
-        if had_prior and was and not connected:
-            _fire(alerts.connection_lost(self.name, self.environment, fields.get("last_error", ""), broker=getattr(self, "kind", "tradovate")))
-        elif had_prior and not was and connected:
-            _fire(alerts.connection_restored(self.name, self.environment, broker=getattr(self, "kind", "tradovate")))
 
     def _merge_accounts(self, discovered: list[Any]) -> None:
         prev = {a["spec"]: a for a in self.accounts if a.get("spec")}
@@ -448,15 +423,6 @@ class RithmicSession:
         self._versions = {r["id"]: r["_version"] for r in out}
         return out
 
-    def _account_failed(self, spec: str, what: str, exc: Exception, failed: list[str]) -> None:
-        """One account's feed error (a closed eval account is common): reported
-        once per account, the other accounts of the login carry on."""
-        failed.append(f"{spec}: {exc}"[:200])
-        if spec not in self._acct_warned:
-            self._acct_warned.add(spec)
-            state.log_event("warn", f"[{self.name}] {what} of {spec} unavailable: {exc} — the other accounts of this login continue; "
-                                    f"run Connect & Verify to drop accounts the broker no longer lists")
-
     async def order_versions(self, order_ids: list[int]) -> dict[int, dict[str, Any]]:
         versions = getattr(self, "_versions", None)
         if versions is None or any(int(i) not in versions for i in order_ids):
@@ -544,15 +510,6 @@ class RithmicSession:
         raise NotImplementedError("Tradovate report endpoints are not available on a Rithmic login")
 
     # ------------------------------------------------------------ orders
-    def _risk_gate(self, spec: str, name: str, action: str, symbol: str, qty: int, order_type: str, price: Any, stop_price: Any, aid: int) -> None:
-        if risk.bypassed():
-            return
-        locked = risk.is_locked(self.area_id if self.area_id is not None else context.get_area(), spec)
-        if locked:
-            state.log_order({"action": action, "symbol": symbol, "account": name, "account_id": aid, "qty": qty, "order_type": order_type,
-                             "price": price, "stop_price": stop_price, "order_id": None, "status": "rejected", "raw": {"errorText": f"risk guard: {locked}"}})
-            raise TradovateError(f"{name} is locked by its risk guard for today ({locked})")
-
     async def place_order(self, *, symbol: str, action: str, qty: int, order_type: str,
                           price: float | None = None, stop_price: float | None = None,
                           account_spec: str | None = None, account_id: int | None = None,
@@ -592,7 +549,6 @@ class RithmicSession:
                              "price": sent_price, "stop_price": sent_stop, "order_id": None, "user_tag": tag, "status": "unknown",
                              "raw": {"errorText": "timeout"}})
             state.log_event("error", unknown)
-            from .tradovate import OrderOutcomeUnknown, _fire
             _fire(alerts.execution_problem(f"Order outcome unknown on {name}", unknown))
             raise OrderOutcomeUnknown(unknown) from None
         except Exception as exc:  # noqa: BLE001

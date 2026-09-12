@@ -512,7 +512,7 @@ its own. Who asks what:
 |---|---|---|
 | Live P&L (`app/pnl.py`) | positions ×1, cash snapshot per account **with a position** (flat accounts every 6th tick), risk record (cached 5 min) | `pnl_poll_seconds` (default 5 s) while a dashboard is open, trade alerts or a risk rule are on; else 60 s |
 | Health (`app/health.py`) | `/auth/me` ×1 | `health_check_interval` (60 s) |
-| Copy trading (`app/copy.py`) | positions ×1 (+ orders every 2nd poll) on the **leader** login | 10 s while the socket is synced, 2 s while it is down; slower after a 429 |
+| Copy trading (`app/copy/`) | positions ×1 (+ orders every 2nd poll) on the **leader** login | 10 s while the socket is synced, 2 s while it is down; slower after a 429 |
 | Journal import | fills / orders / cash per account | nightly + the Performance report |
 | Rollover | contract lookups | once a day |
 | Signals, risk guard, flatten | orders, cancels, liquidations | on demand |
@@ -978,7 +978,7 @@ app/tradovate.py        token sessions, per-account executors, diff-based Sessio
 app/http.py             pooled keep-alive httpx clients (tradovate / outbound)
 app/health.py           token-renewal + Discord health loops (all areas concurrently)
 app/config.py           per-area settings (deep-copied reads, atomic update(), webhook-token index)
-app/db.py / auth.py     SQLite (per-thread connection, cached auth lookups), signed-cookie sessions
+app/db/ / auth.py      SQLite package (core, users, areas, marketplace, history, copytrade, journal, agents, push, audit), signed-cookie sessions
 app/state.py            per-area rolling logs, session status and the live-stream bus
 app/discord_signals/    parser → pipeline → dispatcher (in-process for bridge webhooks) + listener
 templates/, static/     shell + auth templates; ES-module dashboard (no build step)

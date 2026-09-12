@@ -29,7 +29,7 @@ worst one.
 | Pooled HTTP clients (`app/http.py`) | Keep-alive to Tradovate / gateways; no TLS handshake per order. |
 | Per-login pacing with a **priority lane** for orders | Polls and health checks are spaced (0.2 s) so the broker never rate-limits; order / cancel / modify / liquidate calls use their own 60 ms lane and never queue behind a poll. |
 | Copy trading: poll cadence adapts | 2 s while the socket is down, 10 s while the socket is synced (socket = accelerator), order list every second poll, 429 → back-off with the broker's `p-time`. |
-| Copy trading: one leader snapshot per login (`app/leader_feed.py`) | Groups leading from accounts of the same login share the positions / orders snapshot: a group asking within 0.8 s reuses it, concurrent askers wait for the one request in flight (single-flight). N groups on one login cost one poll against its rate budget; rows are copied on the way out. |
+| Copy trading: one leader snapshot per login (`app/copy/feed.py`) | Groups leading from accounts of the same login share the positions / orders snapshot: a group asking within 0.8 s reuses it, concurrent askers wait for the one request in flight (single-flight). N groups on one login cost one poll against its rate budget; rows are copied on the way out. |
 | P&L poll: per-area parallel **with a per-area due time**, idle accounts every 6th tick, cached risk settings | One slow broker cannot hold the others; a workspace that is not due is skipped instead of polled at its neighbour's cadence; flat accounts cost nothing most ticks. |
 | Health loop: per-session schedule with back-off | Each login renews when *its* token nears expiry; a login with a bad token retries 60 → 600 s on its own and no longer drags every login into a renewal per minute. |
 | `/api/positions`, twin reconcile: one request per login | Accounts on the same login share one `/position/list` / `/order/list`; contract names are cached on the session. |
@@ -71,6 +71,7 @@ worst one.
 
 ```bash
 .venv2/bin/python scratchpad/bench_signal.py       # signals/s, load_settings per signal, per-caller attribution
+.venv2/bin/python -m pytest -q -n auto            # the whole suite in parallel (pytest-xdist; every test has its own SQLite file)
 .venv2/bin/python -m pytest -q tests/test_perf.py  # the guarantees above, as tests
 .venv2/bin/python -m pytest -q tests/test_copy.py  # the copy engine under a 10 ms poll
 ```

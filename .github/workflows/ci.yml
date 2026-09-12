@@ -39,7 +39,7 @@ jobs:
       - name: Tests
         env:
           PYTHONWARNINGS: error::DeprecationWarning
-        run: python -m pytest -q --junitxml=pytest.xml
+        run: python -m pytest -q -n auto --junitxml=pytest.xml
       - name: Publish test report
         if: always()
         uses: actions/upload-artifact@v7

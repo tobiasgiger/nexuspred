@@ -15,7 +15,7 @@ from typing import Any
 
 from .. import alerts, config, state
 from ..tradovate import TradovateError, _fire
-from .common import OrdersLeftWorking, _close_contract, _place_stop_with_retry, _price, _resize_stop, _signal_qty, _untrack_after_close, SignalError, _lock, _opposite
+from .common import _close_contract, _collect_entries, _lock, _opposite, OrdersLeftWorking, _place_stop_with_retry, _price, _resize_stop, _signal_qty, SignalError, _untrack_after_close
 from ..sizing import account_qty
 
 
@@ -74,18 +74,7 @@ async def handle_entry(payload, side, root, target, trade_id, executors, active_
 
     results = await asyncio.gather(*(place_for(ex) for ex in executors), return_exceptions=True)
 
-    orders: list[dict[str, Any]] = []
-    acct_state: dict[str, dict[str, Any]] = {}
-    summary: list[dict[str, Any]] = []
-    contract = target
-    for ex, res in zip(executors, results):
-        if isinstance(res, Exception):
-            state.log_event("error", f"{tag}TS-Hunter entry failed for {ex.name}: {res}")
-            continue
-        name, info, acc_orders, contract = res
-        acct_state[name] = info
-        orders.extend(acc_orders)
-        summary.append({"account": name, "qty": info["qty"]})
+    acct_state, orders, summary, contract = _collect_entries(executors, results, tag=tag, label="TS-Hunter entry", fallback_contract=target, qty_key="qty")
 
     if acct_state:
         with _lock:

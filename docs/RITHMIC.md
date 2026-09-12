@@ -33,7 +33,7 @@ only ever works against the paper system.
 
 What is **not** isolated:
 
-* `app/copy.py` and `app/copy_orders.py` call `session._request("GET", "/position/list")`,
+* `app/copy/group_runner.py` and `app/copy/orders.py` call `session._request("GET", "/position/list")`,
   `/order/list`, `/contract/item` and open Tradovate's user-sync WebSocket themselves
   (`_run_ws`, `_on_ws_message`) — 11 call sites in total.
 * `app/pnl.py`, `app/watch.py`, `app/journal.py` call `_request` for `cashBalanceSnapshot`,

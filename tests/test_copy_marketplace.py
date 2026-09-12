@@ -25,12 +25,12 @@ def worlds(monkeypatch, admin):
     exx = FakeExecutor("X1"); exx.session, exx.id = sub_login, 9
     mgrs = {1: Manager([leader, fol1], {"F1": ex1}), a2: Manager([sub_login], {"X1": exx})}
     monkeypatch.setattr(tradovate, "manager_for", lambda area_id: mgrs[area_id])
-    monkeypatch.setattr(cp, "POLL_INTERVAL_S", 0.01)
-    monkeypatch.setattr(cp, "POLL_WS_INTERVAL_S", 0.05)
-    monkeypatch.setattr(cp, "RECONCILE_INTERVAL_S", 3600)
-    monkeypatch.setattr(cp, "RECONNECT_BACKOFF_S", 0.02)
-    monkeypatch.setattr(cp, "POLL_ERROR_SLEEP_S", 0.02)
-    monkeypatch.setattr(cp, "ORDER_SETTLE_S", 0.0)
+    monkeypatch.setattr(cp.group_runner, "POLL_INTERVAL_S", 0.01)
+    monkeypatch.setattr(cp.group_runner, "POLL_WS_INTERVAL_S", 0.05)
+    monkeypatch.setattr(cp.group_runner, "RECONCILE_INTERVAL_S", 3600)
+    monkeypatch.setattr(cp.group_runner, "RECONNECT_BACKOFF_S", 0.02)
+    monkeypatch.setattr(cp.group_runner, "POLL_ERROR_SLEEP_S", 0.02)
+    monkeypatch.setattr(cp.group_runner, "ORDER_SETTLE_S", 0.0)
 
     async def no_ws(self, session, account_id):
         await self._stop.wait()

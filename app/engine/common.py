@@ -154,6 +154,27 @@ async def _resize_stop(ex: Any, info: dict[str, Any], qty: int, stop_price: Any)
     info["qty"] = qty
 
 
+def _collect_entries(executors: list[Any], results: list[Any], *, tag: str, label: str, fallback_contract: str,
+                     qty_key: str) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], str]:
+    """The common tail of every entry handler: split the per-account results
+    of ``place_for`` into the tracked accounts, the orders placed and the
+    summary; a failed account is logged and skipped. Returns
+    ``(acct_state, orders, summary, contract)``."""
+    orders: list[dict[str, Any]] = []
+    acct_state: dict[str, dict[str, Any]] = {}
+    summary: list[dict[str, Any]] = []
+    contract = fallback_contract
+    for ex, res in zip(executors, results):
+        if isinstance(res, Exception):
+            state.log_event("error", f"{tag}{label} failed for {ex.name}: {res}")
+            continue
+        name, info, acc_orders, contract = res
+        acct_state[name] = info
+        orders.extend(acc_orders)
+        summary.append({"account": name, "qty": info[qty_key]})
+    return acct_state, orders, summary, contract
+
+
 STOP_PENALTY_WAIT_S = 30.0        # the longest a protective stop waits for a 429 penalty before its retry
 
 

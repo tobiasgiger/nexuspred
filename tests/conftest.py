@@ -31,7 +31,7 @@ from app import pnl as pnl_mod  # noqa: E402
 from app import drawdown as drawdown_mod  # noqa: E402
 from app import news as news_mod  # noqa: E402
 from app import watchdog as watchdog_mod  # noqa: E402
-from app import leader_feed  # noqa: E402
+from app.copy import feed as leader_feed  # noqa: E402
 from app.discord_signals import hub, listener  # noqa: E402
 from app.main import app  # noqa: E402
 
@@ -49,8 +49,8 @@ def _reset_runtime() -> None:
     tests are independent. (A fresh file per test sidesteps Windows' refusal to
     delete a SQLite file while a not-yet-collected connection still holds it.)"""
     _counter["n"] += 1
-    db._initialized = False
-    db.DB_FILE = _DATA / f"test-{_counter['n']}.db"
+    db.mark_uninitialized()
+    db.set_db_file(_DATA / f"test-{_counter['n']}.db")
     db.reset_caches()
     auth._KEY = None
     crypto.reset()

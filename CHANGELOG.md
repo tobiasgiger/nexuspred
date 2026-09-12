@@ -4,6 +4,26 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.74
+Restructuring, no behaviour change (563 tests unchanged in outcome):
+- **`app/db.py` → `app/db/` package**: `core` (connection, schema and migrations, hot-path
+  caches, meta), `users` (passwords, two-factor, invites, resets), `areas`, `marketplace`
+  (subscriptions), `history`, `copytrade`, `journal`, `agents`, `push`, `audit`. The
+  facade re-exports every name, so callers keep writing `db.x`; reassigned state (init
+  flag, user count, area ids) is reached through functions (`mark_uninitialized`,
+  `set_db_file`, `user_count`, `all_area_ids`).
+- **`app/copy.py` → `app/copy/` package**: `groups` (records, validation, sizing,
+  marketplace views, follower lists), `group_runner` (feed, mirror, reconcile, watchdog),
+  `manager` (runner registry, sync, loop), `orders` (the order mirror), `feed` (the shared
+  leader snapshot). Facade as above.
+- **Broker base class** `app.broker.BrokerSessionBase`: connection-state bookkeeping with
+  the lost / restored alerts, settings fingerprint, risk gate and the once-per-account feed
+  warning shared by the ProjectX and Rithmic adapters (about 150 duplicated lines gone);
+  `broker.int_id` / `broker.num` shared. Tradovate keeps its own implementation.
+- **Engine**: one `_collect_entries` tail for the bracket, simple and TS-Hunter entries.
+- **Tests run in parallel**: `pytest -n auto` (pytest-xdist) in CI and the docs; every test
+  already had its own SQLite file.
+
 ## 5.0.0-alpha.73
 Fourth review pass (six independent read-only reviews, every finding verified against the
 code before a change): order path, broker adapters, copy engine, auth / database, journal /

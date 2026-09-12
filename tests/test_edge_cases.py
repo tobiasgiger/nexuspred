@@ -102,13 +102,13 @@ async def test_reconcile_skips_a_risk_locked_follower(admin):
                     return []
             return [S(), S()]
     import app.copy as cpm
-    orig = cpm.tradovate.manager_for
-    cpm.tradovate.manager_for = lambda area_id: Mgr()
+    orig = cpm.group_runner.tradovate.manager_for
+    cpm.group_runner.tradovate.manager_for = lambda area_id: Mgr()
     try:
         assert await r.reconcile() == 0                            # locked follower: no correction attempted
         assert all(a[1] == "/position/list" for a in called)      # only the read, no order
     finally:
-        cpm.tradovate.manager_for = orig
+        cpm.group_runner.tradovate.manager_for = orig
 
 
 async def test_cancel_fallback_leaves_unidentifiable_orders(admin):

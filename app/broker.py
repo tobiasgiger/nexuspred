@@ -95,3 +95,69 @@ class BrokerExecutor(Protocol):
     async def order_versions(self, order_ids: list[int]) -> dict[int, dict[str, Any]]: ...
     async def liquidate_position(self, symbol: str) -> dict[str, Any]: ...
     async def positions(self) -> list[dict[str, Any]]: ...
+
+
+# ------------------------------------------------------------- shared helpers
+def int_id(text: Any) -> int:
+    """A stable positive int for a broker's string id (numeric strings stay numeric)."""
+    import zlib
+    t = str(text or "").strip()
+    if t.isdigit() and len(t) < 18:
+        return int(t)
+    return (zlib.crc32(t.encode("utf-8")) & 0x7FFFFFFF) or 1
+
+
+def num(v: Any, default: Any = 0.0) -> Any:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
+class BrokerSessionBase:
+    """What every non-Tradovate adapter shares: the connection-state bookkeeping
+    (with the lost / restored alerts), the settings fingerprint, the risk gate
+    every order passes, and the once-per-account feed warning. A subclass sets
+    ``kind`` and ``fingerprint_of`` (the function that hashes its login entry)
+    and provides ``name``, ``environment``, ``idx``, ``area_id``,
+    ``_acct_warned``. Tradovate keeps its own implementation on purpose."""
+    kind = "broker"
+    fingerprint_of: Any = staticmethod(lambda entry: "")
+
+    async def _set_connected(self, connected: bool, **fields: Any) -> None:
+        from . import alerts, state
+        from .tradovate import _fire
+        had_prior = state.has_session(self.name)
+        was = state.session_status(self.name).get("connected") if had_prior else None
+        state.set_session_status(self.name, connected=connected, agent_id=0, broker=self.kind, **fields)
+        if had_prior and was and not connected:
+            _fire(alerts.connection_lost(self.name, self.environment, fields.get("last_error", ""), broker=self.kind))
+        elif had_prior and not was and connected:
+            _fire(alerts.connection_restored(self.name, self.environment, broker=self.kind))
+
+    def _refresh_fingerprint(self) -> None:
+        from . import config
+        entries = config.load_settings(area_id=self.area_id).get("token_accounts") or []
+        if 0 <= self.idx < len(entries):
+            self.fingerprint = type(self).fingerprint_of(entries[self.idx])
+
+    def _risk_gate(self, spec: str, name: str, action: str, symbol: str, qty: int, order_type: str, price: Any, stop_price: Any, aid: int) -> None:
+        from . import context, risk, state
+        from .tradovate import TradovateError
+        if risk.bypassed():
+            return
+        locked = risk.is_locked(self.area_id if self.area_id is not None else context.get_area(), spec)
+        if locked:
+            state.log_order({"action": action, "symbol": symbol, "account": name, "account_id": aid, "qty": qty, "order_type": order_type,
+                             "price": price, "stop_price": stop_price, "order_id": None, "status": "rejected", "raw": {"errorText": f"risk guard: {locked}"}})
+            raise TradovateError(f"{name} is locked by its risk guard for today ({locked})")
+
+    def _account_failed(self, spec: str, what: str, exc: Exception, failed: list[str]) -> None:
+        """One account's feed error (a closed eval account is common): reported
+        once per account, the other accounts of the login carry on."""
+        from . import state
+        failed.append(f"{spec}: {exc}"[:200])
+        if spec not in self._acct_warned:
+            self._acct_warned.add(spec)
+            state.log_event("warn", f"[{self.name}] {what} of {spec} unavailable: {exc} — the other accounts of this login continue; "
+                                    f"run Connect & Verify to drop accounts the firm no longer lists")

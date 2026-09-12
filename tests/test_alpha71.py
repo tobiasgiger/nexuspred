@@ -9,7 +9,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app import config, context, copy as cp, journal, leader_feed, projectx, rithmic, signals, trade_window as tw, tradovate
+from app import config, context, copy as cp, journal, projectx, rithmic, signals, trade_window as tw, tradovate
+from app.copy import feed as leader_feed
 
 ZH = ZoneInfo("Europe/Zurich")
 

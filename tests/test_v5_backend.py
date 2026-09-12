@@ -130,8 +130,8 @@ async def test_webhook_ingress_uses_index(client):
 def test_connection_is_reused_per_thread_and_follows_db_file(admin):
     c1 = db._connect()
     assert db._connect() is c1
-    db.DB_FILE = db.DB_FILE.with_name(db.DB_FILE.stem + "-b.db")
-    db._initialized = False
+    db.set_db_file(db.DB_FILE.with_name(db.DB_FILE.stem + "-b.db"))
+    db.mark_uninitialized()
     assert db._connect() is not c1
 
 
@@ -162,7 +162,7 @@ async def test_warm_request_path_needs_no_database(client, monkeypatch):
 
     def boom():
         raise AssertionError("request path must not touch SQLite once warm")
-    monkeypatch.setattr(db, "_connect", boom)
+    monkeypatch.setattr(db.core, "_connect", boom)                 # the connector every submodule calls
     r = await client.get("/api/status")
     assert r.status_code == 200 and r.json()["version"] == config.get_version()
     assert (await client.get("/api/settings")).status_code == 200

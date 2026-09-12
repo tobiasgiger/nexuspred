@@ -8,7 +8,7 @@ from typing import Any
 
 from .. import alerts, config, state
 from ..tradovate import _fire
-from .common import _lock, _price, _signal_qty, _trade_key
+from .common import _collect_entries, _lock, _price, _signal_qty, _trade_key
 from ..sizing import account_qty
 
 
@@ -39,18 +39,7 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
 
     results = await asyncio.gather(*(place_for(ex) for ex in executors), return_exceptions=True)
 
-    orders: list[dict[str, Any]] = []
-    acct_state: dict[str, dict[str, Any]] = {}
-    summary: list[dict[str, Any]] = []
-    contract = target
-    for ex, res in zip(executors, results):
-        if isinstance(res, Exception):
-            state.log_event("error", f"{tag}Entry failed for {ex.name}: {res}")
-            continue
-        name, info, acc_orders, contract = res
-        acct_state[name] = info
-        orders.extend(acc_orders)
-        summary.append({"account": name, "qty": info["qty"]})
+    acct_state, orders, summary, contract = _collect_entries(executors, results, tag=tag, label="Entry", fallback_contract=target, qty_key="qty")
 
     if acct_state:
         key = _trade_key(webhook["id"], root)

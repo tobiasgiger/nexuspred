@@ -29,11 +29,12 @@ import asyncio
 import time
 from typing import TYPE_CHECKING, Any, Optional
 
-from . import config, context, db, leader_feed
-from .tradovate import WORKING_STATUSES, RateLimited, TradovateError
+from .. import config, context, db
+from . import feed as leader_feed
+from ..tradovate import WORKING_STATUSES, RateLimited, TradovateError
 
 if TYPE_CHECKING:  # pragma: no cover
-    from .copy import GroupRunner
+    from .group_runner import GroupRunner
 
 WORKING = {"Working"}
 GONE = {"Filled", "Canceled", "Cancelled", "Rejected", "Expired", "Completed"}   # final: the twin goes
@@ -84,7 +85,7 @@ class OrderMirror:
     def twin_qty(self, f: dict[str, Any], order: dict[str, Any]) -> int:
         """Follower quantity for a leader order: the group's sizing rule applied
         proportionally (leader position when one exists, else the order itself)."""
-        from .copy import _round_half_up, target_qty
+        from .groups import _round_half_up, target_qty
         qty = int(order.get("qty") or 0)
         if qty <= 0:
             return 0

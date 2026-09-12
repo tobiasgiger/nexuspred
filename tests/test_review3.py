@@ -120,7 +120,7 @@ async def test_release_followers_cancels_their_twins(admin, monkeypatch):
     g.update({"enabled": True, "leader": {"token_idx": 0, "spec": "LEAD", "account_id": 1},
               "followers": [cp.normalize_follower({"token_idx": 1, "spec": "F1", "account_id": 2})]})
     r = cp.GroupRunner(1, g)
-    cp._runners[(1, g["id"])] = r
+    cp.manager._runners[(1, g["id"])] = r
     cancelled = []
 
     async def cancel_all(*, reason, spec=None, cid=None):
@@ -130,7 +130,7 @@ async def test_release_followers_cancels_their_twins(admin, monkeypatch):
     assert await cp.release_followers(1, g["id"], ["F1", ""]) == 2
     assert cancelled == [("follower left the group", "F1")]
     assert await cp.release_followers(1, "nope", ["F1"]) == 0
-    cp._runners.clear()
+    cp.manager._runners.clear()
 
 
 def test_publisher_rows_never_carry_the_subscribers_account_name(admin):

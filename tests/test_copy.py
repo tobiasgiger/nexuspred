@@ -81,12 +81,12 @@ def world(monkeypatch, admin):
     execs["F2"].session, execs["F2"].id = follower, 3
     mgr = Manager([leader, follower], execs)
     monkeypatch.setattr(tradovate, "manager_for", lambda area_id: mgr)
-    monkeypatch.setattr(cp, "POLL_INTERVAL_S", 0.01)
-    monkeypatch.setattr(cp, "POLL_WS_INTERVAL_S", 0.05)
-    monkeypatch.setattr(cp, "RECONCILE_INTERVAL_S", 3600)
-    monkeypatch.setattr(cp, "RECONNECT_BACKOFF_S", 0.02)
-    monkeypatch.setattr(cp, "POLL_ERROR_SLEEP_S", 0.02)
-    monkeypatch.setattr(cp, "ORDER_SETTLE_S", 0.0)          # reconcile right after an order (a dedicated test covers the hold-off)
+    monkeypatch.setattr(cp.group_runner, "POLL_INTERVAL_S", 0.01)
+    monkeypatch.setattr(cp.group_runner, "POLL_WS_INTERVAL_S", 0.05)
+    monkeypatch.setattr(cp.group_runner, "RECONCILE_INTERVAL_S", 3600)
+    monkeypatch.setattr(cp.group_runner, "RECONNECT_BACKOFF_S", 0.02)
+    monkeypatch.setattr(cp.group_runner, "POLL_ERROR_SLEEP_S", 0.02)
+    monkeypatch.setattr(cp.group_runner, "ORDER_SETTLE_S", 0.0)          # reconcile right after an order (a dedicated test covers the hold-off)
 
     async def no_ws(self, session, account_id):             # never open a real socket from the tests
         await self._stop.wait()
@@ -309,7 +309,7 @@ async def test_reconcile_corrects_follower_drift(world):
 
 
 async def test_feed_loss_flattens_followers_and_pauses(world, monkeypatch):
-    monkeypatch.setattr(cp, "FEED_STALE_S", 0.05)
+    monkeypatch.setattr(cp.group_runner, "FEED_STALE_S", 0.05)
     r = cp.GroupRunner(1, _group(feed_loss_flatten_s=5))
     r.start()
     try:
@@ -389,7 +389,7 @@ async def test_sync_area_starts_stops_and_restarts_runners(world):
 async def test_reconcile_waits_for_a_fresh_order_to_settle(world, monkeypatch):
     """A market order that just went out is not yet in the broker's position list:
     the reconcile must not read the stale snapshot as drift and double the order."""
-    monkeypatch.setattr(cp, "ORDER_SETTLE_S", 5.0)
+    monkeypatch.setattr(cp.group_runner, "ORDER_SETTLE_S", 5.0)
     r = cp.GroupRunner(1, _group())
     lead = world["leader"]
     await r._seed_followers()
@@ -453,7 +453,7 @@ async def test_flatten_uses_broker_truth_only_mirrored_contracts_and_enabled_fol
 
 
 async def test_watchdog_treats_a_throttle_as_no_feed_loss(world, monkeypatch):
-    monkeypatch.setattr(cp, "FEED_STALE_S", 0.05)
+    monkeypatch.setattr(cp.group_runner, "FEED_STALE_S", 0.05)
     r = cp.GroupRunner(1, _group(feed_loss_flatten_s=1))
     r.start()
     try:
@@ -656,7 +656,7 @@ async def test_socket_accelerates_but_never_counts_as_the_feed(world, monkeypatc
     fake_mod = types.SimpleNamespace(connect=lambda *a, **k: ws)
     monkeypatch.setitem(sys.modules, "websockets", fake_mod)
     monkeypatch.setattr(cp.GroupRunner, "_ws_accelerator", _REAL_WS_ACCELERATOR)   # this test drives the real socket loop
-    monkeypatch.setattr(cp, "RECONNECT_BACKOFF_S", 5.0)          # no reconnect during the test
+    monkeypatch.setattr(cp.group_runner, "RECONNECT_BACKOFF_S", 5.0)          # no reconnect during the test
     r = cp.GroupRunner(1, _group(feed="websocket"))
     r.start()
     try:
@@ -688,7 +688,7 @@ async def test_rate_limit_is_a_throttle_not_a_lost_feed(world, monkeypatch):
     r.start()
     try:
         assert await _wait(lambda: r.feed_ok)
-        base = cp.POLL_INTERVAL_S
+        base = cp.group_runner.POLL_INTERVAL_S
         orig = lead._request
 
         async def limited(method, path, **kw):
@@ -816,7 +816,7 @@ def test_a_follower_belongs_to_one_group_only():
 
 
 async def test_feed_loss_can_pause_without_flattening(world, monkeypatch):
-    monkeypatch.setattr(cp, "FEED_STALE_S", 0.05)
+    monkeypatch.setattr(cp.group_runner, "FEED_STALE_S", 0.05)
     r = cp.GroupRunner(1, _group(feed_loss_flatten_s=5, on_feed_loss="pause"))
     r.start()
     try:

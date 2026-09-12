@@ -37,7 +37,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from . import alerts, config, context, http, risk, state
+from . import alerts, broker, config, context, http, risk, state
 from .tradovate import OrderOutcomeUnknown, RateLimited, TradovateError, _fire
 
 SNAPSHOT_TTL_S = 3.0              # one Position/searchOpen and Account/search per login per P&L tick, not per account
@@ -76,20 +76,6 @@ TOKEN_TTL_S = 20 * 3600
 ET = ZoneInfo("America/New_York")
 
 
-def _int_id(text: str) -> int:
-    t = str(text or "").strip()
-    if t.isdigit() and len(t) < 18:
-        return int(t)
-    return (zlib.crc32(t.encode("utf-8")) & 0x7FFFFFFF) or 1
-
-
-def _num(v: Any, default: Any = 0.0) -> Any:
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return default
-
-
 def split_symbol(symbol: str) -> tuple[str, str, str]:
     """``MNQZ6`` / ``MNQZ26`` → (root, month letter, one-digit year); a bare root → (root, "", "")."""
     s = str(symbol or "").upper().replace("1!", "").strip()
@@ -118,9 +104,14 @@ def _fingerprint(entry: dict[str, Any]) -> str:
                       sort_keys=True, default=str)
 
 
-class ProjectXSession:
+_int_id = broker.int_id
+_num = broker.num
+
+
+class ProjectXSession(broker.BrokerSessionBase):
     """One ProjectX login (see module docstring)."""
     kind = "projectx"
+    fingerprint_of = staticmethod(lambda entry: _fingerprint(entry))
 
     def __init__(self, idx: int, entry: dict[str, Any], area_id: int | None = None) -> None:
         self.idx = idx
@@ -169,11 +160,6 @@ class ProjectXSession:
         user, key = str(entry.get("px_user") or ""), str(entry.get("px_api_key") or "")
         if (user, key) != (self.user, self.api_key):
             self.user, self.api_key, self._token = user, key, None
-
-    def _refresh_fingerprint(self) -> None:
-        entries = config.load_settings(area_id=self.area_id).get("token_accounts") or []
-        if 0 <= self.idx < len(entries):
-            self.fingerprint = _fingerprint(entries[self.idx])
 
     def has_token(self) -> bool:
         return bool(self.user and self.api_key)
@@ -239,15 +225,6 @@ class ProjectXSession:
         return data if isinstance(data, dict) else {"data": data}
 
     # ------------------------------------------------------------ connection
-    async def _set_connected(self, connected: bool, **fields: Any) -> None:
-        had_prior = state.has_session(self.name)
-        was = state.session_status(self.name).get("connected") if had_prior else None
-        state.set_session_status(self.name, connected=connected, agent_id=0, broker="projectx", **fields)
-        if had_prior and was and not connected:
-            _fire(alerts.connection_lost(self.name, self.environment, fields.get("last_error", ""), broker=getattr(self, "kind", "tradovate")))
-        elif had_prior and not was and connected:
-            _fire(alerts.connection_restored(self.name, self.environment, broker=getattr(self, "kind", "tradovate")))
-
     async def account_list(self) -> list[dict[str, Any]]:
         data = await self._post("/api/Account/search", {"onlyActiveAccounts": True})
         out = []
@@ -439,13 +416,6 @@ class ProjectXSession:
         rec = self._contracts.get(cid)
         return rec["name"] if rec else gateway_id
 
-    def _account_failed(self, spec: str, what: str, exc: Exception, failed: list[str]) -> None:
-        failed.append(f"{spec}: {exc}"[:200])
-        if spec not in self._acct_warned:
-            self._acct_warned.add(spec)
-            state.log_event("warn", f"[{self.name}] {what} of {spec} unavailable: {exc} — the other accounts of this login continue; "
-                                    f"run Connect & Verify to drop accounts the firm no longer lists")
-
     async def positions_snapshot(self, *, cached: bool = False) -> list[dict[str, Any]]:
         """The login's open positions. ``cached`` (the P&L tick, which asks once
         per account) reuses a snapshot a few seconds old; the copy engine's
@@ -579,15 +549,6 @@ class ProjectXSession:
         return []
 
     # ------------------------------------------------------------ orders
-    def _risk_gate(self, spec: str, name: str, action: str, symbol: str, qty: int, order_type: str, price: Any, stop_price: Any, aid: int) -> None:
-        if risk.bypassed():
-            return
-        locked = risk.is_locked(self.area_id if self.area_id is not None else context.get_area(), spec)
-        if locked:
-            state.log_order({"action": action, "symbol": symbol, "account": name, "account_id": aid, "qty": qty, "order_type": order_type,
-                             "price": price, "stop_price": stop_price, "order_id": None, "status": "rejected", "raw": {"errorText": f"risk guard: {locked}"}})
-            raise TradovateError(f"{name} is locked by its risk guard for today ({locked})")
-
     async def place_order(self, *, symbol: str, action: str, qty: int, order_type: str,
                           price: float | None = None, stop_price: float | None = None,
                           account_spec: str | None = None, account_id: int | None = None,
@@ -616,7 +577,6 @@ class ProjectXSession:
                              "order_type": order_type, "price": sent_price, "stop_price": sent_stop, "order_id": None,
                              "status": "unknown", "raw": {"errorText": "timeout"}})
             state.log_event("error", unknown)
-            from .tradovate import OrderOutcomeUnknown, _fire
             _fire(alerts.execution_problem(f"Order outcome unknown on {name}", unknown))
             raise OrderOutcomeUnknown(unknown) from None
         result = {"action": action, "symbol": str(symbol).upper(), "account": name, "account_id": aid, "qty": qty, "order_type": order_type,

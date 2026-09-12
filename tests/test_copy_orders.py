@@ -1,6 +1,8 @@
 """Copy trading stage 2 (app/copy_orders.py): twins of the leader's working orders."""
 from __future__ import annotations
 
+import time
+
 import asyncio
 
 import pytest
@@ -94,7 +96,7 @@ def world(monkeypatch, admin):
     ex.session, ex.id = fol, 2
     mgr = Manager([lead, fol], {"F1": ex})
     monkeypatch.setattr(tradovate, "manager_for", lambda area_id: mgr)
-    monkeypatch.setattr(cp, "ORDERS_EVERY_N", 1)     # every _poll_once reads the orders in these tests
+    monkeypatch.setattr(cp.group_runner, "ORDERS_EVERY_N", 1)     # every _poll_once reads the orders in these tests
     sent = []
 
     async def rec(*a, **k):
@@ -445,7 +447,7 @@ async def test_first_follower_seed_runs_on_a_freshly_booted_host(world, monkeypa
     lead.add_order(55, "Buy", 1, "Limit", price=21000.0)
     await r._poll_once(lead, 1)
     assert db.list_copy_twins(1, r.id)
-    monkeypatch.setattr(cp.time, "monotonic", lambda: 5.0)
+    monkeypatch.setattr(time, "monotonic", lambda: 5.0)
     r2 = cp.GroupRunner(1, {**r.group})
     await r2._seed_followers()
     assert set(r2.orders.twins) == {("F1", 55)}
