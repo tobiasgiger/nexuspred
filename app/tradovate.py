@@ -14,6 +14,8 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import httpx
+
 from . import alerts, broker, config, context, http, risk, sizing, state
 
 REQUEST_SPACING_S = 0.2   # minimum gap between two requests of one login (5/s)
@@ -141,6 +143,17 @@ def _fire(coro: Any) -> None:
     task = asyncio.get_running_loop().create_task(coro)
     _bg_tasks.add(task)
     task.add_done_callback(_bg_tasks.discard)
+
+
+def _outcome_unknown(name: str, path: str, detail: Any) -> OrderOutcomeUnknown:
+    """A priority mutation lost its answer after it may have reached Tradovate."""
+    msg = f"[{name}] {path}: {detail} — outcome unknown, CHECK THE ACCOUNT"
+    state.log_event("error", msg)
+    _fire(alerts.execution_problem(
+        f"Order outcome unknown on {name}",
+        f"{path}: {detail}. Check the account for an untracked position or order.",
+    ))
+    return OrderOutcomeUnknown(msg)
 
 
 class TradovateSession:
@@ -276,9 +289,7 @@ class TradovateSession:
                     area_id=self.area_id if self.area_id is not None else context.get_area())
             except relay.ResultUnknown as exc:
                 if path.startswith(PRIORITY_PATHS):
-                    state.log_event("error", f"[{self.name}] {path}: {exc} — CHECK THE ACCOUNT, the order may have gone through")
-                    _fire(alerts.execution_problem(f"Order outcome unknown on {self.name}",
-                                                   f"{path} via the execution agent: {exc}. Check the account for an untracked position or order."))
+                    raise _outcome_unknown(self.name, path, f"execution agent: {exc}") from exc
                 raise TradovateError(f"[{self.name}] {exc}") from exc
             except relay.AgentOffline as exc:
                 raise TradovateError(f"[{self.name}] {exc}") from exc
@@ -288,7 +299,12 @@ class TradovateSession:
                 raise TradovateError(f"{status} {path}: {text}")
             return json.loads(text) if text else None
         # Pooled, keep-alive client: no TLS handshake per order (see app.http).
-        resp = await http.client("tradovate").request(method, url, headers=headers, **kwargs)
+        try:
+            resp = await http.client("tradovate").request(method, url, headers=headers, **kwargs)
+        except httpx.TransportError as exc:
+            if path.startswith(PRIORITY_PATHS):
+                raise _outcome_unknown(self.name, path, exc) from exc
+            raise TradovateError(f"[{self.name}] {path}: {exc}") from exc
         if resp.status_code == 429:
             raise RateLimited(path, resp.text, _penalty_seconds(resp.text))
         if resp.status_code >= 400:
