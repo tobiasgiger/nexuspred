@@ -14,7 +14,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from . import config, db, http
+from . import config, db, http, security
 
 log = logging.getLogger("nexuspred.watchdog")
 
@@ -43,10 +43,20 @@ def normalize_interval(v: Any) -> int:
 
 
 async def ping(area_id: int, url: str) -> bool:
-    """One heartbeat; records the outcome. Never raises."""
+    """One heartbeat; records the outcome and never raises.
+
+    The destination is re-resolved and checked immediately before every request.
+    Save-time validation is not a security boundary: DNS may have changed since
+    configuration was stored. The shared httpx client does not follow redirects,
+    so a validated public URL cannot redirect this request onto an internal host.
+    """
     ok, error = False, ""
     try:
-        r = await http.client("outbound").get(url, headers={"User-Agent": "Fluxbridge/heartbeat"}, timeout=10.0)
+        problem = await asyncio.to_thread(security.check_outbound_url, url)
+        if problem:
+            raise ValueError(f"destination rejected at request time: {problem}")
+        r = await http.client("outbound").get(url, headers={"User-Agent": "Fluxbridge/heartbeat"},
+                                              timeout=10.0, follow_redirects=False)
         ok = r.status_code < 400
         if not ok:
             error = f"HTTP {r.status_code}"
@@ -75,14 +85,21 @@ async def tick_area(area_id: int, settings: Optional[dict[str, Any]] = None) -> 
     return float(interval)
 
 
+async def _tick_safe(area_id: int) -> None:
+    try:
+        await tick_area(area_id)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        log.warning("heartbeat tick failed for area %s: %s", area_id, exc)
+
+
 async def heartbeat_loop() -> None:
+    """Run tenant heartbeats concurrently so one slow endpoint cannot delay others."""
     while True:
         try:
-            for aid in db.all_area_ids():
-                try:
-                    await tick_area(aid)
-                except Exception as exc:  # noqa: BLE001
-                    log.warning("heartbeat tick failed for area %s: %s", aid, exc)
+            area_ids = db.all_area_ids()
+            await asyncio.gather(*(_tick_safe(aid) for aid in area_ids))
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - the loop must survive anything
