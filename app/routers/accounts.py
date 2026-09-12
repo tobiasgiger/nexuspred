@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
-from .. import broker, config, context, db, risk, state, tradovate
+from .. import broker, config, context, copy_bindings, db, risk, state, tradovate
 
 router = APIRouter(prefix="/api", tags=["accounts"])
 
@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api", tags=["accounts"])
 def trade_accounts_overview() -> list[dict[str, Any]]:
     """Flat list of every trade account across all logins, with execution toggle
     and live connection status — powers the Trade Accounts overview."""
-    out: list[dict[str, Any]] = []
+    out = []
     s = config.load_settings()
     for idx, t in enumerate(s.get("token_accounts") or []):
         tname = t.get("name") or f"account {idx + 1}"
@@ -39,7 +39,6 @@ def trade_accounts_overview() -> list[dict[str, Any]]:
     return out
 
 
-# =============================================================== Token accounts
 @router.get("/token-accounts")
 async def api_token_accounts() -> list[dict[str, Any]]:
     return config.public_settings().get("token_accounts", [])
@@ -47,17 +46,13 @@ async def api_token_accounts() -> list[dict[str, Any]]:
 
 @router.post("/token-accounts")
 async def api_save_token_accounts(request: Request) -> list[dict[str, Any]]:
-    """Save the per-account token list. Masked tokens ('********') keep the stored
-    value, so editing other fields doesn't wipe the tokens."""
+    """Save the per-account token list. Masked tokens keep the stored value."""
     incoming = await request.json()
     existing = config.load_settings().get("token_accounts") or []
     by_lid = {t.get("lid"): t for t in existing if t.get("lid")}
     claimed = {a.get("lid") for a in incoming if isinstance(a, dict) and a.get("lid")}
     cleaned: list[dict[str, Any]] = []
     for i, a in enumerate(incoming):
-        # A row names the login it edits by its stable id; a row without one is
-        # new — unless it comes from a client that never sent ids, in which case
-        # the old position match applies, but never onto a login another row claims.
         if a.get("lid") and a["lid"] in by_lid:
             prev = by_lid[a["lid"]]
         elif not a.get("lid") and i < len(existing) and existing[i].get("lid") not in claimed:
@@ -70,11 +65,7 @@ async def api_save_token_accounts(request: Request) -> list[dict[str, Any]]:
         pxk = a.get("px_api_key", "")
         brk_raw = str(a.get("broker") or prev.get("broker") or "").lower()
         brk = brk_raw if brk_raw in ("rithmic", "projectx") else "tradovate"
-        if prev and brk != (str(prev.get("broker") or "tradovate")):
-            # a login moved to another broker: its discovered accounts, ids and
-            # the old broker's credentials do not carry over (Connect & Verify
-            # rediscovers them); the Tradovate token must not stay stored under
-            # a Rithmic entry either
+        if prev and brk != str(prev.get("broker") or "tradovate"):
             prev = {k: v for k, v in prev.items() if k in ("name", "environment", "lid", "qty_multiplier")}
         cleaned.append({
             "name": (a.get("name") or f"account {i + 1}").strip(),
@@ -94,7 +85,7 @@ async def api_save_token_accounts(request: Request) -> list[dict[str, Any]]:
             "account_spec": a.get("account_spec") or prev.get("account_spec", ""),
             "account_id": a.get("account_id") or prev.get("account_id", 0),
             "token_expires": prev.get("token_expires", ""),
-            "agent_id": 0 if brk != "tradovate" else _own_agent(a.get("agent_id")),    # agents relay HTTP: Tradovate only
+            "agent_id": 0 if brk != "tradovate" else _own_agent(a.get("agent_id")),
             "accounts": prev.get("accounts") or [],
             "lid": prev.get("lid") or config._new_lid(),
         })
@@ -103,15 +94,13 @@ async def api_save_token_accounts(request: Request) -> list[dict[str, Any]]:
             raise HTTPException(status_code=400, detail=f"Login '{c['name']}': a live Rithmic login needs the system name (e.g. Apex, TopstepTrader, Rithmic 01)")
     config.save_settings({"token_accounts": cleaned})
     tradovate.manager().reload()
+    await copy_bindings.refresh(context.get_area())
     enabled = sum(1 for a in cleaned if a["enabled"])
     state.log_event("info", f"Token accounts updated — {enabled}/{len(cleaned)} enabled")
     return config.public_settings().get("token_accounts", [])
 
 
 def _own_agent(value: Any) -> int:
-    """An execution agent id is only accepted when the agent is paired with *this*
-    workspace — otherwise a user could route their orders (and Tradovate tokens)
-    through another tenant's VPS."""
     try:
         agent_id = int(value or 0)
     except (TypeError, ValueError):
@@ -123,16 +112,13 @@ def _own_agent(value: Any) -> int:
     return agent_id
 
 
-# =============================================================== Trade accounts
 @router.get("/trade-accounts")
 async def api_trade_accounts() -> list[dict[str, Any]]:
-    """Overview of every trade account under every login, with on/off toggles."""
     return trade_accounts_overview()
 
 
 @router.post("/trade-accounts")
 async def api_save_trade_accounts(request: Request) -> list[dict[str, Any]]:
-    """Save per-account execution toggles & qty multipliers (keyed by login + spec)."""
     incoming = await request.json()
     tokens = list(config.load_settings().get("token_accounts") or [])
     by_token: dict[int, dict[str, Any]] = {}
@@ -150,15 +136,14 @@ async def api_save_trade_accounts(request: Request) -> list[dict[str, Any]]:
         if not (0 <= idx < len(tokens)):
             continue
         t = dict(tokens[idx])
-        existing = {(a.get("spec") or a.get("account_spec") or ""): dict(a)
-                    for a in (t.get("accounts") or [])}
+        existing = {(a.get("spec") or a.get("account_spec") or ""): dict(a) for a in (t.get("accounts") or [])}
         for spec, u in updates.items():
             a = existing.get(spec, {"spec": spec, "id": u.get("id", 0)})
             a["spec"] = spec
             a["enabled"] = bool(u.get("enabled"))
             a["qty_multiplier"] = float(u.get("qty_multiplier", 1) or 1)
             if u.get("id") and not a.get("id"):
-                a["id"] = u["id"]                 # only for an account Connect & Verify has not seen yet
+                a["id"] = u["id"]
             if "risk" in u:
                 try:
                     a["risk"] = risk.normalize(u["risk"])
@@ -170,21 +155,19 @@ async def api_save_trade_accounts(request: Request) -> list[dict[str, Any]]:
 
     config.save_settings({"token_accounts": tokens})
     tradovate.manager().reload()
+    await copy_bindings.refresh(context.get_area())
     enabled = sum(1 for a in trade_accounts_overview() if a["enabled"])
     state.log_event("info", f"Trade-account toggles updated — {enabled} enabled for execution")
     return trade_accounts_overview()
 
 
-# ================================================================= Risk guard
 @router.get("/risk")
 async def api_risk() -> list[dict[str, Any]]:
-    """Every trade account's risk rules and today's lock."""
     return risk.overview(context.get_area())
 
 
 @router.post("/risk/unlock")
 async def api_risk_unlock(request: Request) -> dict[str, Any]:
-    """Clear an account's risk lock for today (the rules stay in place)."""
     body = await request.json()
     spec = str(body.get("spec") or "")
     if not spec:
