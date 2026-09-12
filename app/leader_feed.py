@@ -8,7 +8,12 @@ second against one rate budget. Here a runner asking within
 ``TTL_S`` of the last fetch gets the rows that fetch returned, and runners
 asking at the same moment wait for the in-flight request instead of starting
 their own (single-flight). Rows are copied on the way out; a runner never sees
-another runner's mutations."""
+another runner's mutations.
+
+The cache key includes the concrete session object identity as well as the
+stable login id. Replacing a broker session after credential/account changes
+therefore cannot inherit a snapshot fetched by the old session.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -34,7 +39,8 @@ _feeds: dict[str, _Feed] = {}
 
 
 def key_of(area_id: int, session: Any) -> str:
-    return f"{area_id}:{getattr(session, 'lid', '') or getattr(session, 'name', '') or id(session)}"
+    stable = getattr(session, "lid", "") or getattr(session, "name", "") or "session"
+    return f"{area_id}:{stable}:{id(session)}"
 
 
 def reset() -> None:
@@ -42,11 +48,7 @@ def reset() -> None:
 
 
 def drop(area_id: int, session: Any) -> None:
-    """Forget snapshots for a login whose broker session is being replaced.
-
-    Stable login ids deliberately survive credential/account edits, but data
-    fetched from the old session must not survive into the replacement session.
-    """
+    """Forget snapshots belonging to one concrete broker session."""
     _feeds.pop(key_of(area_id, session), None)
 
 
