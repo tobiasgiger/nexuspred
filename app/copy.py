@@ -33,7 +33,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from . import alerts, config, context, db, history, news, risk, state, tradovate
+from . import alerts, config, context, db, history, leader_feed, news, risk, state, tradovate
 from .copy_orders import OrderMirror
 from .engine.common import _base_root
 from .tradovate import AccountExecutor, RateLimited, TradovateError
@@ -914,11 +914,13 @@ class GroupRunner:
         self._poll_n += 1
         if self._poll_n % ORDERS_EVERY_N == 1 or ORDERS_EVERY_N == 1:
             await self.orders.poll(session, account_id)
-        raw = await session.positions_snapshot()
+        raw, shared = await leader_feed.snapshot(self.area_id, session, "positions")
+        if shared:
+            self.diag["feed_shared"] = int(self.diag.get("feed_shared") or 0) + 1
         self.last_frame = time.monotonic()
         seen: set[int] = set()
         changed = 0
-        for p in raw if isinstance(raw, list) else []:
+        for p in raw:
             if int(p.get("accountId") or 0) != account_id:
                 continue
             cid, net = int(p.get("contractId") or 0), int(p.get("netPos") or 0)
@@ -1279,6 +1281,7 @@ _runners: dict[tuple[int, str], GroupRunner] = {}
 
 def reset() -> None:
     _runners.clear()
+    leader_feed.reset()
 
 
 async def release_followers(publisher_area_id: int, group_id: str, specs: Any) -> int:

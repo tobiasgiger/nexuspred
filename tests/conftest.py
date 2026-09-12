@@ -31,6 +31,7 @@ from app import pnl as pnl_mod  # noqa: E402
 from app import drawdown as drawdown_mod  # noqa: E402
 from app import news as news_mod  # noqa: E402
 from app import watchdog as watchdog_mod  # noqa: E402
+from app import leader_feed  # noqa: E402
 from app.discord_signals import hub, listener  # noqa: E402
 from app.main import app  # noqa: E402
 
@@ -88,6 +89,9 @@ def fresh_env(monkeypatch):
     monkeypatch.setattr(listener.ListenerManager, "start", lambda self: None)
     # The SSRF guard resolves DNS; tests run offline (test_security covers it).
     monkeypatch.setattr(security, "check_outbound_url", lambda url: None)
+    # Copy tests poll every few ms and expect each poll to see the broker; the
+    # shared leader feed's reuse window is opted into by the tests that cover it.
+    monkeypatch.setattr(leader_feed, "TTL_S", 0.0)
     yield
     _reset_runtime()
 

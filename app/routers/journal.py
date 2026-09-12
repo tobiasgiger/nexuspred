@@ -132,7 +132,7 @@ async def api_dedupe() -> dict[str, Any]:
 
 @router.post("/import")
 async def api_import(request: Request) -> dict[str, Any]:
-    """Import fills / trades from every enabled Tradovate login now."""
+    """Import fills / trades from every enabled broker login (Tradovate, ProjectX, Rithmic) now."""
     user = getattr(request.state, "user", None) or {}
     rec = await journal.import_area(context.get_area(), trigger="manual", user_email=user.get("email", ""))
     if rec.get("status") == "running":

@@ -2,6 +2,16 @@
    Placeholders {name} must appear in both. A key missing here shows the English text;
    the key list is every t("…") in static/js (tests/test_i18n.py checks coverage). */
 export const DE = {
+  // trading window (webhook drawer)
+  "Mon": "Mo", "Tue": "Di", "Wed": "Mi", "Thu": "Do", "Fri": "Fr", "Sat": "Sa", "Sun": "So",
+  "From": "Von",
+  "To": "Bis",
+  "End before start = spans midnight (22:00 → 06:00).": "Ende vor Start = über Mitternacht (22:00 → 06:00).",
+  "Weekdays": "Wochentage",
+  "Timezone": "Zeitzone",
+  "Empty = the journal timezone (Settings → General).": "Leer = die Journal-Zeitzone (Einstellungen → Allgemein).",
+  "Trading window": "Handelsfenster",
+  "Entries (buy / sell, TS-Hunter signals) only run inside this local time range on these weekdays. Closes, stop moves and management signals always run — an open position is never trapped.": "Einstiege (buy / sell, TS-Hunter-Signale) laufen nur innerhalb dieses lokalen Zeitfensters an diesen Wochentagen. Schliessungen, Stop-Verschiebungen und Management-Signale laufen immer — eine offene Position bleibt nie gefangen.",
   // external watchdog + settings file
   "External watchdog": "Externer Watchdog",
   "The bridge pings a URL you monitor elsewhere (healthchecks.io, Uptime Kuma push monitor, cronitor …). That service alerts you when the pings stop — the one failure the bridge cannot report itself: process gone, host asleep, network down.": "Die Bridge pingt eine URL, die du anderswo überwachst (healthchecks.io, Uptime-Kuma-Push-Monitor, cronitor …). Dieser Dienst alarmiert dich, wenn die Pings ausbleiben — der eine Ausfall, den die Bridge selbst nicht melden kann: Prozess weg, Host eingeschlafen, Netz down.",
@@ -478,7 +488,7 @@ export const DE = {
   "Remove duplicate trades?": "Doppelte Trades entfernen?",
   "Trades with the same account, symbol, side, size, prices and exit time that were imported by more than one source are collapsed into one. Notes and tags are kept.": "Trades mit gleichem Konto, Symbol, Richtung, Grösse, Preisen und Ausstiegszeit, die von mehr als einer Quelle importiert wurden, werden zu einem zusammengefasst. Notizen und Tags bleiben erhalten.",
   "Remove duplicates": "Duplikate entfernen",
-  "No trades in this range — import from Tradovate or widen the range.": "Keine Trades in diesem Bereich — von Tradovate importieren oder den Bereich erweitern.",
+  "No trades in this range — import from your broker logins or widen the range.": "Keine Trades in diesem Zeitraum — importiere von deinen Broker-Logins oder erweitere den Zeitraum.",
   "Closed": "Geschlossen",
   "Side": "Richtung",
   "Qty": "Menge",
@@ -543,12 +553,12 @@ export const DE = {
   "Journal note": "Journal-Notiz",
   "Tags": "Tags",
   "Cancel": "Abbrechen",
-  "Executed trades imported from Tradovate logins (other brokers: CSV import) with realised P&L, fees and notes. Reporting per day, week and month; every chart has a table view.": "Ausgeführte Trades aus Tradovate-Logins (andere Broker: CSV-Import) mit realisiertem P&L, Gebühren und Notizen. Auswertung pro Tag, Woche und Monat; jedes Diagramm hat eine Tabellenansicht.",
+  "Executed trades imported from your broker logins (Tradovate, ProjectX, Rithmic) with realised P&L, fees and notes. Reporting per day, week and month; every chart has a table view.": "Ausgeführte Trades aus deinen Broker-Logins (Tradovate, ProjectX, Rithmic) mit realisiertem P&L, Gebühren und Notizen. Auswertung pro Tag, Woche und Monat; jedes Diagramm hat eine Tabellenansicht.",
   "Net result": "Nettoergebnis",
   "Trades": "Trades",
   "Click a trade to add a note and tags.": "Auf einen Trade klicken, um Notiz und Tags hinzuzufügen.",
   "Imports": "Importe",
-  "Every import reads today's session and walks the account's cash-balance log for past trades not yet journaled (\"From history\"). Runs daily after the CME close (Settings → General → Trading journal) or on demand with Import now; a Tradovate CSV export (Import CSV) remains available as a fallback.": "Jeder Import liest die heutige Session und durchsucht das Cash-Balance-Log des Kontos nach noch nicht journalisierten Trades («Aus Historie»). Läuft täglich nach dem CME-Schluss (Einstellungen → Allgemein → Trading-Journal) oder auf Wunsch mit «Jetzt importieren»; ein Tradovate-CSV-Export (CSV importieren) bleibt als Ausweichweg verfügbar.",
+  "Every import reads the fills of every enabled login: Tradovate's session plus its cash-balance log and reports for past trades (\"From history\"); ProjectX and Rithmic through their trade / fill history (up to a year on an account's first run, the last 7 days after that). Runs daily after the CME close (Settings → General → Trading journal) or on demand with Import now; a Tradovate CSV export (Import CSV) remains available as a fallback.": "Jeder Import liest die Fills jedes aktiven Logins: bei Tradovate die Session plus Cash-Balance-Log und Reports für vergangene Trades («Aus Historie»); bei ProjectX und Rithmic über deren Trade-/Fill-Historie (bis zu ein Jahr beim ersten Lauf eines Kontos, danach die letzten 7 Tage). Läuft täglich nach dem CME-Schluss (Einstellungen → Allgemein → Trading-Journal) oder auf Abruf mit «Jetzt importieren»; ein Tradovate-CSV-Export (CSV importieren) bleibt als Ausweichlösung verfügbar.",
   "Load older": "Ältere laden",
   "No older entries.": "Keine älteren Einträge.",
   "End of history.": "Ende der Historie.",

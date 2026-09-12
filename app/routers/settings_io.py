@@ -13,7 +13,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from .. import config, context, db, marketplace, news, sizing, state
+from .. import config, context, db, marketplace, news, sizing, state, trade_window
 from .core import validate_settings
 
 router = APIRouter(prefix="/api/settings", tags=["settings-io"])
@@ -77,6 +77,8 @@ def _import_webhook(w: dict[str, Any], current: dict[str, Any], area_id: int) ->
         wh["accounts"] = accounts
         if isinstance(w.get("sharing"), dict):
             wh["sharing"] = marketplace.normalize_sharing(w["sharing"])
+        if w.get("trade_window"):
+            wh["trade_window"] = trade_window.normalize(w["trade_window"])
     except (TypeError, ValueError, AttributeError) as exc:
         raise HTTPException(status_code=400, detail=f"Invalid webhook in file: {exc}") from exc
     return wh

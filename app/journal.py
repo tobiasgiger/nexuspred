@@ -710,10 +710,10 @@ async def import_area(area_id: int, *, trigger: str = "manual", user_email: str 
             mgr = tradovate.manager_for(area_id)
             sessions = [s for s in mgr.all() if s.enabled and s.has_token()]
             if not sessions:
-                errors.append("no enabled Tradovate login with a token")
+                errors.append("no enabled broker login with credentials")
             for s in sessions:
                 try:
-                    results.append(await import_session(area_id, s))
+                    results.append(await IMPORTERS.get(getattr(s, "kind", "tradovate"), import_session)(area_id, s))
                 except Exception as exc:  # noqa: BLE001 - one login failing must not stop the others
                     errors.append(f"{s.name}: {exc}")
             totals = {k: sum(r.get(k, 0) for r in results)
@@ -735,6 +735,197 @@ async def import_area(area_id: int, *, trigger: str = "manual", user_email: str 
                                         f"({totals['history_snapshots']} daily balances) from {len(results)} login(s)"
                                         + (f" — errors: {rec['error']}" if errors else ""))
         return rec
+
+
+# ------------------------------------------- other brokers (ProjectX, Rithmic)
+# Neither exposes Tradovate's fill pairs: their trade / fill history is read as
+# fills and paired FIFO per account + contract (the same pairing the Tradovate
+# importer falls back to). The first run of an account reaches
+# ``journal_history_days`` back, later runs re-read the last OTHER_OVERLAP_DAYS
+# (stored fills and trades are idempotent, so overlap is free).
+OTHER_OVERLAP_DAYS = 7
+OTHER_MAX_HISTORY_DAYS = 365
+
+
+def _lookback_days(area_id: int, account_id: int, settings: dict[str, Any]) -> int:
+    known = {int(a.get("account_id") or 0) for a in db.journal_accounts(area_id)}
+    if account_id in known:
+        return OTHER_OVERLAP_DAYS
+    try:
+        days = int(settings.get("journal_history_days") or 365)
+    except (TypeError, ValueError):
+        days = 365
+    return max(1, min(OTHER_MAX_HISTORY_DAYS, days))
+
+
+def _accounts_of(session: Any) -> dict[int, dict[str, Any]]:
+    out: dict[int, dict[str, Any]] = {}
+    for a in session.accounts:
+        if a.get("id") and a.get("enabled", True):
+            out[int(a["id"])] = {"id": int(a["id"]), "spec": str(a.get("spec") or ""),
+                                 "name": str(a.get("spec") or session.name), "environment": session.environment}
+    return out
+
+
+async def _import_fills(area_id: int, session: Any, accounts_by_id: dict[int, dict[str, Any]],
+                        fills: list[dict[str, Any]], fees: dict[int, dict[str, Any]],
+                        info: dict[int, tuple[str, float]], diag: dict[str, Any], *, today: Optional[date] = None) -> dict[str, Any]:
+    """Store broker-neutral fills, pair them FIFO, store the trades and today's
+    balance snapshot. A fill: ``id, orderId, contractId, timestamp, action
+    (Buy/Sell), qty, price, _accountId``; ``fees`` per fill id; ``info`` per
+    contract id → (symbol, value per point)."""
+    fills = [f for f in fills if f.get("id") is not None and f.get("_accountId") in accounts_by_id and int(_num(f.get("qty"))) > 0]
+    fills_new = 0
+    for f in fills:
+        sym, _vpp = info.get(int(f.get("contractId") or 0), (str(f.get("contractId")), 1.0))
+        fills_new += db.upsert_journal_fill(area_id, {
+            "fill_id": int(f["id"]), "order_id": int(f.get("orderId") or 0),
+            "account_id": int(f["_accountId"]), "contract_id": int(f.get("contractId") or 0),
+            "symbol": sym, "ts": _ts(f.get("timestamp")), "action": str(f.get("action") or ""),
+            "qty": int(_num(f.get("qty"))), "price": _num(f.get("price")),
+            "fees": fee_total(fees.get(int(f["id"]))),
+        })
+    trades: list[dict[str, Any]] = []
+    groups: dict[tuple[int, int], list[dict[str, Any]]] = defaultdict(list)
+    for f in fills:
+        groups[(int(f["_accountId"]), int(f.get("contractId") or 0))].append(f)
+    for (aid, cid), fs in groups.items():
+        acct = accounts_by_id[aid]
+        sym, vpp = info.get(cid, (str(cid), 1.0))
+        for m in fifo_pairs(fs):
+            trades.append(build_trade(
+                pair_id=f"fifo:{m['buy']['id']}:{m['sell']['id']}:{m['qty']}", buy=m["buy"], sell=m["sell"],
+                qty=m["qty"], buy_price=m["buy_price"], sell_price=m["sell_price"],
+                account=acct, symbol=sym, value_per_point=vpp, fees=fees, source="fifo"))
+    trades = [t for t in trades if t["qty"] > 0]
+    trades_new = sum(db.upsert_journal_trade(area_id, t) for t in trades if not db.find_similar_journal_trade(area_id, t))
+    day = today.isoformat() if isinstance(today, date) else datetime.now(tz()).date().isoformat()
+    snapshots = 0
+    for aid, acct in accounts_by_id.items():
+        try:
+            data = await session.cash_snapshot(aid)
+        except Exception as exc:  # noqa: BLE001 - a balance is a nicety, never a failed import
+            diag[f"snapshot {acct['spec']}"] = {"error": str(exc)[:200]}
+            continue
+        if isinstance(data, dict) and data:
+            db.upsert_journal_snapshot(area_id, {"account_id": aid, "account_spec": acct["spec"], "day": day,
+                                                 "total_cash": _num(data.get("totalCashValue")), "realized_pnl": _num(data.get("realizedPnL")),
+                                                 "open_pnl": _num(data.get("openPnL")), "week_realized_pnl": _num(data.get("weekRealizedPnL")),
+                                                 "total_pnl": _num(data.get("totalPnL"))})
+            snapshots += 1
+    diag["accounts"] = [{"id": a["id"], "spec": a["spec"]} for a in accounts_by_id.values()]
+    diag["fills_for_my_accounts"] = len(fills)
+    diag["pairs_resolved"] = len(trades)
+    return {"login": session.name, "accounts": len(accounts_by_id), "fills": len(fills), "fills_new": fills_new,
+            "trades": len(trades), "trades_new": trades_new, "snapshots": snapshots,
+            "history_pairs": 0, "history_new": 0, "history_snapshots": 0, "history_error": "", "diag": diag}
+
+
+def _side_fee(settings: dict[str, Any], qty: int) -> float:
+    return round(_num(settings.get("journal_fee_per_side"), 0.0) * max(0, qty), 4)
+
+
+async def import_projectx(area_id: int, session: Any, *, today: Optional[date] = None) -> dict[str, Any]:
+    """ProjectX (TopstepX, Bulenox, …): ``POST /api/Trade/search`` per account is
+    the fill list (each row one execution with size, price, side and fees)."""
+    from .projectx import _int_id
+    settings = config.load_settings(area_id=area_id)
+    accounts_by_id = _accounts_of(session)
+    diag: dict[str, Any] = {}
+    now = datetime.now(timezone.utc)
+    fills: list[dict[str, Any]] = []
+    fees: dict[int, dict[str, Any]] = {}
+    info: dict[int, tuple[str, float]] = {}
+    errors: list[str] = []
+    for aid, acct in accounts_by_id.items():
+        start = now - timedelta(days=_lookback_days(area_id, aid, settings))
+        try:
+            data = await session._post("/api/Trade/search", {"accountId": aid, "startTimestamp": start.isoformat()})
+        except Exception as exc:  # noqa: BLE001 - one account failing must not stop the others
+            errors.append(f"{acct['spec']}: {exc}")
+            diag[f"Trade/search {acct['spec']}"] = {"error": str(exc)[:300]}
+            continue
+        rows = [t for t in (data.get("trades") or []) if isinstance(t, dict)] if isinstance(data, dict) else []
+        diag[f"Trade/search {acct['spec']}"] = {"count": len(rows), "columns": sorted(rows[0].keys())[:40] if rows else [], "since": start.date().isoformat()}
+        for t in rows:
+            if t.get("voided") or t.get("id") is None:
+                continue
+            gid = str(t.get("contractId") or "")
+            if not gid:
+                continue
+            cid = _int_id(gid)
+            if cid not in info:
+                name = await session._contract_name(gid)
+                ci = await session.contract_info(cid)
+                sym = str(ci.get("name") or name or gid).upper()
+                tick_size, tick_value = _num(ci.get("tickSize"), 0.0), _num(ci.get("tickValue"), 0.0)
+                vpp = round(tick_value / tick_size, 6) if tick_size > 0 and tick_value > 0 else value_per_point(_root(sym))
+                info[cid] = (sym, vpp)
+            fid = _int_id(str(t["id"]))
+            qty = int(_num(t.get("size")))
+            fills.append({"id": fid, "orderId": _int_id(str(t.get("orderId") or 0)), "contractId": cid,
+                          "timestamp": _ts(t.get("creationTimestamp")), "action": "Buy" if int(_num(t.get("side"), 0)) == 0 else "Sell",
+                          "qty": qty, "price": _num(t.get("price")), "_accountId": aid})
+            fee = _num(t.get("fees"), 0.0)
+            fees[fid] = {"commission": round(abs(fee), 4) if fee else _side_fee(settings, qty)}
+    if errors and len(errors) == len(accounts_by_id) and accounts_by_id:
+        raise ImportProblem("; ".join(errors))
+    out = await _import_fills(area_id, session, accounts_by_id, fills, fees, info, diag, today=today)
+    if errors:
+        out["history_error"] = "; ".join(errors)[:500]
+    return out
+
+
+async def import_rithmic(area_id: int, session: Any, *, today: Optional[date] = None) -> dict[str, Any]:
+    """Rithmic: the order plant's fill history (``RequestShowFillHistory``) per
+    account. Rithmic reports no fees — ``journal_fee_per_side`` applies."""
+    from .rithmic import _int_id, _root as _rroot
+    settings = config.load_settings(area_id=area_id)
+    accounts_by_id = _accounts_of(session)
+    diag: dict[str, Any] = {}
+    now = datetime.now(timezone.utc)
+    client = await session._ensure()
+    fills: list[dict[str, Any]] = []
+    fees: dict[int, dict[str, Any]] = {}
+    info: dict[int, tuple[str, float]] = {}
+    errors: list[str] = []
+    for aid, acct in accounts_by_id.items():
+        start = now - timedelta(days=_lookback_days(area_id, aid, settings))
+        try:
+            rows = await client.get_fill_history(start, now, account_id=acct["spec"])
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{acct['spec']}: {exc}")
+            diag[f"fill history {acct['spec']}"] = {"error": str(exc)[:300]}
+            continue
+        rows = list(rows or [])
+        diag[f"fill history {acct['spec']}"] = {"count": len(rows), "since": start.date().isoformat()}
+        for r in rows:
+            sym = str(getattr(r, "symbol", "") or "").upper()
+            qty = int(_num(getattr(r, "fill_size", 0)))
+            if not sym or qty <= 0:
+                continue
+            exch = str(getattr(r, "exchange", "") or "") or None
+            cid = session._cid(sym, exch)
+            info.setdefault(cid, (sym, value_per_point(_rroot(sym))))
+            tt = str(getattr(r, "transaction_type", "") or "")
+            action = "Buy" if tt in ("1", "BUY") or "BUY" in tt.upper() else "Sell"
+            ssboe, usecs = int(_num(getattr(r, "ssboe", 0))), int(_num(getattr(r, "usecs", 0)))
+            ts = datetime.fromtimestamp(ssboe + usecs / 1e6, tz=timezone.utc).isoformat() if ssboe else _ts(getattr(r, "fill_time", ""))
+            raw_id = str(getattr(r, "fill_id", "") or "") or f"{acct['spec']}:{getattr(r, 'basket_id', '')}:{ssboe}:{usecs}"
+            fid = _int_id(raw_id)
+            fills.append({"id": fid, "orderId": _int_id(str(getattr(r, "basket_id", "") or 0)), "contractId": cid,
+                          "timestamp": ts, "action": action, "qty": qty,
+                          "price": _num(getattr(r, "fill_price", None), _num(getattr(r, "price", 0))), "_accountId": aid})
+            fees[fid] = {"commission": _side_fee(settings, qty)}
+    if errors and len(errors) == len(accounts_by_id) and accounts_by_id:
+        raise ImportProblem("; ".join(errors))
+    out = await _import_fills(area_id, session, accounts_by_id, fills, fees, info, diag, today=today)
+    if errors:
+        out["history_error"] = "; ".join(errors)[:500]
+    return out
+
+
+IMPORTERS = {"tradovate": import_session, "projectx": import_projectx, "rithmic": import_rithmic}
 
 
 # --------------------------------------------------------------- scheduler

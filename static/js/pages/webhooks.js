@@ -45,6 +45,28 @@ function webhookDrawer(wh, { navigate }) {
   const tpQty = h("input", { type: "number", min: 1, value: w.tp_qty ?? 1 });
   const defQtyField = h("div", { class: "field" }, h("label", null, t("Default qty")), defQty, h("div", { class: "field-hint" }, t("Fallback when the alert payload omits qty/contracts.")));
   const tpQtyField = h("div", { class: "field" }, h("label", null, t("Contracts per take-profit")), tpQty, h("div", { class: "field-hint" }, t("Bracket only: size of each TP limit order.")));
+  // --- Trading window (entries only)
+  const DAY_LABELS = [["mon", t("Mon")], ["tue", t("Tue")], ["wed", t("Wed")], ["thu", t("Thu")], ["fri", t("Fri")], ["sat", t("Sat")], ["sun", t("Sun")]];
+  const tw = { enabled: false, from: "08:00", to: "17:00", tz: "", days: ["mon", "tue", "wed", "thu", "fri"], ...(w.trade_window || {}) };
+  const twOn = h("input", { type: "checkbox", class: "switch", checked: !!tw.enabled });
+  const twFrom = h("input", { type: "time", value: tw.from, style: "width:120px" });
+  const twTo = h("input", { type: "time", value: tw.to, style: "width:120px" });
+  const twTz = h("input", { type: "text", value: tw.tz || "", placeholder: (store.get("settings") || {}).journal_timezone || "Europe/Zurich", style: "width:200px", list: "tw-tz-list" });
+  const twDays = h("div", { class: "check-list", style: "display:flex;flex-direction:row;flex-wrap:wrap;gap:6px 14px;max-height:none" },
+    DAY_LABELS.map(([k, label]) => h("label", { class: "check-item" }, h("input", { type: "checkbox", class: "tw-day", value: k, checked: tw.days.includes(k) }), " ", label)));
+  const twBody = h("div", { class: "grid grid-2", style: "margin-top:10px" },
+    h("div", { class: "field" }, h("label", null, t("From")), twFrom),
+    h("div", { class: "field" }, h("label", null, t("To")), twTo, h("div", { class: "field-hint" }, t("End before start = spans midnight (22:00 → 06:00)."))),
+    h("div", { class: "field" }, h("label", null, t("Weekdays")), twDays),
+    h("div", { class: "field" }, h("label", null, t("Timezone")), twTz, h("datalist", { id: "tw-tz-list" }, ["Europe/Zurich", "Europe/London", "America/New_York", "America/Chicago", "UTC"].map((z) => h("option", { value: z }))),
+      h("div", { class: "field-hint" }, t("Empty = the journal timezone (Settings → General)."))));
+  const syncWindow = () => twBody.classList.toggle("hidden", !twOn.checked);
+  twOn.addEventListener("change", syncWindow); syncWindow();
+  const windowBlock = h("div", { style: "margin-top:16px" },
+    h("label", { class: "switch-row" }, h("span", null, t("Trading window"), h("small", null, t("Entries (buy / sell, TS-Hunter signals) only run inside this local time range on these weekdays. Closes, stop moves and management signals always run — an open position is never trapped."))), twOn),
+    twBody);
+  const collectWindow = () => ({ enabled: twOn.checked, from: twFrom.value || "08:00", to: twTo.value || "17:00", tz: twTz.value.trim(),
+    days: [...twDays.querySelectorAll(".tw-day")].filter((c) => c.checked).map((c) => c.value) });
   const STRATEGY_BLURB = {
     simple: t("executes buy/sell for the qty in the alert, no TP/SL. close_all flattens the tracked position."),
     bracket: t("market entry + TP1/TP2/TP3 limits + protective stop from the alert; move_sl / trail_active manage the stop."),
@@ -190,7 +212,7 @@ function webhookDrawer(wh, { navigate }) {
         h("div", { class: "field" }, h("label", null, t("Name")), nameInp),
         h("div", { class: "field" }, h("label", null, t("Strategy")), stratSel),
         defQtyField, tpQtyField),
-      blurb),
+      blurb, windowBlock),
     accounts: h("div", null,
       h("p", { class: "hint" }, t("Every routed account receives each signal in parallel. Sizing per account — Same: the contracts the signal carries, 1:1. Multiplier: signal × factor (rounded half up, never below 1). Fixed: always this many contracts for the entry; bracket take-profit slices scale proportionally. Max caps the result (0 = no cap).")),
       accTable.el),
@@ -247,6 +269,7 @@ function webhookDrawer(wh, { navigate }) {
       const updated = await saveWebhook(w.id, {
         name: nameInp.value.trim() || "Untitled", enabled: enabledSw.checked, strategy: stratSel.value,
         default_qty: Number(defQty.value) || 1, tp_qty: Number(tpQty.value) || 1, accounts: collectAccounts(),
+        trade_window: collectWindow(),
       });
       w = { ...w, ...updated };
       drawer.setTitle(w.name);

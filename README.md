@@ -173,7 +173,7 @@ a Windows VPS are in `agent/README.md`.
 
 ### Trading journal
 
-The **Journal** page turns your Tradovate fills into a P&L journal. Once a day after the
+The **Journal** page turns your broker fills into a P&L journal. Once a day after the
 CME close (default **23:30 Europe/Zurich**, configurable under Settings → General →
 *Trading journal*) — and whenever you press **Import now** — the bridge reads, per
 enabled login, the session's fills, Tradovate's fill pairs (entry ↔ exit), fees, the
@@ -195,6 +195,16 @@ only what is new. Rows are keyed by their fill ids, so a trade that also arrived
 the session import is never duplicated. Reports carry no fees; set *Fee per contract per
 side* to have them applied. A CSV export can still be loaded with **Import CSV**. Trades
 placed through the simulator are not journaled (they never reach Tradovate).
+
+**ProjectX and Rithmic logins** are imported by the same run. Neither exposes Tradovate's
+fill pairs, so their executions are read as fills and paired first-in-first-out per
+account and contract (the pairing the Tradovate importer also falls back to): ProjectX
+through `Trade/search` per account (each row one execution with size, price, side and the
+broker's fees), Rithmic through the order plant's fill history (no fees reported — *Fee
+per contract per side* applies). An account's first run reaches back *History to import
+(days)* (at most a year), later runs re-read the last 7 days; stored fills and trades
+are idempotent, so overlap never duplicates. Contract value per point comes from the
+ProjectX tick size / tick value, for Rithmic from the built-in table by product root.
 
 ### Security hardening (built in)
 
@@ -260,6 +270,18 @@ alert's **Webhook URL** to the token shown on its card:
 ```
 http://YOUR_HOST:9000/webhook/YOUR_TOKEN
 ```
+
+### Trading window (per webhook)
+
+Each webhook can carry a **trading window** (drawer → General): a local time range and
+a set of weekdays inside which *entries* run — `buy` / `sell` and TS-Hunter `signal`
+events. Outside it the entry is answered with `skipped` / `trade_window` and logged
+(with the window and the current local time), while `close_all`, `set_sl_tp`, `move_sl`,
+`trail_active` and TS-Hunter management events always run — the window closes the door
+for new risk, it never traps an open position. An end before the start spans midnight
+(22:00 → 06:00: the weekday check applies to the evening the window opens on); an empty
+timezone follows the journal timezone. The simulator ignores the window. The window
+travels in the settings export.
 
 ### `simple` strategy webhooks
 
@@ -684,6 +706,10 @@ leader places by hand in the Tradovate UI, stop / target fills and manual closes
   the 10-second **reconcile**, which compares the followers' broker positions with the
   expected ones and fixes drift (the event log shows `drift`).
 - **Feed**: the leader's orders and positions are read over REST **once a second** —
+  one read per *login*, not per group: groups leading from accounts of the same login
+  share each snapshot (a group asking within 0.8 s reuses it, groups asking at the same
+  moment wait for the one request in flight), so three groups on one login cost one
+  poll against its rate budget; `feed_shared` in the group's diagnostics counts the reuse —
   through the execution agent where the login uses one — and that poll alone decides
   whether the feed is up. Where possible (*Feed: Auto* / *WebSocket*, direct logins)
   Tradovate's WebSocket **user sync** runs beside it as an accelerator: its position events
@@ -865,7 +891,7 @@ the dashboard **Update** button works.
 | `GET`  | `/api/journal/calendar` | Daily net P&L for a month (`month=YYYY-MM`) |
 | `GET`  | `/api/journal/trades` | Imported round-trip trades (filters as above, `limit`, `before`) |
 | `PUT`  | `/api/journal/trades/{id}` | Set a trade's `note` / `tags` |
-| `POST` | `/api/journal/import` | Import fills / trades / snapshots from Tradovate now |
+| `POST` | `/api/journal/import` | Import fills / trades / snapshots from every enabled login (Tradovate, ProjectX, Rithmic) now |
 | `POST` | `/api/journal/import-csv` | Back-fill from a Tradovate Performance / Orders / Fills CSV export (multipart `file`, `account`, `timezone`, `fee_per_side`) |
 | `GET`  | `/api/journal/imports` | Import history |
 | `GET`  | `/api/journal/snapshots` | Daily account cash / P&L snapshots |
@@ -885,7 +911,7 @@ the dashboard **Update** button works.
 | `GET/POST` | `/api/trade-accounts` | Overview / save per-account execution on-off & multipliers |
 | `GET`  | `/api/health` | Check every connection (renews tokens if needed) |
 | `GET/POST` | `/api/webhooks` | List all webhooks / create one |
-| `PUT/DELETE` | `/api/webhooks/{id}` | Update / delete a webhook (name, strategy, qty, accounts) |
+| `PUT/DELETE` | `/api/webhooks/{id}` | Update / delete a webhook (name, strategy, qty, accounts, `trade_window`) |
 | `POST` | `/api/webhooks/{id}/regenerate-token` | Rotate a webhook's secret token |
 | `POST` | `/api/webhooks/{id}/test` | Run a payload through the pipeline for this webhook (`?subscribers=true` also forwards it) |
 | `PUT`  | `/api/webhooks/{id}/sharing` | Publish / unpublish on the marketplace (admin): title, description, visibility, allowed users |

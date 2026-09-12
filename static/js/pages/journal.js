@@ -71,7 +71,7 @@ export default {
     const byAccount = h("div"), byAccountTable = h("div");
 
     // ---- trades table --------------------------------------------------
-    const trades = dataTable({ empty: t("No trades in this range — import from Tradovate or widen the range."), compact: true,
+    const trades = dataTable({ empty: t("No trades in this range — import from your broker logins or widen the range."), compact: true,
       onRow: (tr) => openTrade(t),
       columns: [
         { label: t("Closed"), render: (tr) => fmtDateTime(tr.exit_ts) },
@@ -305,7 +305,7 @@ export default {
     }
 
     root.append(
-      pageHead(t("Journal"), t("Executed trades imported from Tradovate logins (other brokers: CSV import) with realised P&L, fees and notes. Reporting per day, week and month; every chart has a table view."), [
+      pageHead(t("Journal"), t("Executed trades imported from your broker logins (Tradovate, ProjectX, Rithmic) with realised P&L, fees and notes. Reporting per day, week and month; every chart has a table view."), [
         exportLink, dedupeBtn, csvBtn, importBtn,
       ]),
       h("div", { class: "journal-toolbar" }, rangeSel, periodSel, accountSel, symbolSel, sideSel, h("span", { class: "spacer" }), importInfo),
@@ -324,7 +324,7 @@ export default {
         vizCard("By weekday", null, byWeekday, byWeekdayTable),
         vizCard(`By hour of day`, "Exit time, journal timezone.", byHour, byHourTable)),
       card({ title: t("Trades"), hint: t("Click a trade to add a note and tags.") }, trades.el, h("div", { class: "form-actions", style: "margin-top:8px" }, moreBtn)),
-      card({ title: t("Imports"), hint: t("Every import reads today's session and walks the account's cash-balance log for past trades not yet journaled (\"From history\"). Runs daily after the CME close (Settings → General → Trading journal) or on demand with Import now; a Tradovate CSV export (Import CSV) remains available as a fallback.") }, imports.el),
+      card({ title: t("Imports"), hint: t("Every import reads the fills of every enabled login: Tradovate's session plus its cash-balance log and reports for past trades (\"From history\"); ProjectX and Rithmic through their trade / fill history (up to a year on an account's first run, the last 7 days after that). Runs daily after the CME close (Settings → General → Trading journal) or on demand with Import now; a Tradovate CSV export (Import CSV) remains available as a fallback.") }, imports.el),
     );
     load();
     return () => { closeDrawer(); };

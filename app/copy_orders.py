@@ -29,7 +29,7 @@ import asyncio
 import time
 from typing import TYPE_CHECKING, Any, Optional
 
-from . import config, context, db
+from . import config, context, db, leader_feed
 from .tradovate import WORKING_STATUSES, RateLimited, TradovateError
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -170,8 +170,8 @@ class OrderMirror:
     async def snapshot(self, session: Any, account_id: int) -> tuple[dict[int, dict[str, Any]], dict[int, str]]:
         """The leader's working orders with their latest version, plus the status
         of every order of the account (working, in transition or final)."""
-        raw = await session.orders_snapshot()
-        mine = [o for o in raw if isinstance(o, dict) and int(o.get("accountId") or 0) == account_id and o.get("id")]
+        raw, _shared = await leader_feed.snapshot(self.r.area_id, session, "orders")
+        mine = [o for o in raw if int(o.get("accountId") or 0) == account_id and o.get("id")]
         statuses = {int(o["id"]): str(o.get("ordStatus") or "") for o in mine}
         orders = [o for o in mine if statuses[int(o["id"])] in WORKING]
         if not orders:

@@ -4,6 +4,22 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.71
+- **Trading window per webhook.** Drawer → General: a local time range and weekdays
+  inside which entries (`buy` / `sell`, TS-Hunter `signal`) run; outside they are answered
+  `skipped` / `trade_window` and logged. Closes, stop moves and management events always
+  run. End before start spans midnight, an empty timezone follows the journal timezone,
+  the simulator ignores it, the setting travels in the settings export.
+- **Shared leader feed.** Copy groups leading from accounts of the same login share one
+  REST snapshot of positions and orders (0.8 s reuse, single-flight for concurrent
+  askers): three groups on one login cost one poll against its rate budget. The group
+  diagnostics count the reuse (`feed_shared`).
+- **Journal import for ProjectX and Rithmic.** The daily / manual import now covers every
+  enabled login: ProjectX executions from `Trade/search` (with the broker's fees), Rithmic
+  fills from the order plant's fill history (fee per side applies), both paired FIFO per
+  account and contract; a year back on an account's first run, the last 7 days after.
+  Journal texts are broker-neutral.
+
 ## 5.0.0-alpha.70
 - **Alerts in German.** Discord messages, email subjects and bodies, push titles and the
   daily summary follow the workspace language: the forced setting under Display → Language,

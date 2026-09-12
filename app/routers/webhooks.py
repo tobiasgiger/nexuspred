@@ -8,7 +8,7 @@ from typing import Any, Callable
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from .. import config, context, db, marketplace, signals, sizing, state
+from .. import config, context, db, marketplace, signals, sizing, state, trade_window
 from ..tradovate import TradovateError
 from ..web import require_admin
 
@@ -153,6 +153,8 @@ def _apply_webhook_edit(webhooks: list[dict[str, Any]], i: int, body: dict[str, 
             wh["tp_qty"] = max(1, int(body["tp_qty"] or 1))
         if "accounts" in body:
             wh["accounts"] = [_routed_account(a) for a in body["accounts"] if a.get("spec") and a.get("token_idx") is not None]
+        if "trade_window" in body:
+            wh["trade_window"] = trade_window.normalize(body["trade_window"])
     except (TypeError, ValueError, KeyError, AttributeError) as exc:
         raise HTTPException(status_code=400, detail=f"Invalid webhook payload: {exc}") from exc
     webhooks[i] = wh
