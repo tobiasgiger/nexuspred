@@ -95,6 +95,33 @@ first if the direction is wanted.
 
 ## 5. Status
 
+**Adapter built (alpha.58), untested against a real Rithmic system.** `app/rithmic.py`
+implements `BrokerSession` on top of the `async_rithmic` library (Protocol Buffers, plants,
+reconnects); `token_accounts[i].broker = "rithmic"` with user, password, system name and
+gateway; the Accounts page has a broker selector. Positions, working orders with versions,
+cash snapshot, RMS rules, front-month lookup, market / limit / stop / stop-limit orders,
+modify, cancel and flatten are mapped; the copy engine, risk guard, sizing, P&L and
+alerts run unchanged on a Rithmic login (verified with a scripted client in
+`tests/test_rithmic.py`).
+
+What to do with the first real credentials (paper system first):
+1. Settings → Tradovate Accounts → add a login, Broker *Rithmic*, Env *Demo*, user +
+   password, system `Rithmic Paper Trading` (or the name your prop firm gives), gateway
+   `paper`; Save, Connect & Verify. The accounts appear; the status shows the system.
+2. Route a webhook to one account and send a test signal from the Simulator's payload
+   through the real webhook on the paper system: market entry, stop, limit target, close.
+3. Watch **Logs → Orders** for the `basket_id` and the mapped status texts. If Rithmic's
+   status strings differ from the mapping in `RithmicSession._status`, adjust that one
+   function (the test file has the edge cases).
+4. Copy trading: a paper Rithmic account as follower first, then as leader (poll feed).
+
+Known limits of this version: no broker-side OCO (two independent orders, warned once per
+login), no execution-agent routing, no journal import for Rithmic logins, and live
+systems need Rithmic's app registration (`NEXUSPRED_RITHMIC_APP_NAME` must be the
+registered name) and conformance sign-off.
+
+## 5a. Original status (alpha.57)
+
 **Step 1 is done (alpha.57):** `app/broker.py` holds the protocols, the Tradovate session
 implements them, and no module outside `app/tradovate.py` calls a Tradovate endpoint
 directly any more. Tradovate behaviour is unchanged. Next: Rithmic API registration, then

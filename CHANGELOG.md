@@ -4,6 +4,19 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.58
+- **Rithmic broker adapter (beta, untested against a real system).** A login can now be a
+  Rithmic login (Settings → Tradovate Accounts → Broker *Rithmic*: user, password, system
+  name, gateway). `app/rithmic.py` implements the broker interface over the
+  `async_rithmic` Protocol Buffer client: accounts, positions, working orders with
+  versions, cash snapshot, RMS rules, front-month lookup, market / limit / stop /
+  stop-limit orders, modify, cancel, flatten — with the same order log, risk-guard
+  chokepoint and alerts as Tradovate. Copy trading polls a Rithmic leader (no user-sync
+  socket), the P&L and risk guard read its snapshots. Rithmic ids (strings) are mapped to
+  stable integer ids for the engines. Limits: OCO pairs become two independent orders,
+  no execution-agent routing, no journal import, live systems need Rithmic's app
+  registration. Tradovate logins are untouched; the package is imported lazily.
+
 ## 5.0.0-alpha.57
 - **Broker interface (step 1 of the Rithmic plan, no behaviour change).** `app/broker.py`
   defines the surface the bridge may use — `BrokerSession` (login, feeds, contracts) and

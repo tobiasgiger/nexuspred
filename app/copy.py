@@ -629,7 +629,7 @@ class GroupRunner:
                 await asyncio.sleep(10)
                 continue
             kind = self.group.get("feed") or "auto"
-            use_ws = kind == "websocket" or (kind == "auto" and not session.agent_id)
+            use_ws = getattr(session, "kind", "tradovate") == "tradovate" and (kind == "websocket" or (kind == "auto" and not session.agent_id))
             self.feed_kind = "websocket" if use_ws else "poll"
             try:
                 await self._seed_followers(force=not self._leader_seeded and not self._followers_seeded_at)

@@ -64,20 +64,30 @@ async def api_save_token_accounts(request: Request) -> list[dict[str, Any]]:
             prev = {}
         access = a.get("access_token", "")
         md = a.get("md_token", "")
+        rpw = a.get("rithmic_password", "")
+        brk = "rithmic" if str(a.get("broker") or prev.get("broker") or "").lower() == "rithmic" else "tradovate"
         cleaned.append({
             "name": (a.get("name") or f"account {i + 1}").strip(),
+            "broker": brk,
             "environment": "live" if a.get("environment") == "live" else "demo",
             "access_token": prev.get("access_token", "") if access == "********" else access.strip(),
             "md_token": prev.get("md_token", "") if md == "********" else md.strip(),
+            "rithmic_user": str(a.get("rithmic_user") or prev.get("rithmic_user") or "").strip()[:80],
+            "rithmic_password": prev.get("rithmic_password", "") if rpw == "********" else str(rpw or "").strip(),
+            "rithmic_system": str(a.get("rithmic_system") if "rithmic_system" in a else prev.get("rithmic_system") or "").strip()[:60],
+            "rithmic_gateway": str(a.get("rithmic_gateway") if "rithmic_gateway" in a else prev.get("rithmic_gateway") or "").strip()[:120],
             "enabled": bool(a.get("enabled")),
             "qty_multiplier": float(a.get("qty_multiplier", 1) or 1),
             "account_spec": a.get("account_spec") or prev.get("account_spec", ""),
             "account_id": a.get("account_id") or prev.get("account_id", 0),
             "token_expires": prev.get("token_expires", ""),
-            "agent_id": _own_agent(a.get("agent_id")),
+            "agent_id": 0 if brk == "rithmic" else _own_agent(a.get("agent_id")),    # agents relay HTTP: Tradovate only
             "accounts": prev.get("accounts") or [],
             "lid": prev.get("lid") or config._new_lid(),
         })
+    for c in cleaned:
+        if c["broker"] == "rithmic" and c["environment"] == "live" and c["enabled"] and not c["rithmic_system"]:
+            raise HTTPException(status_code=400, detail=f"Login '{c['name']}': a live Rithmic login needs the system name (e.g. Apex, TopstepTrader, Rithmic 01)")
     config.save_settings({"token_accounts": cleaned})
     tradovate.manager().reload()
     enabled = sum(1 for a in cleaned if a["enabled"])

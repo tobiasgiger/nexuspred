@@ -826,6 +826,15 @@ class SessionManager:
         prev = self._sessions or []
         fresh: list[TradovateSession] = []
         for i, e in enumerate(entries):
+            if broker.broker_of(e) == "rithmic":
+                from .rithmic import RithmicSession, _fingerprint as _rfp
+                old = prev[i] if i < len(prev) else None
+                if isinstance(old, RithmicSession) and old.fingerprint == _rfp(e):
+                    old.adopt_credentials(e)
+                    fresh.append(old)
+                else:
+                    fresh.append(RithmicSession(i, e, area_id=self.area_id))   # type: ignore[arg-type]
+                continue
             if broker.broker_of(e) not in broker.BROKERS:
                 # a login for a broker this build does not ship never trades by accident:
                 # it gets a disabled placeholder session that reports why

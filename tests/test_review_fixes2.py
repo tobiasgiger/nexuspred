@@ -217,7 +217,7 @@ def test_unknown_broker_login_never_trades(admin):
     from app import state, tradovate
     with context.use_area(1):
         config.save_settings({"token_accounts": [
-            {"name": "Rithmic X", "broker": "rithmic", "environment": "live", "enabled": True, "access_token": "t", "accounts": [{"spec": "R1", "id": 5, "enabled": True}]},
+            {"name": "Rithmic X", "broker": "ninjatrader", "environment": "live", "enabled": True, "access_token": "t", "accounts": [{"spec": "R1", "id": 5, "enabled": True}]},
             {"name": "Tradovate", "environment": "demo", "enabled": True, "access_token": "t", "accounts": [{"spec": "T1", "id": 6, "enabled": True}]}]})
         mgr = tradovate.manager_for(1)
         mgr.reload()

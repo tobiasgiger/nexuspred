@@ -37,7 +37,7 @@ PREFIX = "enc:v1:"
 # db → crypto never needs config at import time).
 SECRET_KEYS = ("webhook_passphrase", "alert_discord_webhook_url", "alert_smtp_password",
                "discord_user_token")
-TOKEN_ACCOUNT_KEYS = ("access_token", "md_token")
+TOKEN_ACCOUNT_KEYS = ("access_token", "md_token", "rithmic_password")
 
 _fernet: Optional[Fernet] = None
 _source: str = ""

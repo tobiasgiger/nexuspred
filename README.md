@@ -68,6 +68,14 @@ access control, and a built-in GitHub auto-updater.
 
 ## Quick start
 
+### Rithmic accounts (beta)
+
+Logins can point at **Rithmic** (Apex, Topstep, MFFU … on R|Trader) instead of Tradovate:
+Settings → Tradovate Accounts → Broker *Rithmic*, then user, password, the system name your
+firm gives and the gateway (`chicago`, `europe`, `paper`). Everything else — webhooks, copy
+trading, risk guard, P&L — works the same. Not yet verified against a live Rithmic system;
+see [docs/RITHMIC.md](docs/RITHMIC.md) for the checklist and limits.
+
 ### Own Linux server (one line, HTTPS included)
 
 ```bash

@@ -529,7 +529,7 @@ SECRET_FIELDS = {
 }
 
 # Per-entry secret fields inside the token_accounts list.
-_TOKEN_SECRETS = ("access_token", "md_token")
+_TOKEN_SECRETS = ("access_token", "md_token", "rithmic_password")
 
 
 def public_settings(area_id: int | None = None) -> dict[str, Any]:
