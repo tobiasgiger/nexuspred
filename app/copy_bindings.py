@@ -86,7 +86,9 @@ def repair(area_id: int) -> set[int]:
         if not str(sub.get("webhook_id") or "").startswith("copy:"):
             continue
         accounts = [dict(a) for a in (sub.get("accounts") or []) if isinstance(a, dict)]
-        changed = any(_refresh_route(settings, a) for a in accounts)
+        changed = False
+        for account in accounts:
+            changed |= _refresh_route(settings, account)
         if changed:
             db.update_subscription(int(sub["id"]), area_id, accounts=accounts)
             publishers.add(int(sub["publisher_area_id"]))
