@@ -41,6 +41,11 @@ def _backup_to(path: str) -> None:
             src.backup(dst)
         with dst:
             dst.executemany("DELETE FROM meta WHERE key=?", [(k,) for k in BACKUP_EXCLUDED_META])
+            # unused one-time capabilities never travel: a reset link, an invite or a
+            # pairing code lifted from a backup must not open an account or an agent slot
+            dst.execute("DELETE FROM password_resets WHERE used_at IS NULL")
+            dst.execute("DELETE FROM invites WHERE used_by IS NULL")
+            dst.execute("DELETE FROM agent_pairings")
         dst.execute("VACUUM")               # the deleted rows must not survive in free pages
     finally:
         dst.close()

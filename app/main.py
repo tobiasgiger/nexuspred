@@ -83,6 +83,7 @@ async def _history_prune_loop() -> None:
         await asyncio.sleep(24 * 3600)
         try:
             await asyncio.to_thread(history.prune)
+            await asyncio.to_thread(db.prune_copy_events)
         except Exception as exc:  # noqa: BLE001
             state.log_event("warn", f"history prune failed: {exc}")
 

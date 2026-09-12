@@ -1,11 +1,13 @@
 """Tradovate logins (token accounts) and the per-account execution toggles."""
 from __future__ import annotations
 
+import asyncio
+
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
-from .. import broker, config, context, db, risk, state, tradovate
+from .. import broker, config, context, db, projectx, risk, rithmic, security, state, tradovate
 
 router = APIRouter(prefix="/api", tags=["accounts"])
 
@@ -50,6 +52,8 @@ async def api_save_token_accounts(request: Request) -> list[dict[str, Any]]:
     """Save the per-account token list. Masked tokens ('********') keep the stored
     value, so editing other fields doesn't wipe the tokens."""
     incoming = await request.json()
+    if not isinstance(incoming, list) or len(incoming) > 50 or not all(isinstance(a, dict) for a in incoming):
+        raise HTTPException(status_code=400, detail="token_accounts must be a list of login objects (at most 50)")
     existing = config.load_settings().get("token_accounts") or []
     by_lid = {t.get("lid"): t for t in existing if t.get("lid")}
     claimed = {a.get("lid") for a in incoming if isinstance(a, dict) and a.get("lid")}
@@ -64,10 +68,21 @@ async def api_save_token_accounts(request: Request) -> list[dict[str, Any]]:
             prev = existing[i]
         else:
             prev = {}
-        access = a.get("access_token", "")
-        md = a.get("md_token", "")
-        rpw = a.get("rithmic_password", "")
-        pxk = a.get("px_api_key", "")
+        access = str(a.get("access_token") or "")
+        md = str(a.get("md_token") or "")
+        rpw = str(a.get("rithmic_password") or "")
+        pxk = str(a.get("px_api_key") or "")
+        px_firm = str(a.get("px_firm") if "px_firm" in a else prev.get("px_firm") or "topstep").strip()[:120] or "topstep"
+        if px_firm.lower() not in projectx.FIRMS:
+            # a custom ProjectX gateway receives the API key: https only, no private targets
+            if not px_firm.startswith("https://"):
+                raise HTTPException(status_code=400, detail="px_firm must be a known firm or an https:// gateway URL")
+            problem = await asyncio.to_thread(security.check_outbound_url, px_firm)
+            if problem:
+                raise HTTPException(status_code=400, detail=f"ProjectX gateway URL: {problem}")
+        gw = str(a.get("rithmic_gateway") if "rithmic_gateway" in a else prev.get("rithmic_gateway") or "").strip()[:120]
+        if gw and gw.lower() not in rithmic.GATEWAYS and not rithmic.gateway_allowed(gw):
+            raise HTTPException(status_code=400, detail="rithmic_gateway must be test / paper / chicago / europe or a wss://…rithmic.com URL")
         brk_raw = str(a.get("broker") or prev.get("broker") or "").lower()
         brk = brk_raw if brk_raw in ("rithmic", "projectx") else "tradovate"
         if prev and brk != (str(prev.get("broker") or "tradovate")):
@@ -85,10 +100,10 @@ async def api_save_token_accounts(request: Request) -> list[dict[str, Any]]:
             "rithmic_user": str(a.get("rithmic_user") or prev.get("rithmic_user") or "").strip()[:80],
             "rithmic_password": prev.get("rithmic_password", "") if rpw == "********" else str(rpw or "").strip(),
             "rithmic_system": str(a.get("rithmic_system") if "rithmic_system" in a else prev.get("rithmic_system") or "").strip()[:60],
-            "rithmic_gateway": str(a.get("rithmic_gateway") if "rithmic_gateway" in a else prev.get("rithmic_gateway") or "").strip()[:120],
+            "rithmic_gateway": gw,
             "px_user": str(a.get("px_user") or prev.get("px_user") or "").strip()[:80],
             "px_api_key": prev.get("px_api_key", "") if pxk == "********" else str(pxk or "").strip(),
-            "px_firm": str(a.get("px_firm") if "px_firm" in a else prev.get("px_firm") or "topstep").strip()[:120] or "topstep",
+            "px_firm": px_firm,
             "enabled": bool(a.get("enabled")),
             "qty_multiplier": float(a.get("qty_multiplier", 1) or 1),
             "account_spec": a.get("account_spec") or prev.get("account_spec", ""),

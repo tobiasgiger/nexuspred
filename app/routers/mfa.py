@@ -93,8 +93,8 @@ async def api_mfa_disable(request: Request) -> dict[str, Any]:
     await _check_password(user, body)
     secret = db.mfa_secret(user["id"])
     counter = mfa.verify_totp(secret, str(body.get("code", "")), last_counter=db.mfa_counter(user["id"]))
-    if counter is None:
-        raise HTTPException(status_code=400, detail="That authenticator code is not valid")
+    if counter is None or not db.mfa_touch_counter(user["id"], counter):
+        raise HTTPException(status_code=400, detail="That authenticator code is not valid")     # a code is used once, here too
     db.mfa_reset(user["id"], required=False)
     db.log_action(user["id"], user["email"], "mfa_disabled", user["email"])
     state.log_event("warn", f"Two-factor authentication disabled for {user['email']}")

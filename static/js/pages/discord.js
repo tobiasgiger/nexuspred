@@ -1,5 +1,5 @@
 /* Discord monitoring: listener status + live signal feed. */
-import { h, card, tag, fmtTime, pageHead, clear } from "../ui.js";
+import { h, card, tag, fmtTime, pageHead, clear, paintIncremental } from "../ui.js";
 import { icon } from "../icons.js";
 import { store } from "../store.js";
 import { actions } from "../actions.js";
@@ -54,10 +54,11 @@ export default {
         hint: t("Unrecognised messages are shown too, so a change in a provider's format is never silently lost.") }, feed),
     );
 
+    let prevFeed = null;
     function paintFeed(events) {
-      clear(feed);
-      if (!events || !events.length) feed.append(h("div", { class: "empty-state" }, t("No signals yet.")));
-      else feed.append(...events.map(feedLine));
+      const list = events || [];
+      paintIncremental(feed, prevFeed, list, feedLine, t("No signals yet."));   // new frames are prepended, not a 200-row rebuild
+      prevFeed = list;
     }
     const unsubs = [
       store.subscribe("discordStatus", (s) => {

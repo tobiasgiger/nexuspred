@@ -107,10 +107,10 @@ async def test_discord_send_respects_toggle_url_and_mention(admin, monkeypatch):
     assert _FakeClient.calls == []
     config.save_settings({"alert_discord_webhook_url": "https://discord/hook"})
     await alerts._send_discord("m")
-    assert _FakeClient.calls[-1] == ("https://discord/hook", {"content": "@everyone m"})
+    assert _FakeClient.calls[-1] == ("https://discord/hook", {"content": "@everyone m", "allowed_mentions": {"parse": ["everyone"]}})
     config.save_settings({"alert_discord_mention_everyone": False})
     await alerts._send_discord("m")
-    assert _FakeClient.calls[-1][1] == {"content": "m"}
+    assert _FakeClient.calls[-1][1] == {"content": "m", "allowed_mentions": {"parse": []}}   # a @here in a name never pings
 
 
 async def test_discord_send_swallows_errors(admin, monkeypatch):

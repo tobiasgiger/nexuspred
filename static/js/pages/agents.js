@@ -31,7 +31,7 @@ export default {
     async function linuxOneLiner() {
       try {
         const r = await api.post("/api/agents/pairing-code", { name: nameInput.value.trim() });
-        const cmd = `curl -fsSL https://raw.githubusercontent.com/tobiasgiger/nexuspred/main/deploy/install-agent.sh | sudo bash -s -- --bridge ${window.location.origin} --code ${r.code} --name "${r.name.replace(/"/g, "")}"`;
+        const cmd = `curl -fsSL https://raw.githubusercontent.com/tobiasgiger/nexuspred/main/deploy/install-agent.sh | sudo bash -s -- --bridge ${window.location.origin} --code ${r.code} --name '${r.name.replace(/[^\w .-]/g, "")}'`;
         clear(codeBox);
         codeBox.append(
           h("div", null, t("Linux / macOS: run this on the VPS as root — it installs Python if needed, pairs as "), h("strong", null, r.name), t(" and starts a service (boot + restart). Valid "), String(Math.round(r.expires_in / 60)), t(" minutes, single use:")),

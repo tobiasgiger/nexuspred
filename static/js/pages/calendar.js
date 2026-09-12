@@ -64,9 +64,9 @@ export default {
       const preview = st.preview_events ? t(", {n} of them a preview of the coming weeks from TradingView's calendar (replaced by the weekly file each Sunday evening)", { n: st.preview_events }) : "";
       statusBox.append(h("div", { class: "muted", style: "margin-top:6px;font-size:12.5px" }, (st.feed_events ? t("Calendar: {n} events loaded", { n: st.feed_events }) + span + preview : t("Calendar: no calendar loaded yet")) + (st.feed_error ? t(" · feed problem: ") + st.feed_error : "") + t(". Past weeks are kept for 90 days.")));
     }
-    let busy = false;
+    let busy = false, rerun = false;
     async function load() {
-      if (busy) return; busy = true;
+      if (busy) { rerun = true; return; } busy = true;
       try {
         const v = rangeSel.value;
         const params = new URLSearchParams();
@@ -97,7 +97,7 @@ export default {
         countEl.textContent = t("{n} events · {r} lock-relevant", { n: rows.length, r: rows.filter((e) => e.relevant).length });
         try { localStorage.setItem("fb.calendar.range", v); } catch { /* ignore */ }
       } catch (e) { toast(e.message, "error"); }
-      finally { busy = false; }
+      finally { busy = false; if (rerun) { rerun = false; load(); } }
     }
     rangeSel.addEventListener("change", load); relevantSw.addEventListener("change", load);
     let debounceT = null; search.addEventListener("input", () => { clearTimeout(debounceT); debounceT = setTimeout(load, 250); });

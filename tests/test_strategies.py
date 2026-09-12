@@ -691,7 +691,7 @@ async def test_wrong_passphrase_reaches_no_subscriber(live, monkeypatch):
                         lambda payload, webhook, publisher_area=None: forwarded.append(payload) or 0)
     executed: list[dict] = []
 
-    async def spy(payload, webhook, *, trusted=False):
+    async def spy(payload, webhook, *, trusted=False, **kw):
         executed.append(payload)
         return {"status": "ok"}
     monkeypatch.setattr(signals, "process", spy)

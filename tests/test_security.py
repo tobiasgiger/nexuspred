@@ -393,7 +393,7 @@ async def test_forwarded_marketplace_signals_drop_the_passphrase(monkeypatch, ad
     wh = webhook_factory(name="Pub")
     seen: list[dict] = []
 
-    async def fake_process(payload, webhook, *, trusted=False):
+    async def fake_process(payload, webhook, *, trusted=False, **kw):
         seen.append(payload)
         return {"status": "ok"}
     monkeypatch.setattr(signals, "process", fake_process)

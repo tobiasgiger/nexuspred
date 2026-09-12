@@ -1,7 +1,9 @@
 """Settings export / import: the workspace's configuration as one JSON file —
 webhooks with their routing, symbol map, trading rules, alert preferences,
 news-lock rules — without any secret (broker tokens, passwords, API keys, the
-Discord user token, the webhook passphrase, the heartbeat ping URL). Meant for
+Discord user token, the webhook passphrase, the heartbeat ping URL). The webhook
+tokens *do* travel (they are the URLs TradingView already points at) — the file
+is a capability to fire signals and must be stored like one. Meant for
 backups of the configuration and for moving a workspace to another bridge; the
 database backup (Settings → Updates) is the full copy including secrets."""
 from __future__ import annotations

@@ -327,6 +327,7 @@ async def test_feed_loss_flattens_followers_and_pauses(world, monkeypatch):
         assert r.paused and "feed lost" in r.pause_reason
         assert _placed(ex)[-1] == ("Sell", 2, "MNQZ6") and r.follower_pos[("F1", 901)] == 0
         world["follower"].positions = []
+        assert await _wait(lambda: bool(world["sent"]))                       # the alert is fire-and-forget
         assert world["sent"][-1][0].startswith("Copy group paused") and world["sent"][-1][2] == {"email": True}
         # the flattened contract became baseline: leader changes are not mirrored
         # while the leader keeps the position (and the group is paused anyway)

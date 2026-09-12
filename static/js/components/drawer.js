@@ -46,6 +46,3 @@ export function closeDrawer() {
   if (onClose) onClose();
 }
 
-export function drawerOpen() {
-  return !!current;
-}

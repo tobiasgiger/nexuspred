@@ -61,6 +61,8 @@ class OrderMirror:
         self.ent_orders: dict[int, dict[str, Any]] = {}       # socket: order entities by id
         self.ent_versions: dict[int, dict[str, Any]] = {}     # socket: latest orderVersion by order id
         self._apply_task: Optional[asyncio.Task] = None
+        self._rest_missing: set[int] = set()                     # leader orders one REST look already missed (socket synced)
+        self._skip_said: dict[tuple[str, int], str] = {}         # (follower, leader order) → last skip reason recorded
         self._apply_lock = asyncio.Lock()                      # poll, socket and reconcile never diff concurrently
         self._dirty = False                                    # socket events arrived while an apply ran
         self._done_at: dict[tuple[str, int], float] = {}       # (spec, leader order id) → twin found done (monotonic)
@@ -99,6 +101,18 @@ class OrderMirror:
 
     def _record(self, kind: str, **kw: Any) -> None:
         self.r._record(kind, **kw)
+
+    def _skip_once(self, spec: str, o: dict[str, Any], name: str, why: str) -> None:
+        """An ``order_skip`` row once per (follower, leader order, reason): the
+        reconcile revisits every unmirrored order every few seconds and would
+        otherwise write thousands of identical rows a day."""
+        key = (spec, int(o["id"]))
+        if self._skip_said.get(key) == why:
+            return
+        self._skip_said[key] = why
+        if len(self._skip_said) > 2000:
+            self._skip_said = {k: v for k, v in self._skip_said.items() if k[1] in self.leader_orders}
+        self._record("order_skip", follower=spec, symbol=name, detail=f"leader {o['action']} {o['qty']} {o['order_type']}: {why}")
 
     # ------------------------------------------------------------ persist
     async def load(self) -> None:
@@ -199,6 +213,21 @@ class OrderMirror:
             self.error = f"orders: {exc}"[:200]
             return
         self.error = ""
+        if self.r.ws_ok:
+            # a REST list can predate an order the socket just delivered (and whose
+            # twin is already resting): an order missing from the list entirely is
+            # only "gone" when two consecutive looks miss it
+            known = set(self.leader_orders) | {key[1] for key in self.twins}
+            missing = {i for i in known if i not in now and statuses.get(i) is None}
+            unconfirmed = missing - self._rest_missing
+            self._rest_missing = missing
+            for i in unconfirmed:
+                if i in self.leader_orders:
+                    now[i] = self.leader_orders[i]      # keep it one more look
+                else:
+                    statuses[i] = "Working"             # a twin's leader order not yet in our list: not gone either
+        else:
+            self._rest_missing = set()
         await self.apply(session, now, statuses)
 
     # ---- socket entities (user sync snapshot + props events)
@@ -326,8 +355,7 @@ class OrderMirror:
             return "symbol not in the group"
         if self.r.paused:
             return "group paused"
-        from . import config
-        if not config.load_settings(area_id=self.r.area_id).get("trading_enabled"):
+        if not config.setting("trading_enabled", area_id=self.r.area_id):
             return "trading switch is off"
         return None
 
@@ -351,10 +379,10 @@ class OrderMirror:
             name = await self.r._contract_name(session, o["contract_id"])
             why = self._blocked(o["contract_id"])
             if why:
-                self._record("order_skip", symbol=name, detail=f"leader {o['action']} {o['qty']} {o['order_type']}: {why}")
+                self._skip_once("", o, name, why)
                 continue
             if o["order_type"] not in MIRRORED_TYPES or (partner is not None and partner["order_type"] not in MIRRORED_TYPES):
-                self._record("order_skip", symbol=name, detail=f"leader {o['action']} {o['qty']} {o['order_type']}: order type not mirrored")
+                self._skip_once("", o, name, "order type not mirrored")
                 continue
             res = await asyncio.gather(*(self._create_for(f, o, partner, name) for f in self.r.followers if f.get("enabled", True)),
                                        return_exceptions=True)
@@ -376,7 +404,7 @@ class OrderMirror:
             return 0
         qty = self.twin_qty(f, o)
         if qty <= 0:
-            self._record("order_skip", follower=spec, symbol=name, detail=f"leader {o['action']} {o['qty']} {o['order_type']}: sizing gives 0 (direction / cap)")
+            self._skip_once(spec, o, name, "sizing gives 0 (direction / cap)")
             return 0
         if partner is not None:
             pq = self.twin_qty(f, partner)
@@ -392,8 +420,8 @@ class OrderMirror:
                 n = await self._create_for(f, o, None, name)
                 return n + await self._create_for(f, partner, None, name)
         farea = self.r._area_of(f)
-        if farea != self.r.area_id and not config.load_settings(area_id=farea).get("trading_enabled"):
-            self._record("order_skip", follower=spec, symbol=name, detail=f"leader {o['action']} {o['qty']} {o['order_type']}: trading switch is off in the follower's workspace")
+        if farea != self.r.area_id and not config.setting("trading_enabled", area_id=farea):
+            self._skip_once(spec, o, name, "trading switch is off in the follower's workspace")
             return 0
         ex = self.r._executor(f)
         if ex is None:
@@ -403,43 +431,50 @@ class OrderMirror:
         async with lock:
             if self._twin_key(spec, o["id"]) in self.twins:
                 return 0                            # placed by a concurrent pass while we waited
-            with context.use_area(farea):
-                try:
-                    if partner is None:
-                        res = await ex.place_order(symbol=name, action=o["action"], qty=qty, order_type=o["order_type"],
-                                                   price=o["price"], stop_price=o["stop_price"])
-                        ids = [(o, int(res.get("order_id") or 0))] if res.get("status") == "submitted" else []
-                        err = None if ids else str((res.get("raw") or {}).get("errorText") or res.get("status"))
-                    else:
-                        res = await ex.place_oco(symbol=name, action=o["action"], qty=qty, order_type=o["order_type"],
-                                                 price=o["price"], stop_price=o["stop_price"],
-                                                 other={"action": partner["action"], "order_type": partner["order_type"],
-                                                        "price": partner["price"], "stop_price": partner["stop_price"]})
-                        ok = res.get("status") == "submitted"
-                        ids = [(o, int(res.get("order_id") or 0)), (partner, int(res.get("oco_id") or 0))] if ok else []
-                        err = None if ok else str((res.get("raw") or {}).get("errorText") or res.get("status"))
-                        qty_by = {o["id"]: qty, partner["id"]: pq}
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:  # noqa: BLE001
-                    err, ids = (f"{exc}" if isinstance(exc, TradovateError) else f"{type(exc).__name__}: {exc}"), []
-            if err is not None:
-                self.r.follower_err[spec] = err[:200]
-                self.r.follower_err_at[spec] = time.monotonic()
-                self._record("order_reject", follower=spec, symbol=name, detail=f"leader {o['action']} {o['qty']} {o['order_type']}: {err}")
-                return 0
-            for lo, fid in ids:
-                t = {"leader_order_id": lo["id"], "follower_order_id": fid, "contract_id": lo["contract_id"], "symbol": name,
-                     "action": lo["action"], "qty": qty if partner is None else qty_by[lo["id"]], "order_type": lo["order_type"],
-                     "price": lo["price"], "stop_price": lo["stop_price"], "version_id": lo["version_id"],
-                     "oco_with": (partner["id"] if lo is o else o["id"]) if partner is not None else 0}
-                self._save(spec, t)
-                self._touch(spec, lo["contract_id"])
-                px = f" @ {lo['price']}" if lo["price"] is not None else ""
-                sp = f" stop {lo['stop_price']}" if lo["stop_price"] is not None else ""
-                self._record("order_mirror", follower=spec, symbol=name,
-                             detail=f"{lo['action']} {t['qty']} {lo['order_type']}{px}{sp} (leader {lo['qty']}{', OCO' if partner is not None else ''})")
-            return len(ids)
+            # shielded: a runner stop (group edit, restart of the feed) must not cancel
+            # the request after the broker accepted it and before the twin is recorded
+            return await asyncio.shield(self._place_twin(f, o, partner, name, ex, farea, qty, pq if partner is not None else 0))
+
+    async def _place_twin(self, f: dict[str, Any], o: dict[str, Any], partner: Optional[dict[str, Any]], name: str,
+                          ex: Any, farea: int, qty: int, pq: int) -> int:
+        spec = f["spec"]
+        with context.use_area(farea):
+            try:
+                if partner is None:
+                    res = await ex.place_order(symbol=name, action=o["action"], qty=qty, order_type=o["order_type"],
+                                               price=o["price"], stop_price=o["stop_price"])
+                    ids = [(o, int(res.get("order_id") or 0))] if res.get("status") == "submitted" else []
+                    err = None if ids else str((res.get("raw") or {}).get("errorText") or res.get("status"))
+                else:
+                    res = await ex.place_oco(symbol=name, action=o["action"], qty=qty, order_type=o["order_type"],
+                                             price=o["price"], stop_price=o["stop_price"],
+                                             other={"action": partner["action"], "order_type": partner["order_type"],
+                                                    "price": partner["price"], "stop_price": partner["stop_price"]})
+                    ok = res.get("status") == "submitted"
+                    ids = [(o, int(res.get("order_id") or 0)), (partner, int(res.get("oco_id") or 0))] if ok else []
+                    err = None if ok else str((res.get("raw") or {}).get("errorText") or res.get("status"))
+                    qty_by = {o["id"]: qty, partner["id"]: pq}
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                err, ids = (f"{exc}" if isinstance(exc, TradovateError) else f"{type(exc).__name__}: {exc}"), []
+        if err is not None:
+            self.r.follower_err[spec] = err[:200]
+            self.r.follower_err_at[spec] = time.monotonic()
+            self._record("order_reject", follower=spec, symbol=name, detail=f"leader {o['action']} {o['qty']} {o['order_type']}: {err}")
+            return 0
+        for lo, fid in ids:
+            t = {"leader_order_id": lo["id"], "follower_order_id": fid, "contract_id": lo["contract_id"], "symbol": name,
+                 "action": lo["action"], "qty": qty if partner is None else qty_by[lo["id"]], "order_type": lo["order_type"],
+                 "price": lo["price"], "stop_price": lo["stop_price"], "version_id": lo["version_id"],
+                 "oco_with": (partner["id"] if lo is o else o["id"]) if partner is not None else 0}
+            self._save(spec, t)
+            self._touch(spec, lo["contract_id"])
+            px = f" @ {lo['price']}" if lo["price"] is not None else ""
+            sp = f" stop {lo['stop_price']}" if lo["stop_price"] is not None else ""
+            self._record("order_mirror", follower=spec, symbol=name,
+                         detail=f"{lo['action']} {t['qty']} {lo['order_type']}{px}{sp} (leader {lo['qty']}{', OCO' if partner is not None else ''})")
+        return len(ids)
 
     async def _modify(self, o: dict[str, Any]) -> None:
         name = self.r.contract_names.get(o["contract_id"], str(o["contract_id"]))

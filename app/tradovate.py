@@ -11,6 +11,8 @@ import asyncio
 import base64
 import binascii
 import json
+
+import httpx
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -276,11 +278,14 @@ class TradovateSession:
                     area_id=self.area_id if self.area_id is not None else context.get_area())
             except relay.ResultUnknown as exc:
                 if path.startswith(PRIORITY_PATHS):
-                    state.log_event("error", f"[{self.name}] {path}: {exc} — CHECK THE ACCOUNT, the order may have gone through")
-                    _fire(alerts.execution_problem(f"Order outcome unknown on {self.name}",
-                                                   f"{path} via the execution agent: {exc}. Check the account for an untracked position or order."))
+                    raise self._unknown_outcome(path, str(exc), via=" via the execution agent") from exc
                 raise TradovateError(f"[{self.name}] {exc}") from exc
             except relay.AgentOffline as exc:
+                # the agent reports its own request failed: a timeout there means the
+                # broker may have received the order (never "rejected")
+                low = str(exc).lower()
+                if path.startswith(PRIORITY_PATHS) and ("timed out" in low or "timeout" in low):
+                    raise self._unknown_outcome(path, str(exc), via=" via the execution agent") from exc
                 raise TradovateError(f"[{self.name}] {exc}") from exc
             if status == 429:
                 raise RateLimited(path, text, _penalty_seconds(text))
@@ -288,12 +293,29 @@ class TradovateSession:
                 raise TradovateError(f"{status} {path}: {text}")
             return json.loads(text) if text else None
         # Pooled, keep-alive client: no TLS handshake per order (see app.http).
-        resp = await http.client("tradovate").request(method, url, headers=headers, **kwargs)
+        try:
+            resp = await http.client("tradovate").request(method, url, headers=headers, **kwargs)
+        except (httpx.ReadTimeout, httpx.WriteTimeout, httpx.RemoteProtocolError) as exc:
+            # the request left the bridge and the answer never came back: an order
+            # may be live — never treated as a rejection (no blind retry, no re-place)
+            if path.startswith(PRIORITY_PATHS):
+                raise self._unknown_outcome(path, repr(exc)) from exc
+            raise TradovateError(f"[{self.name}] {path}: {exc!r}") from exc
+        except httpx.HTTPError as exc:                    # connect / pool errors: nothing was sent
+            raise TradovateError(f"[{self.name}] {path}: {exc!r}") from exc
         if resp.status_code == 429:
             raise RateLimited(path, resp.text, _penalty_seconds(resp.text))
         if resp.status_code >= 400:
             raise TradovateError(f"{resp.status_code} {path}: {resp.text}")
         return resp.json() if resp.text else None
+
+    def _unknown_outcome(self, path: str, detail: str, *, via: str = "") -> "OrderOutcomeUnknown":
+        """Log + alert an order request whose answer was lost, and build the
+        exception the order path treats as 'maybe live' (see OrderOutcomeUnknown)."""
+        state.log_event("error", f"[{self.name}] {path}{via}: {detail} — CHECK THE ACCOUNT, the order may have gone through")
+        _fire(alerts.execution_problem(f"Order outcome unknown on {self.name}",
+                                       f"{path}{via}: {detail}. Check the account for an untracked position or order."))
+        return OrderOutcomeUnknown(f"[{self.name}] {path}: outcome unknown ({detail})")
 
     # ------------------------------------------------------------------ token
     def _token_valid(self, buffer_minutes: int = 5) -> bool:

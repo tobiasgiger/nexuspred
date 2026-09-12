@@ -30,6 +30,3 @@ export function navigate(path, { replace = false } = {}) {
   if (replace) window.dispatchEvent(new HashChangeEvent("hashchange"));
 }
 
-export function currentPath() {
-  return parseHash().path;
-}

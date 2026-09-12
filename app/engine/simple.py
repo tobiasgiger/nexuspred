@@ -8,7 +8,7 @@ from typing import Any
 
 from .. import alerts, config, state
 from ..tradovate import _fire
-from .common import SignalError, _lock, _trade_key
+from .common import _lock, _price, _signal_qty, _trade_key
 from ..sizing import account_qty
 
 
@@ -16,18 +16,13 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
     """One Market (or Limit, if 'entry'/'price' given) order per account, sized by
     the payload's qty (or the webhook default), no TP/SL."""
     s = settings if settings is not None else config.load_settings()
-    default_qty = webhook.get("default_qty", 1)
-    raw_qty = payload.get("qty", payload.get("contracts"))
-    try:
-        base_qty = float(raw_qty) if raw_qty is not None else float(default_qty)
-    except (TypeError, ValueError):
-        raise SignalError(f"Invalid qty '{raw_qty}'")
-    if base_qty <= 0:
-        raise SignalError("qty must be positive")
+    base_qty = _signal_qty(payload.get("qty", payload.get("contracts")), webhook.get("default_qty", 1), strict=True)
 
     entry_side = "Buy" if action == "buy" else "Sell"
     order_type = s.get("entry_order_type", "Market")
     price = payload.get("entry", payload.get("price"))
+    if price is not None:
+        price = _price(price, "entry")
 
     async def place_for(ex):
         contract = await ex.resolve_contract(target)

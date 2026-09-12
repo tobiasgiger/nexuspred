@@ -23,16 +23,16 @@ export default {
       ...(store.get("webhooks") || []).map((w) => h("option", { value: w.id, selected: w.id === selectedId }, `${w.name} (${w.strategy})`)),
     ];
 
-    function targetRow(t = {}) {
-      const wid = t.webhook_id || "";
+    function targetRow(tg = {}) {
+      const wid = tg.webhook_id || "";
       const sel = h("select", { class: "t-webhook input-sm", style: "min-width:200px" }, webhookOptions(wid));
-      const url = h("input", { class: "t-url input-sm", value: t.url || "", placeholder: "https://…/webhook/<token> or external URL" });
-      const secret = h("input", { type: "password", class: "t-secret input-sm", value: t.secret || "", placeholder: t("X-Webhook-Secret (optional)"), autocomplete: "off" });
+      const url = h("input", { class: "t-url input-sm", value: tg.url || "", placeholder: "https://…/webhook/<token> or external URL" });
+      const secret = h("input", { type: "password", class: "t-secret input-sm", value: tg.secret || "", placeholder: t("X-Webhook-Secret (optional)"), autocomplete: "off" });
       const custom = h("div", { class: `ds-target-custom ${wid ? "hidden" : ""}` }, url, secret);
       sel.addEventListener("change", () => custom.classList.toggle("hidden", sel.value !== ""));
       const tr = h("tr", { class: "ds-target" },
-        h("td", null, h("input", { type: "checkbox", class: "switch t-enabled", checked: t.enabled !== false })),
-        h("td", null, h("input", { class: "t-label input-sm", value: t.label || "", placeholder: t("(optional)"), style: "min-width:110px" })),
+        h("td", null, h("input", { type: "checkbox", class: "switch t-enabled", checked: tg.enabled !== false })),
+        h("td", null, h("input", { class: "t-label input-sm", value: tg.label || "", placeholder: t("(optional)"), style: "min-width:110px" })),
         h("td", null, sel, custom),
         h("td", { style: "width:44px" }, h("button", { type: "button", class: "btn btn-ghost btn-icon", title: t("Remove target"), onClick: () => { tr.remove(); markDirty(); } }, icon("trash"))));
       return tr;

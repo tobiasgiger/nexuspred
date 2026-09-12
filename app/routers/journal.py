@@ -1,6 +1,8 @@
 """Trading journal API: import, reporting, trades with notes, CSV export."""
 from __future__ import annotations
 
+import asyncio
+
 import csv
 import io
 from datetime import datetime, timezone
@@ -160,6 +162,9 @@ def _account_from_label(label: str) -> dict[str, Any]:
             "environment": "csv"}
 
 
+MAX_CSV_BYTES = 8_000_000
+
+
 @router.post("/import-csv")
 async def api_import_csv(request: Request) -> dict[str, Any]:
     """Back-fill from a Tradovate CSV export (multipart: ``file``, ``account``,
@@ -168,9 +173,11 @@ async def api_import_csv(request: Request) -> dict[str, Any]:
     upload = form.get("file")
     if upload is None or not hasattr(upload, "read"):
         raise HTTPException(status_code=400, detail="Attach the CSV export as 'file'")
-    raw = await upload.read()
+    raw = await upload.read(MAX_CSV_BYTES + 1)
     if not raw:
         raise HTTPException(status_code=400, detail="The file is empty")
+    if len(raw) > MAX_CSV_BYTES:
+        raise HTTPException(status_code=413, detail=f"The file is larger than {MAX_CSV_BYTES // 1_000_000} MB")
     try:
         text = raw.decode("utf-8-sig")
     except UnicodeDecodeError:
@@ -182,9 +189,10 @@ async def api_import_csv(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="fee_per_side must be a number") from exc
     user = getattr(request.state, "user", None) or {}
     try:
-        return journal_csv.import_csv(context.get_area(), text, account=account, tz_name=str(form.get("timezone") or ""),
-                                      fee_per_side=max(0.0, fee), user_email=user.get("email", ""),
-                                      filename=getattr(upload, "filename", "") or "")
+        # parsing + thousands of inserts run on a worker thread, never on the order path
+        return await asyncio.to_thread(journal_csv.import_csv, context.get_area(), text, account=account,
+                                       tz_name=str(form.get("timezone") or ""), fee_per_side=max(0.0, fee),
+                                       user_email=user.get("email", ""), filename=getattr(upload, "filename", "") or "")
     except journal_csv.CsvError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

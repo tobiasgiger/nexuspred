@@ -52,10 +52,13 @@ async def _send_discord(message: str, *, settings: dict[str, Any] | None = None)
     s = settings if settings is not None else config.load_settings()
     if not s.get("alert_discord_enabled") or not s.get("alert_discord_webhook_url"):
         return
-    content = f"@everyone {message}" if s.get("alert_discord_mention_everyone") else message
+    everyone = bool(s.get("alert_discord_mention_everyone"))
+    content = (f"@everyone {message}" if everyone else message)[:2000]          # Discord refuses longer bodies
     try:
         resp = await http.client("outbound").post(
-            s["alert_discord_webhook_url"], json={"content": content}, timeout=10.0)
+            s["alert_discord_webhook_url"],
+            # only the configured @everyone may ping: a webhook name or an error text carrying @here does not
+            json={"content": content, "allowed_mentions": {"parse": ["everyone"] if everyone else []}}, timeout=10.0)
         if resp.status_code >= 400:
             state.log_event("warn", f"Discord alert failed: {resp.status_code} {resp.text}")
     except Exception as exc:  # noqa: BLE001 - never let a notification failure escalate
@@ -351,8 +354,8 @@ async def discord_listener_restored(user: str = "") -> None:
                          _send_push(tr("Discord listener online"), message, url="/#/discord"))
 
 
-async def webhook_failed(webhook_name: str, reason: str) -> None:
-    s = config.load_settings()
+async def webhook_failed(webhook_name: str, reason: str, *, settings: dict[str, Any] | None = None) -> None:
+    s = settings if settings is not None else config.load_settings()
     if not s.get("alert_on_webhook_failed", True):
         return
     tr = _tr(s)

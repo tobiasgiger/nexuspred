@@ -6,7 +6,7 @@ import { actions } from "./actions.js";
 import { connectStream } from "./stream.js";
 import { parseHash, matchRoute, navigate as go } from "./router.js";
 import { initTheme } from "./theme.js";
-import { renderSidebar, titleFor, firstChild, NAV } from "./components/sidebar.js";
+import { renderSidebar, titleFor } from "./components/sidebar.js";
 import { renderTopbar } from "./components/topbar.js";
 import { closeDrawer } from "./components/drawer.js";
 import { ROUTES } from "./pages/index.js";

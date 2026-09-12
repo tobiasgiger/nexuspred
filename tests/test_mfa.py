@@ -139,13 +139,15 @@ async def test_admin_reset_and_password_reset_re_enrol(client, admin, anon_clien
     assert r.headers["location"] == "/" and auth.COOKIE in r.cookies              # password alone again…
     async with _make_client(r.cookies[auth.COOKIE]) as c:
         assert (await c.get("/api/settings")).status_code == 403                 # …but only into enrolment
-    # a password reset (the other recovery path) also re-enrols
+    # a password reset changes the password only: the second factor stays (a
+    # reset link in the wrong hands is never a 2FA bypass) and nobody is signed in by it
     async with _make_client(auth.make_session(u["id"])) as c:
         await _enrol(c, u["id"])
     token = db.create_password_reset(u["id"])
     assert db.consume_password_reset(token, "newpassword1") == u["id"]
     fresh = db.get_user(u["id"])
-    assert not fresh["totp_enabled"] and fresh["totp_required"] and db.mfa_backup_codes_left(u["id"]) == 0
+    assert fresh["totp_enabled"] and fresh["totp_required"] and db.mfa_backup_codes_left(u["id"]) == 10
+    assert db.authenticate("user@example.com", "newpassword1")
 
 
 async def test_second_factor_is_rate_limited_per_account(client, admin, anon_client):

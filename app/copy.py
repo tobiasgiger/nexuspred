@@ -55,7 +55,6 @@ WS_RECENT_MAX = 20           # raw socket messages kept for the diagnostics bloc
 REJECT_HOLDOFF_S = 30.0      # reconcile leaves a follower alone this long after a rejected order
 ORDER_SETTLE_S = 5.0         # …and this long after a successful one (the fill must reach /position/list)
 FOLLOWER_RESEED_S = 60.0     # followers' positions are re-read at most this often while the leader seed fails
-MAX_EVENTS_MEMORY = 200
 
 
 # ----------------------------------------------------------------- config
@@ -427,6 +426,7 @@ class GroupRunner:
         self.follower_err_at: dict[str, float] = {}   # spec → monotonic of the last reject
         self.last_order_at: dict[str, float] = {}     # spec → monotonic of the last successful order
         self._pending_poll: dict[int, int] = {}       # contract → net a poll saw once while the socket is synced
+        self._last_ws_event_at: float = 0.0           # monotonic of the last socket message (shared REST rows older than it are re-fetched)
         self._followers_seeded_at: float = 0.0
         self.leader_account_id = 0
         self.diag: dict[str, Any] = {"frames": 0, "props": {}, "backstop_catches": 0, "recent": []}
@@ -563,6 +563,23 @@ class GroupRunner:
         t = getattr(self.orders, "_apply_task", None)
         if t is not None and not t.done():
             t.cancel()
+            try:
+                await t                                   # a twin placed under the cancel is still recorded (shielded)
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+
+    async def refresh_followers(self, external: list[dict[str, Any]]) -> None:
+        """Adopt a changed marketplace follower list without restarting the feed.
+        Twins of a follower that left are cancelled by ``release_followers``
+        (unsubscribe / kick); a joining follower is seeded from the broker."""
+        self.external = external
+        self.followers = effective_followers(self.area_id, self.group, external)
+        self._area_by_spec = {str(f["spec"]): int(f.get("area_id") or self.area_id) for f in self.followers}
+        self.fingerprint = (self.fingerprint[0], json.dumps(external, sort_keys=True))
+        try:
+            await self._seed_followers(force=True)
+        except Exception as exc:  # noqa: BLE001 - the next poll seeds again
+            self.error = f"{type(exc).__name__}: {exc}"[:200]
 
     def _follower_id(self, session: Any, f: dict[str, Any]) -> int:
         """Tradovate id of a follower account (0 when unknown — never guessed)."""
@@ -855,6 +872,7 @@ class GroupRunner:
                     await self._on_ws_message(session, account_id, msg)
 
     async def _on_ws_message(self, session: Any, account_id: int, msg: dict[str, Any]) -> None:
+        self._last_ws_event_at = time.monotonic()
         e = msg.get("e")
         if e == "close":
             raise TradovateError("Tradovate closed the socket")
@@ -915,6 +933,9 @@ class GroupRunner:
         if self._poll_n % ORDERS_EVERY_N == 1 or ORDERS_EVERY_N == 1:
             await self.orders.poll(session, account_id)
         raw, shared = await leader_feed.snapshot(self.area_id, session, "positions")
+        if shared and leader_feed.fetched_at(self.area_id, session, "positions") < self._last_ws_event_at:
+            # another group's rows predate a socket event this runner already applied: look again
+            raw, shared = await leader_feed.snapshot(self.area_id, session, "positions", fresh=True)
         if shared:
             self.diag["feed_shared"] = int(self.diag.get("feed_shared") or 0) + 1
         self.last_frame = time.monotonic()
@@ -986,19 +1007,19 @@ class GroupRunner:
             else:
                 self._record("ignored", symbol=name, detail=f"leader {prev:+d} → {net:+d}: existing position, not copied until flat or synced")
             return
-        self._persist(cid)
         if not self._wanted(cid):
             if cid not in self._filtered:
                 self._filtered.add(cid)
                 self._record("filtered", symbol=name, detail=f"leader {prev:+d} → {net:+d}: {_base_root(name)} is not in the group's symbols")
             return
         if self.paused:
+            # not persisted as mirrored: after a restart the contract is baseline, never re-entered on the followers
             self._record("skipped", symbol=name, detail=f"leader {prev:+d} → {net:+d}: group paused")
             return
-        s = config.load_settings(area_id=self.area_id)
-        if not s.get("trading_enabled"):
+        if not config.setting("trading_enabled", area_id=self.area_id):
             self._record("skipped", symbol=name, detail=f"leader {prev:+d} → {net:+d}: trading switch is off")
             return
+        self._persist(cid)
         await self._mirror_contract(cid, name, net, reason=f"leader {prev:+d} → {net:+d}", t0=t0)
 
     async def _mirror_contract(self, cid: int, name: str, net: int, *, reason: str, t0: Optional[float] = None) -> None:
@@ -1023,8 +1044,9 @@ class GroupRunner:
                 self._record("reject", follower=spec, symbol=name, detail="login disabled or account gone")
                 return
             farea = self._area_of(f)
-            if farea != self.area_id and not config.setting("trading_enabled", area_id=farea):
-                self._record("skipped", follower=spec, symbol=name, detail=f"{reason}: trading switch is off in the follower's workspace")
+            if not config.setting("trading_enabled", area_id=farea):
+                self._record("skipped", follower=spec, symbol=name,
+                             detail=f"{reason}: trading switch is off" + (" in the follower's workspace" if farea != self.area_id else ""))
                 return
             if reason == "drift" and self.leader_net.get(cid, 0) != net:
                 return                                  # the leader moved while we waited for the lock: the newer event handles it
@@ -1102,8 +1124,8 @@ class GroupRunner:
     async def reconcile(self) -> int:
         """Compare followers' broker positions with what the mirror expects and
         fix drift with a market order. Returns the number of corrections."""
-        if self.paused or not self.feed_ok:
-            return 0
+        if self.paused or not self.feed_ok or not config.setting("trading_enabled", area_id=self.area_id):
+            return 0                                    # the switch stops corrections too, not only new mirrors
         fixes = 0
         session = self._leader_session()
         if session is not None and self.orders.enabled:
@@ -1184,7 +1206,7 @@ class GroupRunner:
                 n = await self.flatten_followers(reason=f"feed lost for {int(lost_for)} s")
                 self.paused, self.pause_reason = True, f"feed lost for {int(lost_for)} s — followers flattened ({n} order(s)); resume when the leader feed is back"
             self._record("paused", detail=self.pause_reason)
-            await alerts.copy_alert(f"Copy group paused: {self.group['name']}", self.pause_reason, email=True)
+            self._alert(f"Copy group paused: {self.group['name']}", self.pause_reason, email=True)   # never holds the copy loop on SMTP
 
     async def flatten_followers(self, *, reason: str) -> int:
         """Cancel every twin, then close every mirrored contract on every follower
@@ -1195,12 +1217,11 @@ class GroupRunner:
         # touched — never a follower's own, unrelated position
         contracts = {cid for cid, n in self.leader_net.items() if cid not in self.baseline}
         contracts |= {k[1] for k in self.orders.touched if k[1]} | {t["contract_id"] for t in self.orders.twins.values()}
-        for f in self.followers:
-            if not f.get("enabled", True):
-                continue
+        async def one_follower(f: dict[str, Any]) -> int:
             ex = self._executor(f)
             if ex is None:
-                continue
+                return 0
+            n = 0
             for cid in contracts:
                 key = (f["spec"], cid)
                 lock = self.locks.setdefault(f["spec"], asyncio.Lock())
@@ -1216,16 +1237,25 @@ class GroupRunner:
                             res = await ex.place_order(symbol=name, action="Sell" if have > 0 else "Buy", qty=abs(have), order_type="Market")
                         except asyncio.CancelledError:
                             raise
-                        except Exception as exc:  # noqa: BLE001 - keep going with the other followers
+                        except Exception as exc:  # noqa: BLE001 - keep going with the other contracts
                             self._record("reject", follower=f["spec"], symbol=name, detail=f"flatten ({reason}): {exc}")
                             continue
                     if isinstance(res, dict) and res.get("status") == "submitted":
                         self.follower_pos[key] = 0
                         self.last_order_at[f["spec"]] = time.monotonic()
-                        sent += 1
+                        n += 1
                         self._record("flatten", follower=f["spec"], symbol=name, detail=f"{reason}: closed {have:+d}")
                     else:
                         self._record("reject", follower=f["spec"], symbol=name, detail=f"flatten ({reason}): not accepted ({res})")
+            return n
+
+        # every follower at once (each behind its own lock): on the feed-loss path time matters
+        results = await asyncio.gather(*(one_follower(f) for f in self.followers if f.get("enabled", True)), return_exceptions=True)
+        for r in results:
+            if isinstance(r, asyncio.CancelledError):
+                raise r
+            if isinstance(r, int):
+                sent += r
         # what was flattened is not re-entered by the reconcile: it becomes baseline
         # until the leader is flat or the user syncs
         for cid in contracts:
@@ -1308,22 +1338,37 @@ def _enabled_specs(accounts: Any) -> set[str]:
     return {str(a.get("spec")) for a in accounts or [] if isinstance(a, dict) and a.get("spec") and a.get("enabled", True)}
 
 
+_sync_locks: dict[int, asyncio.Lock] = {}
+
+
 async def sync_area(area_id: int) -> None:
-    """Start runners for enabled groups, stop the others, restart changed ones."""
-    groups = {g["id"]: g for g in load_groups(area_id)}
-    for key, r in list(_runners.items()):
-        if key[0] != area_id:
-            continue
-        g = groups.get(key[1])
-        if g is None or not g.get("enabled") or json.dumps(g, sort_keys=True) != r.fingerprint[0] \
-                or json.dumps(external_followers(area_id, key[1], group=g), sort_keys=True) != r.fingerprint[1]:
-            await r.stop()
-            _runners.pop(key, None)
-    for gid, g in groups.items():
-        if g.get("enabled") and (area_id, gid) not in _runners:
-            r = GroupRunner(area_id, g)
-            _runners[(area_id, gid)] = r
-            r.start()
+    """Start runners for enabled groups, stop the others, restart changed ones.
+    Serialised per area: the copy loop and the routers call this concurrently,
+    and two callers seeing the same stale runner must not both start a fresh
+    one (every leader change would be mirrored twice). A change of the
+    marketplace followers alone is applied in place — a subscriber toggling
+    their subscription must not cost the publisher a feed restart."""
+    lock = _sync_locks.get(area_id)
+    if lock is None:
+        lock = _sync_locks[area_id] = asyncio.Lock()
+    async with lock:
+        groups = {g["id"]: g for g in load_groups(area_id)}
+        for key, r in list(_runners.items()):
+            if key[0] != area_id:
+                continue
+            g = groups.get(key[1])
+            if g is None or not g.get("enabled") or json.dumps(g, sort_keys=True) != r.fingerprint[0]:
+                _runners.pop(key, None)                # gone from the table before the await: no second starter
+                await r.stop()
+                continue
+            external = external_followers(area_id, key[1], group=g)
+            if json.dumps(external, sort_keys=True) != r.fingerprint[1]:
+                await r.refresh_followers(external)
+        for gid, g in groups.items():
+            if g.get("enabled") and (area_id, gid) not in _runners:
+                r = GroupRunner(area_id, g)
+                _runners[(area_id, gid)] = r
+                r.start()
 
 
 def runner(area_id: int, group_id: str) -> Optional[GroupRunner]:

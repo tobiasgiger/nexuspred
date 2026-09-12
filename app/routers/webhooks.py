@@ -8,7 +8,7 @@ from typing import Any, Callable
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from .. import config, context, db, marketplace, signals, sizing, state, trade_window
+from .. import config, context, db, marketplace, security, signals, sizing, state, trade_window
 from ..tradovate import TradovateError
 from ..web import require_admin
 
@@ -16,6 +16,11 @@ router = APIRouter(tags=["webhooks"])
 
 
 # ===================================================================== Ingress
+INGRESS_PER_WEBHOOK = (60, 10.0)      # signals per webhook per window (TradingView sends a handful per bar at most)
+MAX_QUEUED_SIGNALS = 256              # background signal tasks in flight across the bridge
+_INGRESS_LIMIT = security.RateLimiter(*INGRESS_PER_WEBHOOK)
+
+
 def _resolve_webhook(token: str) -> tuple[int | None, dict[str, Any] | None]:
     """Find which area owns a webhook token (webhooks are per area). Returns
     (area_id, webhook) or (None, None). Served from config's in-memory index."""
@@ -51,6 +56,14 @@ async def webhook(token: str, request: Request) -> JSONResponse:
     area_id, wh = _resolve_webhook(token)
     if not wh or not wh.get("enabled") or area_id is None:
         raise HTTPException(status_code=403, detail="Invalid webhook token")
+    # backpressure: a leaked URL must not queue unbounded work behind the broker's
+    # request spacing; real alert bursts are far below both limits
+    if not _INGRESS_LIMIT.hit(str(wh.get("id") or token)):
+        raise HTTPException(status_code=429, detail="Too many signals for this webhook — try again in a moment",
+                            headers={"Retry-After": "10"})
+    if len(signals._bg_tasks) >= MAX_QUEUED_SIGNALS:
+        state.log_event("error", f"Signal for '{wh.get('name')}' refused: {MAX_QUEUED_SIGNALS} signals are already queued")
+        raise HTTPException(status_code=503, detail="Too many signals queued — try again in a moment", headers={"Retry-After": "5"})
 
     # Process in the owning user's area context (the background task inherits it).
     tok = context.set_area(area_id)

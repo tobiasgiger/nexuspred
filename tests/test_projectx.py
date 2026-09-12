@@ -126,6 +126,7 @@ async def test_feeds_positions_orders_versions_cash(px):
     gw.positions[101][0]["type"] = 2
     assert (await s.positions_snapshot())[0]["netPos"] == -2
     gw.positions[101][0]["type"] = 1
+    await s.positions_snapshot()                       # every fresh fetch feeds the 3 s cache the cash snapshot reads
     orders = await s.orders_snapshot()
     assert [(o["id"], o["ordStatus"], o["action"]) for o in orders] == [(501, "Working", "Sell"), (502, "Filled", "Sell")]
     v = await s.order_versions([501, 502])

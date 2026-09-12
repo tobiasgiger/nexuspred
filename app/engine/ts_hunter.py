@@ -15,19 +15,19 @@ from typing import Any
 
 from .. import alerts, config, state
 from ..tradovate import TradovateError, _fire
-from .common import OrdersLeftWorking, _close_contract, _place_stop_with_retry, SignalError, _lock, _opposite
+from .common import OrdersLeftWorking, _close_contract, _place_stop_with_retry, _price, _resize_stop, _signal_qty, _untrack_after_close, SignalError, _lock, _opposite
 from ..sizing import account_qty
 
 
 async def handle_entry(payload, side, root, target, trade_id, executors, active_map, tag, webhook, *, settings=None):
     s = settings if settings is not None else config.load_settings()
-    risk = payload.get("risk") or {}
-    try:
-        base_qty = float(risk.get("value"))
-    except (TypeError, ValueError):
+    risk, sl_block, tv = payload.get("risk"), payload.get("sl"), payload.get("tv")
+    for name, block in (("risk", risk), ("sl", sl_block), ("tv", tv)):
+        if block is not None and not isinstance(block, dict):
+            raise SignalError(f"'{name}' must be an object")
+    if not isinstance(risk, dict) or risk.get("value") is None:
         raise SignalError("Payload missing numeric 'risk.value' (contract qty)")
-    if base_qty <= 0:
-        raise SignalError("'risk.value' must be positive")
+    base_qty = _signal_qty(risk.get("value"), None, strict=True)
 
     with _lock:
         existing = active_map.get(trade_id)
@@ -35,8 +35,9 @@ async def handle_entry(payload, side, root, target, trade_id, executors, active_
         state.log_event("warn", f"{tag}[{webhook.get('name', '?')}] TS-Hunter trade {trade_id} ignored — an active trade with that id is already tracked")
         return {"status": "skipped", "reason": "active_trade_exists", "action": "signal", "trade_id": trade_id}
 
-    sl_price = (payload.get("sl") or {}).get("value")
-    entry_price_ref = (payload.get("tv") or {}).get("entry_price")
+    # parsed before any broker call: a malformed stop must never leave a live entry untracked
+    sl_price = _price((sl_block or {}).get("value"), "sl.value") if (sl_block or {}).get("value") is not None else None
+    entry_price_ref = _price((tv or {}).get("entry_price"), "tv.entry_price") if (tv or {}).get("entry_price") is not None else None
 
     entry_side = "Buy" if side == "buy" else "Sell"
     exit_side = _opposite(side)
@@ -57,7 +58,7 @@ async def handle_entry(payload, side, root, target, trade_id, executors, active_
             # the entry is live: a failed stop is retried and, if it still fails,
             # the entry is closed again (StopFailed → this account is not tracked)
             sl = await _place_stop_with_retry(ex, symbol=contract, action=exit_side, qty=qty,
-                                              order_type=sl_type, stop_price=float(sl_price), tag=tag)
+                                              order_type=sl_type, stop_price=sl_price, tag=tag)
             if sl is not None:
                 acc_orders.append(sl)
                 sl_id = sl.get("order_id")
@@ -65,8 +66,8 @@ async def handle_entry(payload, side, root, target, trade_id, executors, active_
         info = {
             "name": ex.name, "contract": contract, "qty": qty, "entry_qty": qty,
             "remaining_qty": qty, "sl_order_id": sl_id, "sl_type": sl_type,
-            "sl_stop": float(sl_price) if sl_price is not None else None,
-            "entry_price": float(entry_price_ref) if entry_price_ref is not None else None,
+            "sl_stop": sl_price,
+            "entry_price": entry_price_ref,
             "tp_order_ids": [],
         }
         return ex.name, info, acc_orders, contract
@@ -149,10 +150,7 @@ async def handle_partial_close(payload, trade_id, executors, active_map, tag):
         if info.get("sl_order_id"):
             if new_remaining > 0:
                 try:
-                    await ex.modify_order(
-                        info["sl_order_id"], qty=new_remaining,
-                        order_type=info.get("sl_type", "Stop"), stop_price=info.get("sl_stop"),
-                    )
+                    await _resize_stop(ex, info, new_remaining, info.get("sl_stop"))
                 except TradovateError as exc:
                     state.log_event("error", f"{tag}{ex.name}: stop could not be resized to {new_remaining} after the partial close: {exc} — it still covers {remaining}")
             else:
@@ -211,10 +209,10 @@ async def handle_full_close(payload, trade_id, target, executors, active_map, ta
         # Untracked trade (e.g. the bridge restarted) — fall back to flattening
         # every currently-enabled account for this symbol, same safety net as
         # the simple/bracket close_all.
-        targets = [(ex, {"contract": target}) for ex in executors]
+        targets = [(ex, {}) for ex in executors]
 
     async def close_account(ex, info) -> int:
-        contract = info.get("contract") or target
+        contract = info.get("contract") or await ex.resolve_contract(target)
         remaining = info.get("remaining_qty", info.get("qty"))
         if not tracked or exit_side is None or remaining is None:
             return await _close_contract(ex, tag, contract)           # nothing to isolate on
@@ -258,21 +256,7 @@ async def handle_full_close(payload, trade_id, target, executors, active_map, ta
             state.log_event("error", f"{tag}TS-Hunter full_close FAILED for {ex.name}: {r} — "
                                      + ("the position is closed but its orders are not: cancel them by hand" if isinstance(r, OrdersLeftWorking) else "the position may still be open"))
 
-    # On a mixed broker outcome, remove only accounts whose close was confirmed;
-    # failed accounts remain tracked so a retry cannot forget a live position or
-    # re-flatten accounts that already succeeded. With no broker failure, preserve
-    # the existing all-success tracking semantics (including disabled accounts).
-    with _lock:
-        cur = active_map.get(trade_id)
-        if cur and cur.get("accounts"):
-            if failed:
-                accounts = cur["accounts"]
-                for name in succeeded:
-                    accounts.pop(name, None)
-                if not accounts:
-                    active_map.pop(trade_id, None)
-            else:
-                active_map.pop(trade_id, None)
+    _untrack_after_close(active_map, trade_id, succeeded, failed)
 
     reason = payload.get("reason", "")
     suffix = f": {reason}" if reason else ""

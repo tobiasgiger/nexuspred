@@ -142,7 +142,17 @@ class SimulatedClient:
             ]
 
 
-sim_client = SimulatedClient()
+sim_client = SimulatedClient()                 # the default workspace's simulator (kept for callers/tests)
+_sims: dict[int, SimulatedClient] = {1: sim_client}
+
+
+def client_for(area_id: int) -> SimulatedClient:
+    """Each workspace simulates in its own book: one tenant's simulated
+    positions are never another's."""
+    c = _sims.get(area_id)
+    if c is None:
+        c = _sims[area_id] = SimulatedClient()
+    return c
 
 
 # --------------------------------------------------------------------- scenarios

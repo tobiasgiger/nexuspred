@@ -73,7 +73,6 @@ class _Job:
 _queues: dict[int, asyncio.Queue] = {}       # agent id → jobs waiting to be claimed
 _inflight: dict[str, _Job] = {}              # job id → job (claimed or waiting)
 _last_seen: dict[int, float] = {}            # agent id → monotonic time of last poll
-_lock = asyncio.Lock()
 
 
 def _queue(agent_id: int) -> asyncio.Queue:
@@ -156,6 +155,11 @@ async def request(agent_id: int, *, method: str, url: str, headers: dict[str, st
         _inflight.pop(job.id, None)
         if not job.future.done():
             job.future.cancel()          # a job the caller gave up on must never be executed later (a stale order)
+            if job.claimed:
+                # the agent already holds it and may execute it: nothing will record the answer
+                from . import state
+                state.log_event("error", f"execution agent #{agent_id}: request {method} {str(url)[:120]} abandoned after the agent "
+                                         "picked it up — its outcome is unknown, check the account")
 
 
 # -------------------------------------------------------------- agent side

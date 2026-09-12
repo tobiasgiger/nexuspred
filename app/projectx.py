@@ -38,7 +38,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from . import alerts, config, context, http, risk, state
-from .tradovate import RateLimited, TradovateError, _fire
+from .tradovate import OrderOutcomeUnknown, RateLimited, TradovateError, _fire
 
 SNAPSHOT_TTL_S = 3.0              # one Position/searchOpen and Account/search per login per P&L tick, not per account
 
@@ -134,7 +134,8 @@ class ProjectXSession:
         self.user = str(entry.get("px_user") or "")
         self.api_key = str(entry.get("px_api_key") or "")
         firm = str(entry.get("px_firm") or "topstep").strip()
-        self.base_url = (FIRMS.get(firm.lower()) or (firm if firm.startswith("http") else FIRMS["topstep"])).rstrip("/")
+        # a custom gateway must be https (a plain-http or non-URL value would send the API key in clear / nowhere)
+        self.base_url = (FIRMS.get(firm.lower()) or (firm if firm.startswith("https://") else FIRMS["topstep"])).rstrip("/")
         self.firm = firm
         self.account_spec = entry.get("account_spec") or ""
         self.account_id = int(entry.get("account_id") or 0)
@@ -188,11 +189,14 @@ class ProjectXSession:
     def _client(self) -> Any:
         return http.client("outbound")
 
-    async def _get_token(self, force: bool = False) -> str:
+    async def _get_token(self, force: bool = False, *, stale: str | None = None) -> str:
+        """``stale`` names the token a 401 came back for: a re-login happens once
+        for it, concurrent callers that hit the same 401 reuse the fresh token."""
         if not self.has_token():
             raise TradovateError(f"[{self.name}] ProjectX user name / API key not set")
         async with self._lock:
-            if self._token and not force and time.monotonic() - self._token_at < TOKEN_TTL_S:
+            fresh = bool(self._token) and time.monotonic() - self._token_at < TOKEN_TTL_S
+            if self._token and fresh and not force and (stale is None or stale != self._token):
                 return self._token
             r = await self._client().post(f"{self.base_url}/api/Auth/loginKey", json={"userName": self.user, "apiKey": self.api_key}, timeout=20.0)
             data = r.json() if r.content else {}
@@ -210,9 +214,14 @@ class ProjectXSession:
             if wait > 0:
                 await asyncio.sleep(wait)
             self._last_sent = time.monotonic()
-        r = await self._client().post(f"{self.base_url}{path}", json=body, headers={"Authorization": f"Bearer {token}"}, timeout=20.0)
+        try:
+            r = await self._client().post(f"{self.base_url}{path}", json=body, headers={"Authorization": f"Bearer {token}"}, timeout=20.0)
+        except (httpx.ConnectTimeout, httpx.PoolTimeout, httpx.ConnectError) as exc:
+            raise TradovateError(f"[{self.name}] ProjectX {path}: {exc!r}") from exc     # nothing was sent
+        except httpx.RemoteProtocolError as exc:
+            raise httpx.ReadTimeout(str(exc)) from exc                                  # sent, answer lost → outcome unknown
         if r.status_code == 401 and retry:
-            await self._get_token(force=True)
+            await self._get_token(stale=token)
             return await self._post(path, body, retry=False)
         if r.status_code == 429:
             self.rate_limits += 1
@@ -335,11 +344,13 @@ class ProjectXSession:
             self._remember(c)
         return found
 
-    async def _contract_for(self, symbol: str) -> dict[str, Any]:
-        """The gateway contract for a bridge symbol (root, MNQZ6 or MNQZ25)."""
+    async def _contract_for(self, symbol: str, *, refresh: bool = False) -> dict[str, Any]:
+        """The gateway contract for a bridge symbol (root, MNQZ6 or MNQZ25).
+        ``refresh`` skips the cache: the front month is re-asked from the gateway
+        (a cached record keeps ``active`` from the day it was fetched)."""
         root, month, year = split_symbol(symbol)
         want = f"{root}{month}{year}" if month else ""
-        for name, rec in self._by_name.items():
+        for name, rec in (self._by_name.items() if not refresh else ()):
             r2, m2, y2 = split_symbol(name)
             if r2 in (root, ROOT_ALIASES.get(root, root)) and (not want or (m2, y2) == (month, year)):
                 if want or rec["active"]:
@@ -372,7 +383,7 @@ class ProjectXSession:
         cached = self._front.get(root)
         if cached and time.monotonic() - cached[1] < 3600:
             return cached[0]
-        rec = await self._contract_for(root)
+        rec = await self._contract_for(root, refresh=True)
         r2, m2, y2 = split_symbol(rec["name"])
         name = f"{root}{m2}{y2}"
         self._front[root] = (name, time.monotonic())
@@ -466,8 +477,9 @@ class ProjectXSession:
                             "symbol": name, "gateway_id": gid})
         if failed and len(failed) == len(self.accounts):
             raise TradovateError(f"[{self.name}] positions: every account failed ({failed[0]})")
-        if cached:                                  # only the P&L tick's own fetch is shared between its accounts
-            self._snap_cache["positions"] = (time.monotonic(), [dict(r) for r in out])
+        # every fresh fetch feeds the short cache (the P&L tick's per-account cash
+        # snapshots reuse the login's fetch); only the *read* is gated by ``cached``
+        self._snap_cache["positions"] = (time.monotonic(), [dict(r) for r in out])
         return out
 
     def _order_row(self, o: dict[str, Any]) -> dict[str, Any]:
@@ -628,7 +640,9 @@ class ProjectXSession:
             second = await self.place_order(symbol=symbol, action=other["action"], qty=qty, order_type=other["order_type"], price=other.get("price"),
                                             stop_price=other.get("stop_price"), account_spec=account_spec, account_id=account_id,
                                             account_name=account_name, linked_order_id=first["order_id"])
-        except TradovateError:
+        except TradovateError as exc:
+            if isinstance(exc, OrderOutcomeUnknown):
+                raise                                   # leg 2 may be live and linked: never cancel leg 1 blindly
             try:
                 await self.cancel_order(int(first["order_id"]), account_id=account_id, account_spec=account_spec)
             except Exception:  # noqa: BLE001

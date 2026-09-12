@@ -220,6 +220,13 @@ ProjectX tick size / tick value, for Rithmic from the built-in table by product 
   address is taken from the hop the *trusted* proxy appended to `X-Forwarded-For`
   (`NEXUSPRED_PROXY_HOPS`, default 1 = Render / one nginx; 0 = no proxy, ignore the
   header; 2 = Cloudflare in front of nginx). 256 KB request-body cap.
+- **Signal ingress**: at most 60 signals per webhook per 10 seconds (HTTP 429) and 256
+  queued signal tasks bridge-wide (HTTP 503), so a leaked webhook URL cannot queue unbounded
+  broker work; every price and quantity in a payload is validated before the first broker
+  call, quantities are capped at 1000 contracts.
+- **Password reset**: a reset link changes the password only — it never wipes the second
+  factor and never signs the user in (the new password and the authenticator code are
+  asked for at the next sign-in). A lost authenticator is recovered by an admin's *Reset 2FA*.
 - **Headers**: strict Content-Security-Policy with a per-request script nonce,
   `frame-ancestors 'none'`, `X-Frame-Options`, `X-Content-Type-Options`,
   `Referrer-Policy`, `Permissions-Policy`, HSTS behind HTTPS, `Cache-Control: no-store`

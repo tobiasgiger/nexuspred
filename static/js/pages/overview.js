@@ -127,8 +127,11 @@ export default {
       const cur = a.dd_level != null ? String(Math.round(a.dd_level)) : "";
       const v = window.prompt(`Trailing threshold for ${a.spec} as shown by your prop firm / broker (e.g. 48100).\nThe bridge trails it forward from there. Leave empty to reset the tracker.`, cur);
       if (v === null) return;
+      const cleaned = v.replace(/[^0-9.\-]/g, "");
+      const level = v.trim() === "" ? null : Number(cleaned);
+      if (level !== null && (cleaned === "" || !Number.isFinite(level))) { toast(t("Enter a number"), "error"); return; }
       try {
-        const r = await api.post("/api/pnl/drawdown", { account_id: a.account_id, level: v.trim() === "" ? null : Number(v.replace(/[^0-9.\-]/g, "")) });
+        const r = await api.post("/api/pnl/drawdown", { account_id: a.account_id, level });
         paintPnl(r, true); toast(v.trim() === "" ? t("Drawdown tracker reset") : t("Threshold pinned"), "success");
       } catch (e) { toast(e.message, "error"); }
     }

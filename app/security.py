@@ -128,6 +128,7 @@ class RateLimiter:
 # Credential endpoints: per client IP. Wide enough for a typo-prone human,
 # far too tight for an online guessing attack (PBKDF2 makes each try ~100 ms
 # of server CPU as well).
+BLOCK_LOG = RateLimiter(1, 600.0)      # "login_blocked" audit rows: one per address (and account) per 10 min
 _LIMITS: dict[str, RateLimiter] = {
     "/login": RateLimiter(10, 60.0),
     "/login/2fa": RateLimiter(10, 60.0),
@@ -177,6 +178,7 @@ def reset_limits() -> None:
     _GLOBAL.reset()
     LOGIN_FAILS_PER_EMAIL.reset()
     LOGIN_FAILS_TOTAL.reset()
+    BLOCK_LOG.reset()
 
 
 def _rate_limited(request: Request) -> Response | None:
@@ -188,9 +190,9 @@ def _rate_limited(request: Request) -> Response | None:
     ip = client_ip(request)
     if rl.hit(ip) and _GLOBAL.hit(ip):
         return None
-    if request.url.path == "/login":
+    if request.url.path == "/login" and BLOCK_LOG.hit(ip):
         from . import db  # local import: security is imported by db-free modules too
-        db.log_action(None, "", "login_blocked", ip, "rate limit hit")
+        db.log_action(None, "", "login_blocked", ip, "rate limit hit")     # one audit row per address and window, not per request
     if request.url.path in _FORM_PAGES:
         return RedirectResponse(f"{request.url.path}?error=rate", status_code=302,
                                 headers={"Retry-After": "60"})
@@ -240,10 +242,11 @@ def cross_site(request: Request) -> bool:
 # ---------------------------------------------------------------- headers
 def _csp(nonce: str, *, relaxed: bool) -> str:
     script = "'self' 'unsafe-inline'" if relaxed else f"'self' 'nonce-{nonce}'"
+    ancestors = "'self'" if relaxed else "'none'"             # the setup guide is framed by the dashboard's Guide page
     return (
         f"default-src 'self'; script-src {script}; style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data:; font-src 'self' data:; connect-src 'self'; "
-        "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+        f"frame-ancestors {ancestors}; base-uri 'self'; form-action 'self'; object-src 'none'"
     )
 
 
@@ -251,7 +254,7 @@ def apply_headers(request: Request, response: Response, nonce: str) -> None:
     h = response.headers
     path = request.url.path
     h.setdefault("X-Content-Type-Options", "nosniff")
-    h.setdefault("X-Frame-Options", "DENY")
+    h.setdefault("X-Frame-Options", "SAMEORIGIN" if path == "/guide" else "DENY")
     h.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     h.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
     h.setdefault("Cross-Origin-Opener-Policy", "same-origin")

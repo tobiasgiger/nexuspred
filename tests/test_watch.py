@@ -40,8 +40,14 @@ def sent(monkeypatch):
     calls: list[tuple] = []
 
     def rec(kind):
-        async def f(*a, **k):
+        # recorded when the alert is *fired* (the watch hands the coroutine to
+        # _fire and moves on): the call is visible right after observe_area
+        def f(*a, **k):
             calls.append((kind, a, k))
+
+            async def done() -> None:
+                return None
+            return done()
         return f
     for name in ("trade_opened", "position_added", "trade_closed", "agent_lost", "agent_restored", "daily_summary"):
         monkeypatch.setattr(alerts, name, rec(name))

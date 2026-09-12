@@ -2,6 +2,7 @@
    Placeholders {name} must appear in both. A key missing here shows the English text;
    the key list is every t("…") in static/js (tests/test_i18n.py checks coverage). */
 export const DE = {
+  "Enter a number": "Gib eine Zahl ein",
   // trading window (webhook drawer)
   "Mon": "Mo", "Tue": "Di", "Wed": "Mi", "Thu": "Do", "Fri": "Fr", "Sat": "Sa", "Sun": "So",
   "From": "Von",

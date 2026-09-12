@@ -61,7 +61,7 @@ async def snapshot_account(session: Any, account: dict[str, Any]) -> dict[str, A
 
 
 _risk_cache: dict[tuple[int, str], tuple[float, dict[int, dict[str, Any]]]] = {}
-_last_snap: dict[tuple[int, int], dict[str, Any]] = {}      # (area, account) → last snapshot
+_last_snap: dict[tuple[int, str, int], dict[str, Any]] = {}      # (area, login, account) → last snapshot
 _tick: dict[int, int] = {}
 
 
@@ -132,7 +132,7 @@ async def refresh_area(area_id: int) -> dict[str, Any]:
                 if not a.get("id"):
                     continue
                 aid = int(a["id"])
-                prev = _last_snap.get((area_id, aid))
+                prev = _last_snap.get((area_id, s.name, aid))
                 # a flat account's figures only move when something fills: refresh
                 # it every few ticks, accounts with a position (or unknown) every tick
                 due = (aid in open_accounts or raw_positions is None or prev is None
@@ -142,7 +142,7 @@ async def refresh_area(area_id: int) -> dict[str, Any]:
                 else:
                     try:
                         snap = await snapshot_account(s, a)
-                        _last_snap[(area_id, aid)] = dict(snap)
+                        _last_snap[(area_id, s.name, aid)] = dict(snap)
                     except Exception as exc:  # noqa: BLE001 - one account failing must not hide the others
                         errors.append(f"{a.get('spec') or a.get('id')}: {exc}")
                         continue

@@ -89,9 +89,3 @@ export function connectStream() {
   };
 }
 
-export function disconnectStream() {
-  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
-  if (es) es.close();
-  es = null;
-  store.set("stream", "off");
-}

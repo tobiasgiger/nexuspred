@@ -90,6 +90,14 @@ def _ts(v: Any) -> str:
         return s
 
 
+def _fid(v: Any) -> int:
+    """A fill id as int; a non-numeric id (a CSV column, a broker string id) is hashed, never a crash."""
+    try:
+        return int(v or 0)
+    except (TypeError, ValueError):
+        return fill_key("id", 0, str(v))
+
+
 def _root(symbol: str) -> str:
     from .rollover import parse_contract
     p = parse_contract(symbol)
@@ -115,7 +123,7 @@ def build_trade(*, pair_id: Any, buy: dict[str, Any], sell: dict[str, Any], qty:
                 source: str) -> dict[str, Any]:
     """One round-trip from a buy fill and a sell fill (Tradovate pair or FIFO)."""
     buy_ts, sell_ts = _ts(buy.get("timestamp")), _ts(sell.get("timestamp"))
-    long = (buy_ts, int(buy.get("id") or 0)) <= (sell_ts, int(sell.get("id") or 0))
+    long = (buy_ts, _fid(buy.get("id"))) <= (sell_ts, _fid(sell.get("id")))
     entry, exit_ = (buy, sell) if long else (sell, buy)
     entry_price, exit_price = (buy_price, sell_price) if long else (sell_price, buy_price)
     points = round(sell_price - buy_price, 6)
@@ -134,7 +142,7 @@ def build_trade(*, pair_id: Any, buy: dict[str, Any], sell: dict[str, Any], qty:
         "side": "long" if long else "short", "qty": int(qty),
         "entry_price": entry_price, "exit_price": exit_price,
         "entry_ts": _ts(entry.get("timestamp")), "exit_ts": _ts(exit_.get("timestamp")),
-        "entry_fill_id": int(entry.get("id") or 0), "exit_fill_id": int(exit_.get("id") or 0),
+        "entry_fill_id": _fid(entry.get("id")), "exit_fill_id": _fid(exit_.get("id")),
         "points": points, "value_per_point": value_per_point,
         "gross_pnl": gross, "fees": fee, "net_pnl": round(gross - fee, 2),
     }
@@ -338,13 +346,17 @@ async def import_session(area_id: int, session: Any, *, today: Optional[date] = 
             account=acct, symbol=sym, value_per_point=vpp, fees=fees, source="fillpair"))
         used_fill_ids.update((int(buy["id"]), int(sell["id"])))
     if not pairs:
-        # No pairing from the API: FIFO per account + contract over the fills we have.
+        # No pairing from the API: FIFO per account + contract over every stored
+        # fill (the session list alone can start inside an open position).
         groups: dict[tuple[int, int], list[dict[str, Any]]] = defaultdict(list)
-        for f in fills:
-            groups[(f["_accountId"], int(f.get("contractId") or 0))].append(f)
+        for row in db.journal_fills_for(area_id, list(accounts_by_id)):
+            groups[(int(row["account_id"]), int(row["contract_id"] or 0))].append(
+                {"id": int(row["fill_id"]), "timestamp": row["ts"], "action": row["action"], "qty": int(row["qty"] or 0),
+                 "price": float(row["price"] or 0), "contractId": int(row["contract_id"] or 0), "symbol": row["symbol"]})
+            fees.setdefault(int(row["fill_id"]), {"commission": float(row["fees"] or 0)})
         for (aid, cid), fs in groups.items():
             acct = accounts_by_id[aid]
-            sym, vpp = info.get(cid, (str(cid), 1.0))
+            sym, vpp = info.get(cid, (str(fs[0].get("symbol") or cid), value_per_point(_root(str(fs[0].get("symbol") or "")))))
             for m in fifo_pairs(fs):
                 trades.append(build_trade(
                     pair_id=f"fifo:{m['buy']['id']}:{m['sell']['id']}:{m['qty']}", buy=m["buy"], sell=m["sell"],
@@ -376,7 +388,7 @@ async def import_session(area_id: int, session: Any, *, today: Optional[date] = 
     except Exception as exc:  # noqa: BLE001 - history must never break the session import
         hist["history_error"] = (hist["history_error"] + f"; cash log: {exc}").strip("; ")
 
-    day = (today or datetime.now(tz())).isoformat() if isinstance(today, date) else datetime.now(tz()).date().isoformat()
+    day = today.isoformat() if isinstance(today, date) else datetime.now(tz()).date().isoformat()
     snapshots = 0
     for aid, acct in accounts_by_id.items():
         snap = await _snapshot(r, aid)
@@ -574,6 +586,7 @@ async def _history_from_cash_log(area_id: int, r: _Reader, accounts_by_id: dict[
             except ImportProblem:
                 pass
     from collections import Counter
+    zone = tz()
     r.diag["cash_log"] = {
         "entries": len(raw_log),
         "accounts": sorted({int(e.get("accountId") or 0) for e in raw_log})[:20],
@@ -582,8 +595,8 @@ async def _history_from_cash_log(area_id: int, r: _Reader, accounts_by_id: dict[
         "with_tradeId": sum(1 for e in raw_log if e.get("tradeId")),
         "with_fillId": sum(1 for e in raw_log if e.get("fillId")),
         "with_delta": sum(1 for e in raw_log if e.get("delta") is not None),
-        "first_trade_date": min((_trade_day(e, tz()) for e in raw_log), default=""),
-        "last_trade_date": max((_trade_day(e, tz()) for e in raw_log), default=""),
+        "first_trade_date": min((_trade_day(e, zone) for e in raw_log), default=""),
+        "last_trade_date": max((_trade_day(e, zone) for e in raw_log), default=""),
     }
     log = [e for e in raw_log if int(e.get("accountId") or 0) in accounts_by_id]
     r.diag["cash_log"]["entries_for_my_accounts"] = len(log)
@@ -617,7 +630,7 @@ async def _history_from_cash_log(area_id: int, r: _Reader, accounts_by_id: dict[
 
     # --- pairs not processed before ---------------------------------------
     r.diag["cash_log"]["pairs_in_book"] = len(pair_pnl)
-    todo = db.journal_unseen(area_id, "fillpair", sorted(pair_pnl))[:HISTORY_MAX_PAIRS_PER_RUN]
+    todo = db.journal_unseen(area_id, "fillpair", sorted(pair_pnl, reverse=True))[:HISTORY_MAX_PAIRS_PER_RUN]
     out["history_pairs"] = len(todo)
     trades: list[dict[str, Any]] = []
     done: list[int] = []
@@ -744,7 +757,17 @@ async def import_area(area_id: int, *, trigger: str = "manual", user_email: str 
 # ``journal_history_days`` back, later runs re-read the last OTHER_OVERLAP_DAYS
 # (stored fills and trades are idempotent, so overlap is free).
 OTHER_OVERLAP_DAYS = 7
+EQUITY_POINTS_MAX = 2000
 OTHER_MAX_HISTORY_DAYS = 365
+
+
+def fill_key(broker: str, account_id: int, raw_id: Any) -> int:
+    """A stable 63-bit id for a ProjectX / Rithmic execution: namespaced by
+    broker and account so it can never collide with a Tradovate fill id in the
+    same workspace (fill ids are unique per area in ``journal_fills``)."""
+    import hashlib
+    digest = hashlib.blake2b(f"{broker}:{account_id}:{raw_id}".encode(), digest_size=8).digest()
+    return (int.from_bytes(digest, "big") & 0x7FFF_FFFF_FFFF_FFFF) or 1
 
 
 def _lookback_days(area_id: int, account_id: int, settings: dict[str, Any]) -> int:
@@ -770,35 +793,48 @@ def _accounts_of(session: Any) -> dict[int, dict[str, Any]]:
 async def _import_fills(area_id: int, session: Any, accounts_by_id: dict[int, dict[str, Any]],
                         fills: list[dict[str, Any]], fees: dict[int, dict[str, Any]],
                         info: dict[int, tuple[str, float]], diag: dict[str, Any], *, today: Optional[date] = None) -> dict[str, Any]:
-    """Store broker-neutral fills, pair them FIFO, store the trades and today's
+    """Store broker-neutral fills, then pair the account's **whole stored fill
+    history** FIFO (a fetch window that starts inside an open position would
+    otherwise turn its exit into a phantom entry), store the trades and today's
     balance snapshot. A fill: ``id, orderId, contractId, timestamp, action
     (Buy/Sell), qty, price, _accountId``; ``fees`` per fill id; ``info`` per
-    contract id → (symbol, value per point)."""
+    contract id → (symbol, value per point). The database work runs on a worker
+    thread: a year of fills must not stall the order path."""
     fills = [f for f in fills if f.get("id") is not None and f.get("_accountId") in accounts_by_id and int(_num(f.get("qty"))) > 0]
-    fills_new = 0
-    for f in fills:
-        sym, _vpp = info.get(int(f.get("contractId") or 0), (str(f.get("contractId")), 1.0))
-        fills_new += db.upsert_journal_fill(area_id, {
-            "fill_id": int(f["id"]), "order_id": int(f.get("orderId") or 0),
-            "account_id": int(f["_accountId"]), "contract_id": int(f.get("contractId") or 0),
-            "symbol": sym, "ts": _ts(f.get("timestamp")), "action": str(f.get("action") or ""),
-            "qty": int(_num(f.get("qty"))), "price": _num(f.get("price")),
-            "fees": fee_total(fees.get(int(f["id"]))),
-        })
-    trades: list[dict[str, Any]] = []
-    groups: dict[tuple[int, int], list[dict[str, Any]]] = defaultdict(list)
-    for f in fills:
-        groups[(int(f["_accountId"]), int(f.get("contractId") or 0))].append(f)
-    for (aid, cid), fs in groups.items():
-        acct = accounts_by_id[aid]
-        sym, vpp = info.get(cid, (str(cid), 1.0))
-        for m in fifo_pairs(fs):
-            trades.append(build_trade(
-                pair_id=f"fifo:{m['buy']['id']}:{m['sell']['id']}:{m['qty']}", buy=m["buy"], sell=m["sell"],
-                qty=m["qty"], buy_price=m["buy_price"], sell_price=m["sell_price"],
-                account=acct, symbol=sym, value_per_point=vpp, fees=fees, source="fifo"))
-    trades = [t for t in trades if t["qty"] > 0]
-    trades_new = sum(db.upsert_journal_trade(area_id, t) for t in trades if not db.find_similar_journal_trade(area_id, t))
+
+    def store() -> tuple[int, int, int]:
+        fills_new = 0
+        for f in fills:
+            sym, _vpp = info.get(int(f.get("contractId") or 0), (str(f.get("contractId")), 1.0))
+            fills_new += db.upsert_journal_fill(area_id, {
+                "fill_id": int(f["id"]), "order_id": int(f.get("orderId") or 0),
+                "account_id": int(f["_accountId"]), "contract_id": int(f.get("contractId") or 0),
+                "symbol": sym, "ts": _ts(f.get("timestamp")), "action": str(f.get("action") or ""),
+                "qty": int(_num(f.get("qty"))), "price": _num(f.get("price")),
+                "fees": fee_total(fees.get(int(f["id"]))),
+            })
+        # the pairing input: every stored fill of these accounts (fresh ones included)
+        stored = db.journal_fills_for(area_id, list(accounts_by_id))
+        all_fees: dict[Any, dict[str, Any]] = {r["fill_id"]: {"commission": float(r["fees"] or 0)} for r in stored}
+        groups: dict[tuple[int, int], list[dict[str, Any]]] = defaultdict(list)
+        for r in stored:
+            groups[(int(r["account_id"]), int(r["contract_id"] or 0))].append(
+                {"id": int(r["fill_id"]), "timestamp": r["ts"], "action": r["action"], "qty": int(r["qty"] or 0),
+                 "price": float(r["price"] or 0), "contractId": int(r["contract_id"] or 0), "symbol": r["symbol"]})
+        trades: list[dict[str, Any]] = []
+        for (aid, cid), fs in groups.items():
+            acct = accounts_by_id[aid]
+            sym, vpp = info.get(cid, (str(fs[0].get("symbol") or cid), value_per_point(_root(str(fs[0].get("symbol") or "")))))
+            for m in fifo_pairs(fs):
+                trades.append(build_trade(
+                    pair_id=f"fifo:{aid}:{m['buy']['id']}:{m['sell']['id']}:{m['qty']}", buy=m["buy"], sell=m["sell"],
+                    qty=m["qty"], buy_price=m["buy_price"], sell_price=m["sell_price"],
+                    account=acct, symbol=sym, value_per_point=vpp, fees=all_fees, source="fifo"))
+        trades = [t for t in trades if t["qty"] > 0]
+        trades_new = sum(db.upsert_journal_trade(area_id, t) for t in trades if not db.find_similar_journal_trade(area_id, t))
+        return fills_new, len(trades), trades_new
+
+    fills_new, n_trades, trades_new = await asyncio.to_thread(store)
     day = today.isoformat() if isinstance(today, date) else datetime.now(tz()).date().isoformat()
     snapshots = 0
     for aid, acct in accounts_by_id.items():
@@ -815,9 +851,9 @@ async def _import_fills(area_id: int, session: Any, accounts_by_id: dict[int, di
             snapshots += 1
     diag["accounts"] = [{"id": a["id"], "spec": a["spec"]} for a in accounts_by_id.values()]
     diag["fills_for_my_accounts"] = len(fills)
-    diag["pairs_resolved"] = len(trades)
+    diag["pairs_resolved"] = n_trades
     return {"login": session.name, "accounts": len(accounts_by_id), "fills": len(fills), "fills_new": fills_new,
-            "trades": len(trades), "trades_new": trades_new, "snapshots": snapshots,
+            "trades": n_trades, "trades_new": trades_new, "snapshots": snapshots,
             "history_pairs": 0, "history_new": 0, "history_snapshots": 0, "history_error": "", "diag": diag}
 
 
@@ -861,7 +897,7 @@ async def import_projectx(area_id: int, session: Any, *, today: Optional[date] =
                 tick_size, tick_value = _num(ci.get("tickSize"), 0.0), _num(ci.get("tickValue"), 0.0)
                 vpp = round(tick_value / tick_size, 6) if tick_size > 0 and tick_value > 0 else value_per_point(_root(sym))
                 info[cid] = (sym, vpp)
-            fid = _int_id(str(t["id"]))
+            fid = fill_key("projectx", aid, t["id"])
             qty = int(_num(t.get("size")))
             fills.append({"id": fid, "orderId": _int_id(str(t.get("orderId") or 0)), "contractId": cid,
                           "timestamp": _ts(t.get("creationTimestamp")), "action": "Buy" if int(_num(t.get("side"), 0)) == 0 else "Sell",
@@ -911,8 +947,8 @@ async def import_rithmic(area_id: int, session: Any, *, today: Optional[date] = 
             action = "Buy" if tt in ("1", "BUY") or "BUY" in tt.upper() else "Sell"
             ssboe, usecs = int(_num(getattr(r, "ssboe", 0))), int(_num(getattr(r, "usecs", 0)))
             ts = datetime.fromtimestamp(ssboe + usecs / 1e6, tz=timezone.utc).isoformat() if ssboe else _ts(getattr(r, "fill_time", ""))
-            raw_id = str(getattr(r, "fill_id", "") or "") or f"{acct['spec']}:{getattr(r, 'basket_id', '')}:{ssboe}:{usecs}"
-            fid = _int_id(raw_id)
+            raw_id = str(getattr(r, "fill_id", "") or "") or f"{getattr(r, 'basket_id', '')}:{ssboe}:{usecs}"
+            fid = fill_key("rithmic", aid, raw_id)
             fills.append({"id": fid, "orderId": _int_id(str(getattr(r, "basket_id", "") or 0)), "contractId": cid,
                           "timestamp": ts, "action": action, "qty": qty,
                           "price": _num(getattr(r, "fill_price", None), _num(getattr(r, "price", 0))), "_accountId": aid})
@@ -942,39 +978,56 @@ def next_run(now: datetime, hhmm: str, zone: ZoneInfo) -> datetime:
     return candidate.astimezone(timezone.utc)
 
 
+_ran_on: dict[int, str] = {}        # area → local date of the last scheduled run
+
+
+async def scheduler_tick(now: Optional[datetime] = None) -> list[int]:
+    """One pass: run every workspace whose local import time has passed today
+    and that did not run today yet. Returns the areas imported."""
+    ran: list[int] = []
+    for aid in db.all_area_ids():
+        s = config.load_settings(area_id=aid)
+        if not s.get("journal_auto_import", True):
+            continue
+        try:
+            zone = ZoneInfo(str(s.get("journal_timezone") or "Europe/Zurich"))
+        except Exception:  # noqa: BLE001
+            zone = ZoneInfo("Europe/Zurich")
+        local = (now or datetime.now(timezone.utc)).astimezone(zone)
+        hh, mm = (str(s.get("journal_import_time") or "23:30").split(":") + ["0"])[:2]
+        try:
+            at = local.replace(hour=int(hh), minute=int(mm), second=0, microsecond=0)
+        except ValueError:
+            continue
+        today = local.date().isoformat()
+        if local < at or _ran_on.get(aid) == today:
+            continue
+        _ran_on[aid] = today
+        try:
+            rec = await import_area(aid, trigger="scheduled")
+            if rec.get("status") == "running":
+                _ran_on.pop(aid, None)              # a manual import holds the lock: try again next minute
+            else:
+                ran.append(aid)
+        except Exception as exc:  # noqa: BLE001
+            with context.use_area(aid):
+                state.log_event("warn", f"Scheduled journal import failed: {exc}")
+    return ran
+
+
 async def scheduler_loop() -> None:
-    """Import every area at its configured local time, once a day."""
+    """Import every area at its configured local time, once a day. Checked
+    every minute: an import that overruns (or a manual one holding the lock)
+    delays another area's run instead of skipping it, and a changed time or
+    switch takes effect within a minute."""
     while True:
         try:
-            due: list[tuple[int, datetime]] = []
-            now = datetime.now(timezone.utc)
-            for aid in db.all_area_ids():
-                s = config.load_settings(area_id=aid)
-                if not s.get("journal_auto_import", True):
-                    continue
-                try:
-                    zone = ZoneInfo(str(s.get("journal_timezone") or "Europe/Zurich"))
-                except Exception:  # noqa: BLE001
-                    zone = ZoneInfo("Europe/Zurich")
-                due.append((aid, next_run(now, str(s.get("journal_import_time") or "23:30"), zone)))
-            if not due:
-                await asyncio.sleep(300)
-                continue
-            soonest = min(t for _, t in due)
-            await asyncio.sleep(max(1.0, (soonest - datetime.now(timezone.utc)).total_seconds()))
-            now = datetime.now(timezone.utc)
-            for aid, when in due:
-                if when <= now + timedelta(seconds=30):
-                    try:
-                        await import_area(aid, trigger="scheduled")
-                    except Exception as exc:  # noqa: BLE001
-                        with context.use_area(aid):
-                            state.log_event("warn", f"Scheduled journal import failed: {exc}")
-            await asyncio.sleep(60)  # never fire twice for the same minute
+            await scheduler_tick()
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - the loop must survive anything
-            await asyncio.sleep(60)
+            pass
+        await asyncio.sleep(60)
 
 
 # --------------------------------------------------------------- reporting
@@ -1012,7 +1065,7 @@ def _agg(trades: list[dict[str, Any]]) -> dict[str, Any]:
         "win_rate": round(len(wins) / len(trades), 4) if trades else 0.0,
         "avg_win": round(gross_win / len(wins), 2) if wins else 0.0,
         "avg_loss": round(-gross_loss / len(losses), 2) if losses else 0.0,
-        "profit_factor": round(gross_win / gross_loss, 2) if gross_loss else (None if not gross_win else None),
+        "profit_factor": round(gross_win / gross_loss, 2) if gross_loss else None,
         "expectancy": round(net / len(trades), 2) if trades else 0.0,
         "largest_win": round(max((t["net_pnl"] for t in wins), default=0.0), 2),
         "largest_loss": round(min((t["net_pnl"] for t in losses), default=0.0), 2),
@@ -1063,6 +1116,9 @@ def stats(trades: list[dict[str, Any]], zone: ZoneInfo) -> dict[str, Any]:
         elif t["net_pnl"] < 0:
             streak_l, streak_w = streak_l + 1, 0
         best_w, best_l = max(best_w, streak_w), max(best_l, streak_l)
+    if len(curve) > EQUITY_POINTS_MAX:                 # a multi-year history stays a few hundred KB on every dashboard load
+        step = -(-len(curve) // EQUITY_POINTS_MAX)
+        curve = curve[::step] + ([curve[-1]] if (len(curve) - 1) % step else [])
     days = {_local_day(t["exit_ts"], zone) for t in ordered}
     return {
         **total, "max_drawdown": max_dd, "trading_days": len(days),

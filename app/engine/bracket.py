@@ -9,7 +9,7 @@ from typing import Any
 
 from .. import alerts, config, state
 from ..tradovate import TradovateError, _fire
-from .common import _place_stop_with_retry, SignalError, _lock, _opposite, _tp_index_from_event, _trade_key
+from .common import _place_stop_with_retry, _price, _resize_stop, _signal_qty, SignalError, _lock, _opposite, _tp_index_from_event, _trade_key
 from ..sizing import account_qty
 
 
@@ -18,17 +18,16 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
     # Honour the signal's contract count (payload 'qty'/'contracts'); fall back to
     # the webhook default only when the signal doesn't specify one.
     default_qty = int(webhook.get("default_qty", 3))
-    raw_qty = payload.get("qty", payload.get("contracts"))
-    try:
-        base_qty = int(float(raw_qty)) if raw_qty is not None else default_qty
-    except (TypeError, ValueError):
-        base_qty = default_qty
-    if base_qty <= 0:
-        base_qty = default_qty
+    base_qty = int(_signal_qty(payload.get("qty", payload.get("contracts")), default_qty, strict=False))
     base_tp_qty = int(webhook.get("tp_qty", 1))
     entry_side = "Buy" if action == "buy" else "Sell"
     exit_side = _opposite(action)
     sl_type = s.get("sl_order_type", "Stop")
+    # every price is parsed before the first broker call: a malformed target must
+    # never leave a live entry untracked and unprotected
+    sl_price = _price(payload["sl"], "sl") if payload.get("sl") is not None else None
+    tps = [_price(payload[k], k) for k in ("tp1", "tp2", "tp3") if payload.get(k) is not None]
+    entry_price = _price(payload["entry"], "entry") if payload.get("entry") is not None else None
 
     async def place_for(ex):
         contract = await ex.resolve_contract(target)
@@ -38,20 +37,20 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
         # 1) Market entry first (so the position exists before the brackets).
         entry = await ex.place_order(
             symbol=contract, action=entry_side, qty=entry_qty,
-            order_type=s.get("entry_order_type", "Market"), price=payload.get("entry"),
+            order_type=s.get("entry_order_type", "Market"), price=entry_price,
         )
         acc_orders = [entry]
 
         # 2) TP limit orders + protective stop, placed in parallel.
         bracket: list[tuple[str, Any]] = []
         remaining = entry_qty                       # the TP slices together never exceed the entry
-        for key in ("tp1", "tp2", "tp3"):
-            if payload.get(key) is not None and remaining > 0:
+        for tp_price in tps:
+            if remaining > 0:
                 slice_qty = min(tp_qty, remaining)
                 remaining -= slice_qty
                 bracket.append(("tp", ex.place_order(
                     symbol=contract, action=exit_side, qty=slice_qty,
-                    order_type=s.get("tp_order_type", "Limit"), price=float(payload[key]))))
+                    order_type=s.get("tp_order_type", "Limit"), price=tp_price)))
         tp_ids: list[int] = []
         sl_id = None
         if bracket:
@@ -64,11 +63,11 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
                 acc_orders.append(res)
                 if kind == "tp" and res.get("order_id"):
                     tp_ids.append(res["order_id"])
-        if payload.get("sl") is not None:
+        if sl_price is not None:
             # the protective stop is placed on its own, with a retry and a loud
             # alert when it fails: the entry is live by now
             sl = await _place_stop_with_retry(ex, symbol=contract, action=exit_side, qty=entry_qty,
-                                              order_type=sl_type, stop_price=float(payload["sl"]), tag=tag,
+                                              order_type=sl_type, stop_price=sl_price, tag=tag,
                                               cancel_ids=tp_ids,
                                               resting_entry_id=entry.get("order_id") if str(entry.get("order_type") or s.get("entry_order_type", "Market")) != "Market" else None)
             if sl is not None:
@@ -77,9 +76,9 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
 
         info = {
             "name": ex.name, "contract": contract, "entry_qty": entry_qty,
-            "tp_qty": tp_qty, "qty": entry_qty, "entry_price": payload.get("entry"),
+            "tp_qty": tp_qty, "qty": entry_qty, "entry_price": entry_price,
             "sl_order_id": sl_id, "sl_type": sl_type,
-            "sl_stop": float(payload["sl"]) if payload.get("sl") is not None else None,
+            "sl_stop": sl_price,
             "tp_order_ids": tp_ids,
         }
         return ex.name, info, acc_orders, contract
@@ -133,9 +132,11 @@ def _is_breakeven_move(payload: dict[str, Any], tp_index: int | None) -> bool:
     return tp_index == 1 or "breakeven" in msg or "break-even" in msg
 
 
-async def handle_move_sl(payload, root, executors, active_map, tag, webhook):
-    s = config.load_settings()
+async def handle_move_sl(payload, root, executors, active_map, tag, webhook, *, settings=None):
+    s = settings if settings is not None else config.load_settings()
     new_sl = payload.get("new_sl", payload.get("sl"))
+    if new_sl is not None:
+        new_sl = _price(new_sl, "new_sl")
 
     key = _trade_key(webhook["id"], root)
     with _lock:
@@ -158,7 +159,7 @@ async def handle_move_sl(payload, root, executors, active_map, tag, webhook):
         if use_entry and entry_price is not None:
             stop = float(entry_price)
         elif new_sl is not None:
-            stop = float(new_sl)
+            stop = new_sl
         else:
             state.log_event("warn", f"{tag}move_sl for {root}: no stop price available")
             return None
@@ -173,11 +174,7 @@ async def handle_move_sl(payload, root, executors, active_map, tag, webhook):
             info["sl_order_id"] = None
             info["qty"] = 0
             return None
-        await ex.modify_order(
-            info["sl_order_id"], qty=qty,
-            order_type=info.get("sl_type", "Stop"), stop_price=stop,
-        )
-        info["qty"] = qty                       # state follows the broker, never precedes it
+        await _resize_stop(ex, info, qty, stop)
         info["sl_stop"] = stop
         return stop
 
@@ -215,12 +212,7 @@ async def handle_trail_active(payload, root, executors, active_map, tag, webhook
         info = active["accounts"].get(ex.name)
         if not info or not info.get("sl_order_id"):
             return False
-        qty = _remaining_qty(info, tp_index)
-        await ex.modify_order(
-            info["sl_order_id"], qty=qty,
-            order_type=info.get("sl_type", "Stop"), stop_price=info.get("sl_stop"),
-        )
-        info["qty"] = qty                       # state follows the broker, never precedes it
+        await _resize_stop(ex, info, _remaining_qty(info, tp_index), info.get("sl_stop"))
         return True
 
     results = await asyncio.gather(

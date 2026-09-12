@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
-from .. import config, context, copy, db, marketplace, state
+from .. import config, context, copy, db, history, marketplace, state
 from ..web import require_admin
 from .accounts import trade_accounts_overview
 
@@ -160,7 +160,7 @@ async def api_delete_group(group_id: str) -> dict[str, Any]:
         await r.orders.cancel_all(reason="group deleted")      # never leave twins resting at the broker
     copy.save_groups(groups)
     await copy.sync_area(context.get_area())
-    db.delete_copy_state(context.get_area(), group_id)
+    history.defer(db.delete_copy_state, context.get_area(), group_id)   # behind the runner's queued state writes
     db.delete_copy_twins(context.get_area(), group_id)
     dropped = db.delete_subscriptions_for_webhook(context.get_area(), f"copy:{group_id}")
     state.log_event("info", f"Copy group '{removed.get('name')}' deleted" + (f" ({dropped} subscription(s) removed)" if dropped else ""))
@@ -184,7 +184,7 @@ async def _set_enabled(group_id: str, enabled: bool) -> dict[str, Any]:
     copy.save_groups(groups)
     await copy.sync_area(context.get_area())
     if not enabled:
-        db.delete_copy_state(context.get_area(), group_id)     # a re-enable starts from a clean baseline
+        history.defer(db.delete_copy_state, context.get_area(), group_id)     # a re-enable starts from a clean baseline (ordered behind queued writes)
     state.log_event("info", f"Copy group '{g['name']}' {'enabled' if enabled else 'disabled'}")
     return _with_status(g, copy.statuses(context.get_area()))
 

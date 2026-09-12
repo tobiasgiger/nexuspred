@@ -43,6 +43,45 @@
   <div id="drawerRoot"></div>
   <div class="toasts" id="toasts" aria-live="polite"></div>
   <script nonce="{{ nonce }}">window.__FB_VERSION__ = "{{ version }}";</script>
+  <!-- the module graph is four levels deep: preloading it flattens the waterfall -->
+  <link rel="modulepreload" href="/static/js/actions.js">
+  <link rel="modulepreload" href="/static/js/api.js">
+  <link rel="modulepreload" href="/static/js/charts.js">
+  <link rel="modulepreload" href="/static/js/components/drawer.js">
+  <link rel="modulepreload" href="/static/js/components/form.js">
+  <link rel="modulepreload" href="/static/js/components/sidebar.js">
+  <link rel="modulepreload" href="/static/js/components/table.js">
+  <link rel="modulepreload" href="/static/js/components/topbar.js">
+  <link rel="modulepreload" href="/static/js/i18n.js">
+  <link rel="modulepreload" href="/static/js/icons.js">
+  <link rel="modulepreload" href="/static/js/locales/de.js">
+  <link rel="modulepreload" href="/static/js/pages/accounts.js">
+  <link rel="modulepreload" href="/static/js/pages/agents.js">
+  <link rel="modulepreload" href="/static/js/pages/calendar.js">
+  <link rel="modulepreload" href="/static/js/pages/copy.js">
+  <link rel="modulepreload" href="/static/js/pages/discord.js">
+  <link rel="modulepreload" href="/static/js/pages/discordSettings.js">
+  <link rel="modulepreload" href="/static/js/pages/guide.js">
+  <link rel="modulepreload" href="/static/js/pages/index.js">
+  <link rel="modulepreload" href="/static/js/pages/journal.js">
+  <link rel="modulepreload" href="/static/js/pages/logs.js">
+  <link rel="modulepreload" href="/static/js/pages/marketplace.js">
+  <link rel="modulepreload" href="/static/js/pages/news.js">
+  <link rel="modulepreload" href="/static/js/pages/overview.js">
+  <link rel="modulepreload" href="/static/js/pages/settings.js">
+  <link rel="modulepreload" href="/static/js/pages/simulator.js">
+  <link rel="modulepreload" href="/static/js/pages/tools.js">
+  <link rel="modulepreload" href="/static/js/pages/users.js">
+  <link rel="modulepreload" href="/static/js/pages/webhooks.js">
+  <link rel="modulepreload" href="/static/js/privacy.js">
+  <link rel="modulepreload" href="/static/js/push.js">
+  <link rel="modulepreload" href="/static/js/router.js">
+  <link rel="modulepreload" href="/static/js/sizing.js">
+  <link rel="modulepreload" href="/static/js/store.js">
+  <link rel="modulepreload" href="/static/js/stream.js">
+  <link rel="modulepreload" href="/static/js/templates.js">
+  <link rel="modulepreload" href="/static/js/theme.js">
+  <link rel="modulepreload" href="/static/js/ui.js">
   <script type="module" src="/static/js/app.js?v={{ version }}"></script>
 </body>
 </html>

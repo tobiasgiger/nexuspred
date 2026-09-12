@@ -1,7 +1,7 @@
 /* Data actions: every API call the pages share, writing into the store. */
 import { api } from "./api.js";
 import { store, can } from "./store.js";
-import { toast } from "./ui.js";
+import { toast, mergeLive } from "./ui.js";
 import { setPublicOrigin } from "./templates.js";
 import { adopt as adoptLanguage, lang as currentLanguage } from "./i18n.js";
 
@@ -36,12 +36,13 @@ export const actions = {
     store.set("status", s);
     return s;
   }),
-  refreshOrders: () => quiet(async () => store.set("orders", await api.get("/api/orders"))),
+  refreshOrders: () => quiet(async () => store.set("orders", mergeLive(store.get("orders"), await api.get("/api/orders")))),
   checkRollover: () => quiet(async () => { await api.post("/api/rollover/check"); return actions.refreshStatus(); }),
   refreshLogs: () => quiet(async () => {
     const [events, signals] = await Promise.all([api.get("/api/events"), api.get("/api/signals")]);
-    store.set("events", events);
-    store.set("signals", signals);
+    // frames the stream delivered meanwhile stay on top; unchanged rows keep their identity
+    store.set("events", mergeLive(store.get("events"), events));
+    store.set("signals", mergeLive(store.get("signals"), signals));
   }),
   async refreshPositions() {
     try {

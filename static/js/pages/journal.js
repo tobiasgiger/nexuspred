@@ -36,7 +36,8 @@ export default {
   title: t("Journal"),
   render(root, { navigate }) {
     const f = { range: "month", period: "day", account: "", symbol: "", side: "" };
-    let month = new Date().toISOString().slice(0, 7);
+    const now0 = new Date();
+    let month = `${now0.getFullYear()}-${String(now0.getMonth() + 1).padStart(2, "0")}`;   // the local month, not UTC
 
     // ---- filter row (one row, scopes everything below) ----------------
     const rangeSel = h("select", { class: "input-sm", onChange: (e) => { f.range = e.target.value; load(); } }, RANGES.map(([v, l]) => h("option", { value: v, selected: v === f.range }, l)));
@@ -72,7 +73,7 @@ export default {
 
     // ---- trades table --------------------------------------------------
     const trades = dataTable({ empty: t("No trades in this range — import from your broker logins or widen the range."), compact: true,
-      onRow: (tr) => openTrade(t),
+      onRow: (tr) => openTrade(tr),
       columns: [
         { label: t("Closed"), render: (tr) => fmtDateTime(tr.exit_ts) },
         { label: t("Account"), render: (tr) => maskAccount(tr.account_name || tr.account_spec) },
@@ -201,16 +202,16 @@ export default {
       } catch (e) { toast(e.message, "error"); }
     }
 
-    let loading = false;
+    let loading = false, rerun = false;
     async function load() {
-      if (loading) return;
+      if (loading) { rerun = true; return; }          // a filter changed mid-flight: run once more with the final state
       loading = true;
       root.classList.add("refetching");   // hold the previous render, no skeleton flash
       try {
         const [ov] = await Promise.all([api.get(`/api/journal/overview?${qs()}`), loadTrades(), loadCalendar(), loadImports()]);
         paintOverview(ov);
       } catch (e) { toast(e.message, "error"); }
-      finally { root.classList.remove("refetching"); loading = false; }
+      finally { root.classList.remove("refetching"); loading = false; if (rerun) { rerun = false; load(); } }
     }
     async function loadImports() { try { imports.update(await api.get("/api/journal/imports")); } catch (e) { /* ignore */ } }
 

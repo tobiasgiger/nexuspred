@@ -110,6 +110,7 @@ _area_ids: Optional[tuple[int, list[int]]] = None  # (areas_generation, ids)
 
 
 def reset_caches() -> None:
+    _features_cache.clear()
     global _user_count, _area_ids
     _user_count = None
     _area_ids = None
@@ -204,6 +205,8 @@ def init() -> None:
                 );
                 CREATE INDEX IF NOT EXISTS ix_order_log_area ON order_log(area_id, id);
                 CREATE INDEX IF NOT EXISTS ix_order_log_ts ON order_log(ts);
+                CREATE INDEX IF NOT EXISTS ix_order_log_area_ts ON order_log(area_id, ts);
+                CREATE INDEX IF NOT EXISTS ix_signal_log_area_ts ON signal_log(area_id, ts);
                 CREATE TABLE IF NOT EXISTS journal_fills (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     area_id INTEGER NOT NULL,
@@ -400,6 +403,13 @@ def init() -> None:
                     created_at TEXT NOT NULL
                 )""")
             c.execute("CREATE INDEX IF NOT EXISTS idx_mfa_codes_user ON mfa_backup_codes(user_id)")
+            for stmt in ("CREATE INDEX IF NOT EXISTS ix_journal_imports_area ON journal_imports(area_id, id)",
+                         "CREATE INDEX IF NOT EXISTS ix_copy_events_ts ON copy_events(ts)",
+                         "CREATE INDEX IF NOT EXISTS ix_audit_action ON audit_log(action, id)",
+                         "CREATE INDEX IF NOT EXISTS ix_push_subs_area ON push_subscriptions(area_id)",
+                         "CREATE INDEX IF NOT EXISTS ix_agents_area ON agents(area_id)",
+                         "CREATE INDEX IF NOT EXISTS ix_subscriptions_pub ON subscriptions(publisher_area_id, webhook_id)"):
+                c.execute(stmt)
             imp_cols = {r["name"] for r in c.execute("PRAGMA table_info(journal_imports)").fetchall()}
             if imp_cols and "history_new" not in imp_cols:
                 c.execute("ALTER TABLE journal_imports ADD COLUMN history_new INTEGER NOT NULL DEFAULT 0")
@@ -500,12 +510,17 @@ def get_user_by_email(email: str) -> Optional[dict[str, Any]]:
         return _row_to_user(row) if row else None
 
 
+_DUMMY_HASH = hash_password("dummy-timing-equaliser")
+
+
 def authenticate(email: str, password: str) -> Optional[dict[str, Any]]:
     init()
     with _connect() as c:
         row = c.execute("SELECT * FROM users WHERE email=?", (email.strip().lower(),)).fetchone()
     if row and verify_password(password, row["password_hash"]):
         return _row_to_user(row)
+    if not row:
+        verify_password(password, _DUMMY_HASH)          # an unknown address costs the same time as a wrong password
     return None
 
 
@@ -831,6 +846,18 @@ def encrypt_existing_settings() -> int:
         if crypto.needs_reencrypt(raw):  # plain text, or readable only with a previous key
             save_area_settings(aid, crypto.decrypt_settings(raw))
             rewritten += 1
+    # the TOTP secrets live outside the settings blob: a rotated key must reach them too
+    with _connect() as c:
+        rows = c.execute("SELECT id, totp_secret FROM users WHERE totp_secret<>''").fetchall()
+        for r in rows:
+            raw = r["totp_secret"]
+            if crypto.is_current(raw):
+                continue
+            plain = crypto.decrypt(raw)
+            if plain:
+                c.execute("UPDATE users SET totp_secret=? WHERE id=?", (crypto.encrypt(plain), r["id"]))
+                rewritten += 1
+    _users.clear()
     return rewritten
 
 
@@ -1001,14 +1028,22 @@ def _load_features(area_id: int) -> dict[str, Any]:
         return {}
 
 
+_features_cache: dict[int, dict[str, bool]] = {}     # area → effective flags (features change only via set_area_feature)
+
+
 def get_area_features(area_id: int) -> dict[str, bool]:
-    """Effective feature flags for an area (stored values merged over defaults)."""
+    """Effective feature flags for an area (stored values merged over defaults).
+    Cached: ``require_feature`` runs on hot API routes."""
+    hit = _features_cache.get(area_id)
+    if hit is not None:
+        return dict(hit)
     init()
     stored = _load_features(area_id)
     merged = default_area_features()
     for key in FEATURES:
         if key in stored:
             merged[key] = bool(stored[key])
+    _features_cache[area_id] = dict(merged)
     return merged
 
 
@@ -1016,6 +1051,7 @@ def set_area_feature(area_id: int, feature: str, enabled: bool) -> dict[str, boo
     if feature not in FEATURES:
         raise ValueError(f"unknown feature: {feature}")
     init()
+    _features_cache.pop(area_id, None)
     with _connect() as c:
         row = c.execute("SELECT features FROM areas WHERE id=?", (area_id,)).fetchone()
         stored: dict[str, Any] = {}
@@ -1348,6 +1384,21 @@ def upsert_journal_fill(area_id: int, f: dict[str, Any]) -> int:
             (area_id, f["fill_id"], f.get("order_id", 0), f.get("account_id", 0), f.get("contract_id", 0),
              f.get("symbol", ""), f.get("ts", ""), f.get("action", ""), f.get("qty", 0), f.get("price", 0), f.get("fees", 0)))
         return int(cur.rowcount or 0)
+
+
+def journal_fills_for(area_id: int, account_ids: list[int]) -> list[dict[str, Any]]:
+    """Every stored fill of the given accounts (the FIFO pairing runs over the
+    whole history, so a window that starts inside an open position never
+    fabricates a trade)."""
+    init()
+    if not account_ids:
+        return []
+    marks = ",".join("?" * len(account_ids))
+    with _connect() as c:
+        rows = c.execute(f"SELECT fill_id, order_id, account_id, contract_id, symbol, ts, action, qty, price, fees "
+                         f"FROM journal_fills WHERE area_id=? AND account_id IN ({marks}) ORDER BY ts, fill_id",
+                         (area_id, *[int(a) for a in account_ids])).fetchall()
+    return [dict(r) for r in rows]
 
 
 def upsert_journal_trade(area_id: int, t: dict[str, Any]) -> int:
@@ -1869,11 +1920,9 @@ def consume_password_reset(token: str, new_password: str) -> Optional[int]:
             return None
         c.execute("UPDATE users SET password_hash=? WHERE id=?",
                   (hash_password(new_password), rec["user_id"]))
-        # a reset link is the recovery path when the authenticator and the backup
-        # codes are gone: the user enrols again before using the dashboard
-        c.execute("UPDATE users SET totp_secret='', totp_enabled=0, totp_required=1, totp_counter=-1, backup_salt='' WHERE id=?",
-                  (rec["user_id"],))
-        c.execute("DELETE FROM mfa_backup_codes WHERE user_id=?", (rec["user_id"],))
+        # the link changes the password only: the second factor stays (a reset
+        # link in the wrong hands must not be a 2FA bypass); a lost authenticator
+        # is recovered by an admin's 2FA reset
     _pw_versions.pop(rec["user_id"], None)
     _users.pop(rec["user_id"], None)
     return rec["user_id"]

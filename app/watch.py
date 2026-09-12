@@ -15,11 +15,11 @@ the configured local time.
 """
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from . import alerts, config, context, db, relay, state
+from .tradovate import _fire
 
 # area → (account_id, contract_id) → {"qty", "price", "symbol", "account", "opened_at"}
 _positions: dict[int, dict[tuple[int, int], dict[str, Any]]] = {}
@@ -173,20 +173,20 @@ async def observe_area(area_id: int, sessions: list[Any], snapshots: list[dict[s
             if not alerts.account_alerts_on(ev["account"], s):
                 continue  # tracked, but this account is not on the alert list
             if ev["kind"] == "opened" and want_open:
-                await alerts.trade_opened(ev["account"], ev["symbol"], _direction(ev["qty"]), abs(ev["qty"]), ev.get("price"))
+                _fire(alerts.trade_opened(ev["account"], ev["symbol"], _direction(ev["qty"]), abs(ev["qty"]), ev.get("price")))
             elif ev["kind"] == "added" and want_open:
-                await alerts.position_added(ev["account"], ev["symbol"], _direction(ev["qty"]), ev["added"], abs(ev["qty"]))
+                _fire(alerts.position_added(ev["account"], ev["symbol"], _direction(ev["qty"]), ev["added"], abs(ev["qty"])))
             elif ev["kind"] == "reduced" and want_close:
-                await alerts.trade_closed(ev["account"], ev["symbol"], _direction(ev["qty"]), abs(ev["qty"]) - ev["remaining"],
-                                          ev.get("pnl"), ev.get("duration", ""), remaining=ev["remaining"])
+                _fire(alerts.trade_closed(ev["account"], ev["symbol"], _direction(ev["qty"]), abs(ev["qty"]) - ev["remaining"],
+                                          ev.get("pnl"), ev.get("duration", ""), remaining=ev["remaining"]))
             elif ev["kind"] == "closed":
                 closes = _closed_today.setdefault(area_id, [])
                 closes.append({"account": ev["account"], "symbol": ev["symbol"], "pnl": ev.get("pnl")})
                 if len(closes) > CLOSES_KEPT:
                     del closes[:-CLOSES_KEPT]           # no daily summary configured: never grow without bound
                 if want_close:
-                    await alerts.trade_closed(ev["account"], ev["symbol"], _direction(ev["qty"]), abs(ev["qty"]),
-                                              ev.get("pnl"), ev.get("duration", ""))
+                    _fire(alerts.trade_closed(ev["account"], ev["symbol"], _direction(ev["qty"]), abs(ev["qty"]),
+                                              ev.get("pnl"), ev.get("duration", "")))
     return events
 
 

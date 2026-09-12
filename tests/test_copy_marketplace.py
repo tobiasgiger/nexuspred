@@ -99,10 +99,10 @@ async def test_publish_subscribe_and_mirror_into_the_subscriber_workspace(worlds
         subs = (await client.get(f"/api/copy/groups/{g['id']}/subscribers")).json()
         assert subs[0]["email"] == "sub@example.com" and subs[0]["accounts"] == 1
         assert (await client.get("/api/copy/groups")).json()[0]["subscriber_count"] == 1
-        # unsubscribe → the runner restarts without the external follower; X1 keeps its position
+        # unsubscribe → the same runner drops the external follower in place (no feed restart); X1 keeps its position
         assert (await sub_client.delete(f"/api/subscriptions/{sub['id']}")).status_code == 200
         r2 = cp.runner(1, g["id"])
-        assert r2 is not r_ and [f["spec"] for f in r2.followers] == ["F1"]
+        assert r2 is r_ and [f["spec"] for f in r2.followers] == ["F1"]
         assert len(exx.of("place")) == 1
     finally:
         await cp.stop_all()

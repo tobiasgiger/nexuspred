@@ -172,7 +172,7 @@ async def test_user_features_delete_and_reset(client, anon_client):
     r = await client.post(f"/api/users/{u2['id']}/reset")
     token = r.json()["url"].rsplit("token=", 1)[1]
     r = await anon_client.post("/reset", data={"token": token, "password": "newpassword1", "password2": "newpassword1"})
-    assert r.headers["location"] == "/" and auth.read_session(r.cookies[auth.COOKIE]) == u2["id"]
+    assert r.headers["location"] == "/login?reset=done" and auth.COOKIE not in r.cookies    # never signed in by a link
     assert db.authenticate("u2@example.com", "newpassword1")
     r = await anon_client.post("/reset", data={"token": token, "password": "x1234567", "password2": "x1234567"})
     assert "error=token" in r.headers["location"]

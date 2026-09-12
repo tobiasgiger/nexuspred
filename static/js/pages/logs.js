@@ -1,5 +1,5 @@
 /* Logs: event log + signal log, filterable, live via the stream. */
-import { h, card, tag, fmtTime, fmtDateTime, pageHead, clear } from "../ui.js";
+import { h, card, tag, fmtTime, fmtDateTime, pageHead, clear, paintIncremental } from "../ui.js";
 import { maskAccount } from "../privacy.js";
 import { icon } from "../icons.js";
 import { store } from "../store.js";
@@ -65,27 +65,7 @@ export default {
     // The live buffers are prepend-only ring buffers (newest first, capped). When
     // the new list is the old one with items added at the top, only those rows
     // are inserted — a signal burst used to rebuild 200 DOM rows per event.
-    function incremental(box, prev, list, lineOf, emptyText) {
-      if (prev && prev.length && list.length) {
-        const n = list.indexOf(prev[0]);                 // where the old top row sits now (identity: same store objects)
-        if (n >= 0 && n <= 50) {
-          const overlap = Math.min(prev.length, list.length - n);
-          let same = true;
-          for (let i = 0; i < overlap; i++) if (list[n + i] !== prev[i]) { same = false; break; }
-          if (same) {
-            if (n === 0 && list.length === prev.length) return;               // nothing changed
-            const empty = box.querySelector(".empty-state");
-            if (empty) empty.remove();
-            for (let i = n - 1; i >= 0; i--) box.prepend(lineOf(list[i]));   // the new rows, newest on top
-            while (box.childElementCount > list.length) box.lastElementChild.remove();   // the tail that fell off the buffer
-            return;
-          }
-        }
-      }
-      clear(box);
-      if (!list.length) box.append(h("div", { class: "empty-state" }, emptyText));
-      else box.append(...list.map(lineOf));
-    }
+    const incremental = paintIncremental;
     let prevEvents = null, prevSignals = null, prevFilter = "";
     function paintEvents() {
       const all = store.get("events") || [];

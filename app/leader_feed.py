@@ -46,11 +46,13 @@ def stats(area_id: int, session: Any) -> dict[str, int]:
     return {"hits": f.hits, "fetches": f.fetches} if f else {"hits": 0, "fetches": 0}
 
 
-async def snapshot(area_id: int, session: Any, kind: str) -> tuple[list[dict[str, Any]], bool]:
+async def snapshot(area_id: int, session: Any, kind: str, *, fresh: bool = False) -> tuple[list[dict[str, Any]], bool]:
     """``(rows, shared)`` — the login's positions or orders; ``shared`` is True
-    when the rows came from another runner's fetch within ``TTL_S``. Errors of
-    the fetch propagate to the caller that made it (the next asker fetches
-    again)."""
+    when the rows came from another runner's fetch within ``TTL_S``. ``fresh``
+    bypasses the reuse (rows must postdate an event the caller already saw).
+    Errors of the fetch propagate to the caller that made it (the next asker
+    fetches again). ``fetched_at(area_id, session, kind)`` gives the monotonic
+    time of the rows returned last."""
     if kind not in KINDS:
         raise ValueError(f"unknown feed kind {kind!r}")
     feed = _feeds.setdefault(key_of(area_id, session), _Feed())
@@ -58,7 +60,7 @@ async def snapshot(area_id: int, session: Any, kind: str) -> tuple[list[dict[str
     if lock is None:
         lock = feed.locks[kind] = asyncio.Lock()
     async with lock:
-        if time.monotonic() - feed.at.get(kind, -1e9) < TTL_S:
+        if not fresh and time.monotonic() - feed.at.get(kind, -1e9) < TTL_S:
             feed.hits += 1
             return [dict(r) for r in feed.rows.get(kind, [])], True
         raw = await (session.positions_snapshot() if kind == "positions" else session.orders_snapshot())
@@ -67,3 +69,9 @@ async def snapshot(area_id: int, session: Any, kind: str) -> tuple[list[dict[str
         feed.rows[kind] = rows
         feed.fetches += 1
         return [dict(r) for r in rows], False
+
+
+def fetched_at(area_id: int, session: Any, kind: str) -> float:
+    """Monotonic time of the login's last fetch of ``kind`` (0 when none)."""
+    f = _feeds.get(key_of(area_id, session))
+    return f.at.get(kind, 0.0) if f else 0.0

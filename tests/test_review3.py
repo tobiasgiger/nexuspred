@@ -145,6 +145,8 @@ async def test_mirror_skips_a_workspace_flattened_for_news(admin, monkeypatch):
     g = cp.new_group("g")
     g.update({"enabled": True, "leader": {"token_idx": 0, "spec": "LEAD", "account_id": 1},
               "followers": [cp.normalize_follower({"token_idx": 1, "spec": "F1", "account_id": 2})]})
+    with context.use_area(1):
+        config.save_settings({"trading_enabled": True})
     r = cp.GroupRunner(1, g)
     ex = FakeExecutor("F1")
     monkeypatch.setattr(r, "_executor", lambda f: ex)

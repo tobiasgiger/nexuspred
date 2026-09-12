@@ -13,7 +13,6 @@ export function h(tag, attrs = null, ...children) {
     for (const [k, v] of Object.entries(attrs)) {
       if (v == null || v === false) continue;
       if (k === "class") el.className = v;
-      else if (k === "html") el.innerHTML = v;
       else if (k === "style" && typeof v === "object") Object.assign(el.style, v);
       else if (k === "dataset") Object.assign(el.dataset, v);
       else if (k.startsWith("on") && typeof v === "function") el.addEventListener(k.slice(2).toLowerCase(), v);
@@ -43,10 +42,6 @@ export function replace(el, ...children) {
   return append(el, children);
 }
 
-export function escapeHtml(str) {
-  return String(str ?? "").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-}
 
 /* ------------------------------------------------------------ formatting */
 export function fmtTime(iso) {
@@ -69,9 +64,6 @@ export function fmtNum(v, digits = 2) {
   return Number.isFinite(n) ? n.toLocaleString(locale(), { maximumFractionDigits: digits }) : String(v);
 }
 
-export function plural(n, one, many = one + "s") {
-  return `${n} ${n === 1 ? one : many}`;
-}
 
 /* ---------------------------------------------------------------- toasts */
 export function toast(message, type = "") {
@@ -149,7 +141,59 @@ export function copyButton(getText, label = "Copy", cls = "btn btn-ghost btn-sm"
 /* ------------------------------------------------------------- utilities */
 export function debounce(fn, ms) {
   let timer = null;
-  return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
+  const wrapped = (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
+  wrapped.cancel = () => clearTimeout(timer);
+  return wrapped;
+}
+
+/* Paint a prepend-only ring buffer (newest first) into `box`: when the new list
+   is the old one with rows added on top, only those rows are inserted — a burst
+   used to rebuild hundreds of DOM rows per frame. Identity-based: the store
+   keeps the same objects for rows that did not change (see mergeLive). */
+export function paintIncremental(box, prev, list, lineOf, emptyText) {
+  if (prev && prev.length && list.length) {
+    const n = list.indexOf(prev[0]);
+    if (n >= 0 && n <= 50) {
+      const overlap = Math.min(prev.length, list.length - n);
+      let same = true;
+      for (let i = 0; i < overlap; i++) if (list[n + i] !== prev[i]) { same = false; break; }
+      if (same) {
+        if (n === 0 && list.length === prev.length) return;
+        const empty = box.querySelector(".empty-state");
+        if (empty) empty.remove();
+        for (let i = n - 1; i >= 0; i--) box.prepend(lineOf(list[i]));
+        while (box.childElementCount > list.length) box.lastElementChild.remove();
+        return;
+      }
+    }
+  }
+  clear(box);
+  if (!list.length) box.append(h("div", { class: "empty-state" }, emptyText));
+  else box.append(...list.map(lineOf));
+}
+
+/* Merge a freshly fetched ring buffer with the live one: rows the stream
+   delivered while the fetch was in flight stay on top, and rows that are the
+   same as before keep their object identity (so incremental painters do not
+   rebuild). Rows are matched by `keyOf` (default: JSON of the row). */
+export function mergeLive(prev, fetched, keyOf = (x) => JSON.stringify(x), cap = 500) {
+  const before = new Map();
+  for (const x of prev || []) before.set(keyOf(x), x);
+  const seen = new Set();
+  const out = [];
+  for (const x of fetched || []) {
+    const k = keyOf(x);
+    seen.add(k);
+    out.push(before.get(k) || x);
+  }
+  // live rows that arrived after the fetch started sit above the fetched top row
+  const fresh = [];
+  for (const x of prev || []) {
+    const k = keyOf(x);
+    if (seen.has(k)) break;                 // reached the first row the fetch already knows: the rest is older
+    fresh.push(x);
+  }
+  return fresh.concat(out).slice(0, cap);
 }
 
 export function tag(text, tone = "") {

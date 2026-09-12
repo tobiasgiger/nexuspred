@@ -118,6 +118,17 @@ def _fingerprint(entry: dict[str, Any]) -> str:
 RECONNECT_GRACE_TICKS = 10        # 5 s for the library's own reconnect before a new client is built
 
 
+def gateway_allowed(url: str) -> bool:
+    """Only Rithmic's own websocket hosts may receive the user's credentials."""
+    from urllib.parse import urlsplit
+    try:
+        parts = urlsplit(str(url or ""))
+    except ValueError:
+        return False
+    host = (parts.hostname or "").lower()
+    return parts.scheme == "wss" and (host == "rithmic.com" or host.endswith(".rithmic.com"))
+
+
 def _disconnect_later(client: Any) -> None:
     async def run() -> None:
         try:
@@ -148,7 +159,9 @@ class RithmicSession:
         self.password = str(entry.get("rithmic_password") or "")
         self.system_name = str(entry.get("rithmic_system") or DEFAULT_SYSTEM[self.environment])
         gw = str(entry.get("rithmic_gateway") or "").strip()
-        self.gateway = GATEWAYS.get(gw.lower(), gw) if gw else GATEWAYS["paper" if self.environment == "demo" else "chicago"]
+        default_gw = GATEWAYS["paper" if self.environment == "demo" else "chicago"]
+        # a custom gateway must be a Rithmic websocket host (credentials go to it)
+        self.gateway = GATEWAYS.get(gw.lower()) or (gw if gateway_allowed(gw) else default_gw) if gw else default_gw
         self.exchanges = dict(entry.get("rithmic_exchanges") or {})
         self.account_spec = entry.get("account_spec") or ""
         self.account_id = int(entry.get("account_id") or 0)
@@ -242,7 +255,11 @@ class RithmicSession:
                 _disconnect_later(old)
             client = self._make_client()
             from async_rithmic import SysInfraType
-            await asyncio.wait_for(client.connect(plants=[SysInfraType.ORDER_PLANT, SysInfraType.PNL_PLANT, SysInfraType.TICKER_PLANT]), timeout=45.0)
+            try:
+                await asyncio.wait_for(client.connect(plants=[SysInfraType.ORDER_PLANT, SysInfraType.PNL_PLANT, SysInfraType.TICKER_PLANT]), timeout=45.0)
+            except BaseException:
+                _disconnect_later(client)                 # a half-connected client would hold a login slot
+                raise
             self._client = client
             return client
 
@@ -336,9 +353,16 @@ class RithmicSession:
             raise TradovateError(f"[{self.name}] no Rithmic account selected")
         return spec, aid
 
+    def _exchange(self, sym: str) -> str:
+        """The exchange Rithmic itself reported for the symbol (feed rows), else the table."""
+        for s_, e_ in self._contracts.values():
+            if s_ == sym:
+                return e_
+        return exchange_for(sym, self.exchanges)
+
     def _cid(self, symbol: str, exchange: Optional[str] = None) -> int:
         sym = str(symbol).upper()
-        exch = exchange or exchange_for(sym, self.exchanges)
+        exch = exchange or self._exchange(sym)
         cid = _int_id(f"{exch}:{sym}")
         self._contracts[cid] = (sym, exch)
         return cid
@@ -551,9 +575,9 @@ class RithmicSession:
         tag = "fb" + secrets.token_hex(6)
         raw: Any = None
         failure = ""
+        client = await self._ensure()                      # a connect timeout is "not sent", never "outcome unknown"
         try:
-            client = await self._ensure()
-            raw = await client.submit_order(tag, sym, exchange_for(sym, self.exchanges), int(qty),
+            raw = await client.submit_order(tag, sym, self._exchange(sym), int(qty),
                                             TransactionType.BUY if action == "Buy" else TransactionType.SELL, otype, **kw)
             failure = _rp_error(raw)
             basket = next((str(getattr(r, "basket_id", "")) for r in (raw if isinstance(raw, list) else [raw]) if getattr(r, "basket_id", None)), "")
@@ -675,7 +699,7 @@ class RithmicSession:
         client = await self._ensure()
         failure, raw = "", None
         try:
-            raw = await client.exit_position(account_id=spec, symbol=sym, exchange=exchange_for(sym, self.exchanges))
+            raw = await client.exit_position(account_id=spec, symbol=sym, exchange=self._exchange(sym))
             failure = _rp_error(raw)
         except Exception as exc:  # noqa: BLE001
             failure = f"{type(exc).__name__}: {exc}"[:200]

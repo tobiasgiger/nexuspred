@@ -7,11 +7,18 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from .. import alerts, context, db, state
+from .. import alerts, config, context, db, state
 from ..discord_signals import listener as discord_listener
 from ..web import base_url, require_admin, set_session_cookie
 
 router = APIRouter(prefix="/api", tags=["users"])
+
+
+def guard_admin_target(admin: dict[str, Any], target: dict[str, Any] | None, what: str) -> None:
+    """Cross-admin actions are reserved for the bootstrap admin (user 1): one
+    admin must not take over or lock out another admin's workspace."""
+    if target and target.get("is_admin") and target["id"] != admin["id"] and admin["id"] != 1:
+        raise HTTPException(status_code=403, detail=f"Only the bootstrap admin can {what}")
 
 
 @router.get("/me")
@@ -97,8 +104,15 @@ async def api_delete_user(request: Request, user_id: int) -> dict[str, Any]:
     admin = require_admin(request)
     if user_id == admin["id"]:
         raise HTTPException(status_code=400, detail="You can't delete your own account")
-    target = (db.get_user(user_id) or {}).get("email", str(user_id))
+    if user_id == 1:
+        raise HTTPException(status_code=403, detail="The bootstrap admin cannot be deleted")
+    target_user = db.get_user(user_id)
+    guard_admin_target(admin, target_user, "delete another administrator")
+    target = (target_user or {}).get("email", str(user_id))
+    area = db.user_primary_area(user_id)
     db.delete_user(user_id)
+    if area:
+        config.invalidate(area)                          # the deleted workspace leaves the settings cache
     db.log_action(admin["id"], admin["email"], "user_delete", target)
     state.log_event("info", f"User {user_id} deleted by {admin['email']}")
     return {"status": "deleted", "id": user_id}
@@ -152,8 +166,7 @@ async def api_revoke_user_sessions(request: Request, user_id: int) -> dict[str, 
     target = db.get_user(user_id)
     if not target:
         raise HTTPException(status_code=404, detail="No such user")
-    if target.get("is_admin") and target["id"] != admin["id"] and admin["id"] != 1:
-        raise HTTPException(status_code=403, detail="Only the bootstrap admin can sign out another administrator")
+    guard_admin_target(admin, target, "sign out another administrator")
     db.revoke_sessions(user_id)
     db.log_action(admin["id"], admin["email"], "sessions_revoke", target["email"])
     state.log_event("info", f"All sessions of {target['email']} were signed out by {admin['email']}")
@@ -167,10 +180,7 @@ async def api_create_reset(request: Request, user_id: int) -> dict[str, Any]:
     target = db.get_user(user_id)
     if not target:
         raise HTTPException(status_code=404, detail="No such user")
-    if target.get("is_admin") and target["id"] != admin["id"] and admin["id"] != 1:
-        # A reset link signs the user in: one admin must not take over another
-        # admin's workspace. The bootstrap admin (user 1) can still recover any account.
-        raise HTTPException(status_code=403, detail="Only the bootstrap admin can reset another administrator")
+    guard_admin_target(admin, target, "reset another administrator")
     token = db.create_password_reset(user_id)
     db.log_action(admin["id"], admin["email"], "password_reset", target["email"])
     url = f"{base_url(request)}/reset?token={token}"

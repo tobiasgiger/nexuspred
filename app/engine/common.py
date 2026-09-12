@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import re
 import threading
 from typing import Any
@@ -93,6 +94,64 @@ async def _orders_for_contract(ex: Any, orders: list[dict[str, Any]], contract: 
         state.log_event("info", f"{tag}Keeping {identifiable - len(mine)} working order(s) on {ex.name} "
                                 f"that belong to other contracts than {contract}")
     return mine
+
+
+QTY_HARD_CAP = 1000               # the ceiling sizing.normalize enforces for fixed / max_contracts
+
+
+def _price(value: Any, what: str) -> float:
+    """A finite float from a payload field, or SignalError — parsed *before* any
+    broker call so a malformed target never leaves a live entry untracked."""
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        raise SignalError(f"'{what}' is not a number: {value!r}")
+    if not math.isfinite(f):
+        raise SignalError(f"'{what}' must be a finite number")
+    return f
+
+
+def _signal_qty(raw: Any, default: Any, *, strict: bool) -> float:
+    """The signal's contract count: ``raw`` when it is a finite positive number
+    within QTY_HARD_CAP, else ``default`` (bracket) or SignalError (strict)."""
+    try:
+        q = float(raw) if raw is not None else float(default)
+    except (TypeError, ValueError):
+        if strict:
+            raise SignalError(f"Invalid qty '{raw}'")
+        q = float(default)
+    if not math.isfinite(q) or q <= 0 or q > QTY_HARD_CAP:
+        if strict:
+            raise SignalError(f"qty must be positive (at most {QTY_HARD_CAP})")
+        q = float(default)
+    if not math.isfinite(q) or q <= 0 or q > QTY_HARD_CAP:
+        raise SignalError(f"Webhook default qty must be between 1 and {QTY_HARD_CAP}")
+    return q
+
+
+def _untrack_after_close(active_map: dict[str, Any], key: str, succeeded: list[str], failed: list[str]) -> None:
+    """After a close: on a mixed broker outcome remove only the accounts whose
+    close was confirmed (failed ones stay tracked so a retry cannot forget a
+    live position or re-flatten the others); with no failure drop the record."""
+    with _lock:
+        cur = active_map.get(key)
+        if not cur or not cur.get("accounts"):
+            return
+        if failed:
+            accounts = cur["accounts"]
+            for name in succeeded:
+                accounts.pop(name, None)
+            if not accounts:
+                active_map.pop(key, None)
+        else:
+            active_map.pop(key, None)
+
+
+async def _resize_stop(ex: Any, info: dict[str, Any], qty: int, stop_price: Any) -> None:
+    """Modify the tracked stop to ``qty`` @ ``stop_price``; the record follows
+    the broker, never precedes it."""
+    await ex.modify_order(info["sl_order_id"], qty=qty, order_type=info.get("sl_type", "Stop"), stop_price=stop_price)
+    info["qty"] = qty
 
 
 STOP_PENALTY_WAIT_S = 30.0        # the longest a protective stop waits for a 429 penalty before its retry

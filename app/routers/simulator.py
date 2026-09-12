@@ -5,8 +5,8 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
-from .. import signals, state
-from ..simulator import SCENARIOS, sim_client
+from .. import context, signals, state
+from ..simulator import SCENARIOS, client_for
 from ..tradovate import TradovateError
 
 router = APIRouter(prefix="/api", tags=["simulator"])
@@ -31,8 +31,8 @@ async def api_simulate(request: Request) -> dict[str, Any]:
 @router.get("/simulate/state")
 async def api_simulate_state() -> dict[str, Any]:
     return {
-        "positions": await sim_client.positions(),
-        "working_orders": await sim_client.working_orders(),
+        "positions": await client_for(context.get_area()).positions(),
+        "working_orders": await client_for(context.get_area()).working_orders(),
         "active_trades": signals.active_trades(simulate=True),
     }
 

@@ -23,7 +23,7 @@ AUTH_EXEMPT_PATHS = frozenset({
     "/login", "/logout", "/register", "/setup", "/reset", "/login/2fa",
 })
 # Paths a signed-in user who still has to enrol in two-factor may reach.
-MFA_SETUP_PATHS = frozenset({"/2fa/setup", "/2fa/codes", "/logout", "/api/me"})
+MFA_SETUP_PATHS = frozenset({"/2fa/setup", "/logout", "/api/me"})
 MFA_SETUP_PREFIXES = ("/api/account/2fa",)
 
 

@@ -53,7 +53,8 @@ async def login_submit(request: Request):
         # a stranger could otherwise lock the owner out of the kill switch by
         # guessing at their (public) marketplace email. The address the account
         # last signed in from stays subject only to the per-IP limiter.
-        db.log_action(None, email[:200], "login_blocked", ip, "too many failed logins for this account")
+        if security.BLOCK_LOG.hit(f"{ip}|{email[:200]}"):
+            db.log_action(None, email[:200], "login_blocked", ip, "too many failed logins for this account")
         return RedirectResponse("/login?error=rate", status_code=302, headers={"Retry-After": "600"})
     user = await db.authenticate_async(email, str(form.get("password", "")))
     if not user:
@@ -144,9 +145,11 @@ async def mfa_setup_page(request: Request, error: str = "", keep: str = "") -> H
 @router.post("/2fa/setup")
 async def mfa_setup_submit(request: Request):
     user = request.state.user
+    if (db.get_user(user["id"]) or user).get("totp_enabled"):
+        return RedirectResponse("/", status_code=302)   # already enrolled: new codes only via the account page (password + code)
     form = await request.form()
     secret = db.mfa_secret(user["id"])
-    counter = mfa.verify_totp(secret, str(form.get("code", ""))) if secret else None
+    counter = mfa.verify_totp(secret, str(form.get("code", "")), last_counter=db.mfa_counter(user["id"])) if secret else None
     if counter is None:
         # keep the same secret: the QR on the page stays valid for a retry
         return RedirectResponse("/2fa/setup?error=bad&keep=1", status_code=302)
@@ -286,8 +289,6 @@ async def reset_submit(request: Request):
     user = db.get_user(uid)
     if user:
         state.log_event("info", f"Password reset completed for {user['email']}")
-        _signed_in(request, user, "password reset")
-    resp = RedirectResponse("/", status_code=302)
-    if uid:
-        set_session_cookie(resp, request, uid)  # log the user straight in
-    return resp
+        db.log_action(uid, user["email"], "password_reset_done", user["email"], client_ip(request))
+    # never a session from a link: the new password (and the second factor) are asked for
+    return RedirectResponse("/login?reset=done", status_code=302)

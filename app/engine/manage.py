@@ -7,7 +7,7 @@ from typing import Any
 
 from .. import config, state
 from ..tradovate import TradovateError
-from .common import OrdersLeftWorking, _cancel_working, _close_contract, _close_untracked, _lock, _trade_key
+from .common import OrdersLeftWorking, _close_contract, _close_untracked, _lock, _price, _trade_key, _untrack_after_close
 
 
 async def handle_close_all(root, target, executors, active_map, tag, webhook):
@@ -38,21 +38,7 @@ async def handle_close_all(root, target, executors, active_map, tag, webhook):
             state.log_event("error", f"{tag}close_all FAILED for {ex.name}: {r} — "
                                      + ("the position is closed but its orders are not: cancel them by hand" if isinstance(r, OrdersLeftWorking) else "the position may still be open"))
 
-    # On a mixed broker outcome, remove only accounts whose close was confirmed;
-    # failed accounts remain tracked so a retry cannot forget a live position or
-    # re-flatten accounts that already succeeded. With no broker failure, preserve
-    # the existing all-success tracking semantics.
-    with _lock:
-        cur = active_map.get(key)
-        if cur and cur.get("accounts"):
-            if failed:
-                accounts = cur["accounts"]
-                for name in succeeded:
-                    accounts.pop(name, None)
-                if not accounts:
-                    active_map.pop(key, None)
-            else:
-                active_map.pop(key, None)
+    _untrack_after_close(active_map, key, succeeded, failed)
 
     state.log_event(
         "info", f"{tag}[{webhook.get('name', '?')}] Closed all for {root} on "
@@ -65,7 +51,7 @@ async def handle_close_all(root, target, executors, active_map, tag, webhook):
             "failed": failures, "simulated": tag != ""}
 
 
-async def handle_set_sl_tp(payload, root, target, executors, active_map, tag, webhook):
+async def handle_set_sl_tp(payload, root, target, executors, active_map, tag, webhook, *, settings=None):
     """Set / replace the protective STOP and/or TARGET on the current open position
     to match a signal provider's latest stop/target.
 
@@ -77,11 +63,17 @@ async def handle_set_sl_tp(payload, root, target, executors, active_map, tag, we
       * flattens nothing — it only manages protective orders.
     Repeated moves cancel the previous order and place a fresh one.
     """
-    s = config.load_settings()
+    s = settings if settings is not None else config.load_settings()
     new_sl = payload.get("stop_price", payload.get("new_sl"))
     new_tp = payload.get("target_price", payload.get("tp"))
     if new_sl is None and new_tp is None:
         return {"status": "skipped", "reason": "no_sl_or_tp", "action": "set_sl_tp"}
+    # both prices parsed before any broker call: a bad target must not follow a
+    # stop that was already replaced (two stops working on one position)
+    if new_sl is not None:
+        new_sl = _price(new_sl, "stop_price")
+    if new_tp is not None:
+        new_tp = _price(new_tp, "target_price")
 
     key = _trade_key(webhook["id"], root)
     with _lock:
@@ -115,9 +107,9 @@ async def handle_set_sl_tp(payload, root, target, executors, active_map, tag, we
             old = info.get("sl_order_id")
             try:
                 o = await ex.place_order(symbol=contract, action=exit_side, qty=qty,
-                                         order_type=sl_type, stop_price=float(new_sl))
+                                         order_type=sl_type, stop_price=new_sl)
                 info["sl_order_id"] = o.get("order_id")
-                info["sl_stop"] = float(new_sl)
+                info["sl_stop"] = new_sl
                 changed = True
                 if old:
                     try:
@@ -131,7 +123,7 @@ async def handle_set_sl_tp(payload, root, target, executors, active_map, tag, we
             old_tps = list(info.get("tp_order_ids") or [])
             try:
                 o = await ex.place_order(symbol=contract, action=exit_side, qty=qty,
-                                         order_type=tp_type, price=float(new_tp))
+                                         order_type=tp_type, price=new_tp)
                 info["tp_order_ids"] = [o["order_id"]] if o.get("order_id") else []
                 changed = True
                 for oid in old_tps:                 # retire the previous target only once the new one works

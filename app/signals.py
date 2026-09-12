@@ -44,13 +44,12 @@ from . import alerts, config, context, news, state, trade_window
 from .engine import bracket, manage, simple, ts_hunter
 from .engine.common import (  # noqa: F401 - re-exported for callers/tests
     SignalError,
-    _base_root,
     _cancel_working,
     _lock,
     _resolve_symbol,
     _trade_key,
 )
-from .simulator import sim_client
+from .simulator import client_for as _sim_for, sim_client  # noqa: F401 - sim_client re-exported for tests
 from .tradovate import AccountExecutor, TradovateError, manager
 
 # Per-trade async locks: serialise signals that touch the SAME position so two
@@ -176,13 +175,14 @@ def accept(payload: dict[str, Any], webhook: dict[str, Any], *, forward: bool = 
     with ``trusted=True``, so a fan-out ahead of the check would let anyone who
     merely knows the URL trade on every subscriber's accounts."""
     name = webhook.get("name", "")
+    s = config.load_settings()                       # one settings copy per signal, handed all the way down
     state.log_signal(payload, result="received", webhook=name)
-    if not passphrase_ok(payload):
+    if not passphrase_ok(payload, s):
         state.log_event("error", "Signal rejected: invalid passphrase", payload=payload)
         state.log_signal(payload, result="error: Invalid passphrase", webhook=name)
-        _spawn(alerts.webhook_failed(name or "?", "Invalid passphrase"))
+        _spawn(alerts.webhook_failed(name or "?", "Invalid passphrase", settings=s))
         return
-    _spawn(process_background(payload, webhook))
+    _spawn(process_background(payload, webhook, settings=s))
     if forward:
         forward_to_subscribers(payload, webhook)
 
@@ -210,12 +210,13 @@ def forward_to_subscribers(payload: dict[str, Any], webhook: dict[str, Any],
     return len(subs)
 
 
-async def process_background(payload: dict[str, Any], webhook: dict[str, Any], *, trusted: bool = False) -> None:
+async def process_background(payload: dict[str, Any], webhook: dict[str, Any], *, trusted: bool = False,
+                             settings: dict[str, Any] | None = None) -> None:
     """Run the pipeline for an already-accepted signal: log the outcome, alert on
     failure, never raise (a background task must not die silently)."""
     name = webhook.get("name", "?")
     try:
-        result = await process(payload, webhook, trusted=trusted)
+        result = await process(payload, webhook, trusted=trusted, settings=settings)
         state.log_signal(payload, result=result.get("status", "ok"), webhook=name)
     except (SignalError, TradovateError) as exc:
         state.log_event("error", f"Signal error: {exc}", payload=payload)
@@ -230,7 +231,7 @@ async def process_background(payload: dict[str, Any], webhook: dict[str, Any], *
 # ------------------------------------------------------------ entry point
 async def process(
     payload: dict[str, Any], webhook: dict[str, Any] | None = None, *,
-    simulate: bool = False, trusted: bool = False,
+    simulate: bool = False, trusted: bool = False, settings: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Validate, authorise and execute a webhook payload. Returns a summary dict.
 
@@ -243,7 +244,7 @@ async def process(
     skips only the passphrase check — used for marketplace subscriptions, whose
     signal was already authenticated by the publisher's webhook.
     """
-    s = config.load_settings()
+    s = settings if settings is not None else config.load_settings()
     active_map = _map_for(simulate)
 
     if webhook is None:
@@ -258,7 +259,7 @@ async def process(
             raise SignalError("Invalid passphrase")
 
     if webhook.get("strategy") == "ts_hunter":
-        return await _process_ts_hunter(payload, webhook, active_map, simulate)
+        return await _process_ts_hunter(payload, webhook, active_map, simulate, s)
 
     action = str(payload.get("action", "")).lower().strip()
     tv_symbol = str(payload.get("symbol", "")).strip()
@@ -284,7 +285,7 @@ async def process(
             state.log_event("warn", f"Webhook '{webhook.get('name')}': entry '{action}' for {root} not executed — {why}; closes and stop moves still run")
             return {"status": "skipped", "reason": "trade_window", "action": action, "detail": why}
 
-    executors = [sim_client] if simulate else _webhook_executors(webhook)
+    executors = [_sim_for(context.get_area())] if simulate else _webhook_executors(webhook)
     if not executors:
         state.log_event(
             "warn", f"No enabled accounts on webhook '{webhook.get('name')}' — "
@@ -297,13 +298,17 @@ async def process(
 
     async def run() -> dict[str, Any]:
         if action in ("buy", "sell"):
+            if not simulate and not config.setting("trading_enabled"):
+                # the switch may have been flipped while this signal waited for the trade lock
+                state.log_event("warn", f"Trading disabled — signal '{action}' for {root} not executed")
+                return {"status": "skipped", "reason": "trading_disabled", "action": action}
             if strategy == "simple":
                 return await simple.handle_entry(payload, action, root, target, executors, active_map, tag, webhook, settings=s)
             return await bracket.handle_entry(payload, action, root, target, executors, active_map, tag, webhook, settings=s)
         if action == "close_all":
             return await manage.handle_close_all(root, target, executors, active_map, tag, webhook)
         if action == "set_sl_tp":
-            return await manage.handle_set_sl_tp(payload, root, target, executors, active_map, tag, webhook)
+            return await manage.handle_set_sl_tp(payload, root, target, executors, active_map, tag, webhook, settings=s)
         if action == "move_sl":
             if strategy == "simple":
                 # A 'simple' webhook has no tracked bracket to move — skip cleanly
@@ -311,7 +316,7 @@ async def process(
                 state.log_event("info", f"{tag}move_sl ignored for {root} — 'simple' "
                                 "strategy has no bracket to move")
                 return {"status": "skipped", "reason": "move_sl_unsupported_simple", "action": action}
-            return await bracket.handle_move_sl(payload, root, executors, active_map, tag, webhook)
+            return await bracket.handle_move_sl(payload, root, executors, active_map, tag, webhook, settings=s)
         if action == "trail_active":
             if strategy == "simple":
                 state.log_event("info", f"{tag}Trailing active for {root} (no-op on 'simple' strategy)")
@@ -324,13 +329,12 @@ async def process(
     lock_key = f"{context.get_area()}:{'sim' if simulate else 'live'}:{webhook['id']}:{root}"
     async with _trade_lock(lock_key):
         result = await run()
-    if action == "close_all":
-        _release_trade_lock(lock_key)
+    if action == "close_all" or _trade_key(webhook["id"], root) not in active_map:
+        _release_trade_lock(lock_key)                # nothing tracked: the lock must not outlive the trade
     return result
 
 
-async def _process_ts_hunter(payload, webhook, active_map, simulate):
-    s = config.load_settings()
+async def _process_ts_hunter(payload, webhook, active_map, simulate, s):
     tag = "[SIM] " if simulate else ""
 
     event = str(payload.get("event", "")).lower().strip()
@@ -365,7 +369,7 @@ async def _process_ts_hunter(payload, webhook, active_map, simulate):
             state.log_event("warn", f"Webhook '{webhook.get('name')}': TS-Hunter entry for {root} (trade {trade_id}) not executed — {why}")
             return {"status": "skipped", "reason": "trade_window", "detail": why}
 
-    executors = [sim_client] if simulate else _webhook_executors(webhook)
+    executors = [_sim_for(context.get_area())] if simulate else _webhook_executors(webhook)
     if not executors:
         state.log_event(
             "warn", f"No enabled accounts on webhook '{webhook.get('name')}' — "
@@ -377,6 +381,9 @@ async def _process_ts_hunter(payload, webhook, active_map, simulate):
 
     async def run() -> dict[str, Any]:
         if event == "signal":
+            if not simulate and not config.setting("trading_enabled"):
+                state.log_event("warn", f"Trading disabled — TS-Hunter signal for {root} (trade {trade_id}) not executed")
+                return {"status": "skipped", "reason": "trading_disabled"}
             return await ts_hunter.handle_entry(
                 payload, side, root, target, trade_id, executors, active_map, tag, webhook, settings=s
             )
@@ -397,8 +404,8 @@ async def _process_ts_hunter(payload, webhook, active_map, simulate):
     lock_key = f"{context.get_area()}:{'sim' if simulate else 'live'}:ts:{trade_id}"
     async with _trade_lock(lock_key):
         result = await run()
-    if mgmt_action == "full_close":
-        _release_trade_lock(lock_key)  # the trade is over; its id never recurs
+    if mgmt_action == "full_close" or trade_id not in active_map:
+        _release_trade_lock(lock_key)  # the trade is over (or was never tracked): its id must not keep a lock
     return result
 
 
@@ -480,5 +487,5 @@ def active_trades(simulate: bool = False) -> dict[str, Any]:
 
 def reset_simulation() -> None:
     """Clear simulated positions, working orders and tracked trades (this area)."""
-    sim_client.reset()
+    _sim_for(context.get_area()).reset()
     _map_for(True).clear()

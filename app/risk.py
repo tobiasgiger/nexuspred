@@ -248,25 +248,32 @@ async def check_area(area_id: int, sessions: list[Any], snapshots: list[dict[str
     now_local = local_now(area_id, s)
     now_ny = now_local.astimezone(ET)
     raw_state = s.get("risk_state") if isinstance(s.get("risk_state"), dict) else {}
-    by_id: dict[int, tuple[Any, dict[str, Any]]] = {}
-    open_accounts: Optional[set[int]] = None
+    # keyed by (login, broker account id): id spaces of different brokers on one
+    # workspace may overlap, and a wrong pairing here would flatten the wrong account
+    by_id: dict[tuple[str, int], tuple[Any, dict[str, Any]]] = {}
+    by_aid: dict[int, list[tuple[Any, dict[str, Any]]]] = {}      # fallback for a snapshot without a login name
+    open_accounts: Optional[set[tuple[str, int]]] = None
     if positions:
         open_accounts = set()
-        for raw in positions.values():
+        for login, raw in positions.items():
             for p in raw or []:
                 if p.get("netPos"):
-                    open_accounts.add(int(p.get("accountId") or 0))
+                    open_accounts.add((login, int(p.get("accountId") or 0)))
     for sess in sessions:
         for a in sess.accounts:
             if a.get("id"):
-                by_id[int(a["id"])] = (sess, a)
+                by_id[(sess.name, int(a["id"]))] = (sess, a)
+                by_aid.setdefault(int(a["id"]), []).append((sess, a))
             elif active(a.get("risk")) and (area_id, a.get("spec") or "") not in _warned_no_id:
                 _warned_no_id.add((area_id, a.get("spec") or ""))
                 state.log_event("error", f"Risk guard: {a.get('spec')} has rules but no broker account id — "
                                          "it is NOT guarded; run Connect & Verify on its login")
     fired: list[dict[str, Any]] = []
     for snap in snapshots:
-        pair = by_id.get(int(snap.get("account_id") or 0))
+        snap_aid = int(snap.get("account_id") or 0)
+        pair = by_id.get((str(snap.get("login") or ""), snap_aid))
+        if not pair and not snap.get("login") and len(by_aid.get(snap_aid, [])) == 1:
+            pair = by_aid[snap_aid][0]                         # unambiguous without a login name
         if not pair:
             continue
         sess, acc = pair
@@ -279,8 +286,7 @@ async def check_area(area_id: int, sessions: list[Any], snapshots: list[dict[str
         total = float(snap.get("realized") or 0) + float(snap.get("open") or 0)
         if lock:
             # still locked: a position that came back (manual trade) is closed again
-            aid_ = int(snap.get("account_id") or 0)
-            holds = (aid_ in open_accounts) if open_accounts is not None else bool(float(snap.get("open") or 0))
+            holds = ((sess.name, snap_aid) in open_accounts) if open_accounts is not None else bool(float(snap.get("open") or 0))
             if holds and _due(area_id, spec):
                 c, f, errs = await flatten_account(sess, acc)
                 if f or errs:

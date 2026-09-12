@@ -78,11 +78,13 @@ async def tick_area(area_id: int, settings: Optional[dict[str, Any]] = None) -> 
 async def heartbeat_loop() -> None:
     while True:
         try:
-            for aid in db.all_area_ids():
-                try:
-                    await tick_area(aid)
-                except Exception as exc:  # noqa: BLE001
-                    log.warning("heartbeat tick failed for area %s: %s", aid, exc)
+            ids = db.all_area_ids()
+            results = await asyncio.gather(*(tick_area(aid) for aid in ids), return_exceptions=True)   # one slow target never delays the others
+            for aid, r in zip(ids, results):
+                if isinstance(r, asyncio.CancelledError):
+                    raise r
+                if isinstance(r, Exception):
+                    log.warning("heartbeat tick failed for area %s: %s", aid, r)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - the loop must survive anything

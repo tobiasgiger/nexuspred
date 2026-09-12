@@ -4,6 +4,106 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.73
+Fourth review pass (six independent read-only reviews, every finding verified against the
+code before a change): order path, broker adapters, copy engine, auth / database, journal /
+news / alerts, and the dashboard.
+
+**Order path**
+- Prices (`sl`, `tp1-3`, `entry`, `sl.value`, `tv.entry_price`, `stop_price`, `target_price`)
+  and quantities are parsed **before** the first broker call. A malformed target used to
+  fail after the market entry was live, leaving an untracked, unprotected position; a bad
+  target on `set_sl_tp` could leave two stops working. Quantities are finite and capped at
+  1000; `risk` / `sl` / `tv` must be objects.
+- A signal that waited for its trade lock re-checks the trading switch before entering.
+- Per-trade locks are released when nothing is tracked (a `partial_close_percent` for an
+  unknown trade id used to keep a lock forever — attacker-controlled ids, unbounded).
+- Ingress backpressure: at most 60 signals per webhook per 10 s (429) and 256 queued
+  signal tasks bridge-wide (503) — a leaked URL cannot queue unbounded broker work.
+- One settings copy per signal, handed down through the whole pipeline (accept → process →
+  strategy handlers → alerts); shared helpers for entry-price parsing, the post-close
+  bookkeeping and the stop resize.
+- An untracked TS-Hunter `full_close` resolves the contract before flattening.
+
+**Broker adapters**
+- Tradovate: a request that left the bridge and got no answer (read / write timeout,
+  dropped connection, an execution agent that timed out after sending) is now
+  `OrderOutcomeUnknown` instead of a plain error — the stop retry no longer re-places a
+  stop that may already be working. Connect / pool errors stay plain errors.
+- ProjectX: a linked OCO leg with an unknown outcome never triggers a blind cancel of the
+  first leg; the front month is re-asked from the gateway after the cache expires
+  (the login used to keep trading the expired contract after a roll); a connect timeout
+  is "not sent", a dropped connection "outcome unknown"; concurrent 401s re-login once;
+  every fresh positions fetch feeds the P&L tick's cache (half the calls per tick).
+- Rithmic: the connect happens before the order's timeout scope (a connect timeout is
+  never reported as an unknown order outcome); a half-connected client is disconnected;
+  exits and orders use the exchange Rithmic itself reported for the symbol.
+- Custom ProjectX gateways must be https and pass the outbound address check; custom
+  Rithmic gateways must be `wss://…rithmic.com` — credentials never go to an arbitrary host.
+  Login lists are validated (a non-object row is a 400, not a 500).
+- Risk guard and P&L keep per-account state per (login, account id): id spaces of
+  different brokers in one workspace may overlap, and a collision could have flattened the
+  wrong account.
+- A relayed order abandoned after the agent picked it up is logged as "outcome unknown".
+
+**Copy engine**
+- `sync_area` is serialised per workspace (two concurrent syncs could start two runners for
+  one group — every leader change mirrored twice); a runner leaves the table before it is
+  stopped. A changed marketplace follower list is applied in place instead of restarting
+  the publisher's feed (a subscriber could restart it at will).
+- The trading switch also stops the reconcile and own-workspace followers (drift used to be
+  "fixed" with the switch off). A change skipped while paused is no longer persisted as
+  mirrored (a restart used to open it on the followers).
+- The REST order poll needs two consecutive looks before it declares a leader order gone
+  while the socket is synced (a stale list could cancel a twin the socket just created);
+  shared leader rows older than a socket event this runner already applied are re-fetched.
+- A twin placement survives a runner stop (shielded, the record is written); the stop awaits
+  the apply task; state deletes are ordered behind the runner's queued writes.
+- `order_skip` rows are written once per reason, and copy events are pruned daily.
+- Followers are flattened in parallel on feed loss; the pause alert never blocks the copy loop.
+
+**Auth / database**
+- A password-reset link changes the password only: it no longer wipes the second factor
+  and no longer signs the user in (it was a full 2FA bypass for whoever held the link).
+- `POST /2fa/setup` is refused for an enrolled account and enforces the replay counter;
+  disabling 2FA burns the code it was confirmed with.
+- Key rotation re-encrypts the TOTP secrets (a rotated key used to lock every 2FA user out
+  after a restore). Backups strip unused reset links, invites and pairing codes.
+- An admin cannot delete another admin (bootstrap admin excepted) nor user 1; a deleted
+  workspace leaves the settings cache. "login_blocked" audit rows are written once per
+  address and 10-minute window (a flood used to write one row per request).
+- Unknown e-mail addresses cost the same time as a wrong password. The push contact host
+  can only be set by an admin. History / audit reads run off the event loop. New indexes on
+  signal_log / order_log (area, ts), journal_imports, copy_events, audit_log, push
+  subscriptions, agents, subscriptions. Feature flags are cached; `sw.js` is read once.
+
+**Journal / news / alerts**
+- The daily import checks every minute and runs each workspace once per local day: an
+  import that overruns delays the next workspace instead of skipping it for a day.
+- ProjectX / Rithmic (and the Tradovate FIFO fallback) pair over the account's **whole
+  stored fill history**: a fetch window starting inside an open position no longer turns
+  its exit into a phantom trade. Their fill ids are 63-bit hashes namespaced by broker and
+  account (no collision with Tradovate ids, no crc32 birthday collisions); pair ids carry
+  the account. Non-numeric fill ids in a CSV no longer crash the import.
+- The journal import's database work runs on a worker thread; the CSV upload is capped at
+  8 MB and parsed off the loop; the equity curve is capped at 2000 points.
+- A failed news-lock flatten is retried (three attempts) instead of being marked done.
+- Discord alerts pass `allowed_mentions` (a `@here` in a webhook name never pings) and are
+  cut at 2000 characters. Position alerts no longer hold the polling tick; heartbeats of
+  all workspaces are sent concurrently; the cash-log history walks newest-first.
+- The simulator keeps one book per workspace.
+
+**Dashboard**
+- Discord listener settings: a parameter shadowed the translation function — with one
+  configured target the channel list rendered empty and Save wiped every channel.
+- Clicking a journal trade opened an empty drawer; the in-app Setup Guide iframe was blocked
+  by the frame policy; a non-numeric drawdown threshold pinned 0; a filter change during a
+  load was dropped (calendar, journal); the journal opened the UTC month.
+- Refreshes merge with the live buffers (frames that arrived during the fetch stay, unchanged
+  rows keep identity), the Discord feed paints incrementally, the whole module graph is
+  preloaded (one round trip instead of four), `debounce` has `cancel`, the `html` attribute
+  sink is gone, the agent one-liner quotes the name safely, dead helpers removed.
+
 ## 5.0.0-alpha.72
 - **Policy: TS-Hunter `full_close` is isolated.** It cancels the trade's own stop and closes
   its remaining quantity at market on every tracked account; other trades or manual

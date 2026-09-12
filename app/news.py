@@ -54,6 +54,8 @@ _refresh_lock = asyncio.Lock()
 _feed_error: str = ""
 _alerted: set[tuple[int, str]] = set()        # (area, event key) already alerted / flattened
 _flattened: set[tuple[int, str]] = set()
+_flatten_tries: dict[tuple[int, str], int] = {}
+FLATTEN_TRIES = 3
 
 
 # ---------------------------------------------------------------- settings
@@ -264,6 +266,7 @@ def reset() -> None:
     _events, _fetched_at, _feed_error = [], 0.0, ""
     _alerted.clear()
     _flattened.clear()
+    _flatten_tries.clear()
     _lock_memo.clear()
 
 
@@ -417,16 +420,17 @@ async def _tick_area(area_id: int, settings: Optional[dict[str, Any]] = None) ->
                         await alerts.news_lock(w["title"], w["currency"], _local(w["lock_until"], area_id), flatten=s["action"] == "flatten")
                     except Exception as exc:  # noqa: BLE001
                         log.warning("news alert failed: %s", exc)
-        if s["action"] == "flatten" and k not in _flattened:
-            _flattened.add(k)
+        if s["action"] == "flatten" and k not in _flattened and _flatten_tries.get(k, 0) < FLATTEN_TRIES:
             from . import signals
             with context.use_area(area_id):
                 try:
                     r = await signals.flatten_all()
+                    _flattened.add(k)                      # only a completed flatten counts; a failed one is retried next tick
                     state.log_event("warn", f"News lock flatten: {r.get('flattened', 0)} position(s) closed, {r.get('cancelled', 0)} order(s) cancelled"
                                             + (f" — errors: {'; '.join(r.get('errors') or [])[:200]}" if r.get("errors") else ""))
                 except Exception as exc:  # noqa: BLE001
-                    state.log_event("error", f"News lock flatten failed: {exc}")
+                    _flatten_tries[k] = _flatten_tries.get(k, 0) + 1
+                    state.log_event("error", f"News lock flatten failed ({_flatten_tries[k]}/{FLATTEN_TRIES}): {exc}")
     # forget keys older than a day so the sets stay small
     cutoff = (now - timedelta(days=1)).isoformat()
     for st in (_alerted, _flattened):

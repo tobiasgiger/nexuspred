@@ -15,11 +15,13 @@ MAX_DEVICES_PER_AREA = 25
 router = APIRouter(tags=["push"])
 
 
+_SW_BYTES = (BASE_DIR / "static" / "js" / "sw.js").read_bytes()      # read once, served on every PWA launch
+
+
 @router.get("/sw.js")
 async def service_worker() -> Response:
     """The service worker must live at the site root to control ``/``."""
-    path = BASE_DIR / "static" / "js" / "sw.js"
-    return Response(content=path.read_bytes(), media_type="application/javascript",
+    return Response(content=_SW_BYTES, media_type="application/javascript",
                     headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"})
 
 
@@ -56,7 +58,8 @@ async def api_push_subscribe(request: Request) -> dict[str, Any]:
     # Remember the host the dashboard is served on, so the VAPID contact used
     # when signing pushes is a real domain (Apple rejects localhost).
     host = security.request_host(request)
-    if host and "." in host and host.split(":")[0] not in ("localhost", "127.0.0.1"):
+    if host and "." in host and host.split(":")[0] not in ("localhost", "127.0.0.1") and request.state.user.get("is_admin"):
+        # the VAPID contact is bridge-wide: only an admin's dashboard host may set it
         if db.meta_get("push_origin_host") != host:
             db.meta_set("push_origin_host", host)
         push.reset()  # re-sign future pushes with the corrected sub
@@ -84,7 +87,11 @@ async def api_push_unsubscribe(request: Request) -> dict[str, Any]:
     body = await request.json()
     endpoint = str((body or {}).get("endpoint") or "")
     sub_id = (body or {}).get("id")
-    removed = db.delete_push_subscription(context.get_area(), int(sub_id)) if sub_id else db.delete_push_subscription_by_endpoint(context.get_area(), endpoint)
+    try:
+        sub_id = int(sub_id) if sub_id not in (None, "") else None
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="id must be a number") from exc
+    removed = db.delete_push_subscription(context.get_area(), sub_id) if sub_id else db.delete_push_subscription_by_endpoint(context.get_area(), endpoint)
     return {"removed": bool(removed)}
 
 
