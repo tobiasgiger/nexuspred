@@ -15,7 +15,7 @@ from typing import Any
 
 from .. import alerts, config, state
 from ..tradovate import TradovateError, _fire
-from .common import _close_contract, _place_stop_with_retry, SignalError, _cancel_working, _lock, _opposite
+from .common import _close_contract, _close_untracked, _place_stop_with_retry, SignalError, _cancel_working, _lock, _opposite
 from ..sizing import account_qty
 
 
@@ -209,6 +209,9 @@ async def handle_full_close(payload, trade_id, target, executors, active_map, ta
     cancelled = sum(r for r in results if isinstance(r, int))
     failed = [ex.name for (ex, _), r in zip(targets, results) if isinstance(r, Exception)]
     succeeded = [ex.name for (ex, _), r in zip(targets, results) if isinstance(r, int)]
+    # enabled accounts the record does not list are closed too when they hold the contract
+    tracked_now = {ex.name for ex, _ in targets}
+    extra_closed, extra_failed = await _close_untracked(executors, tracked_now, tag, target) if (active and active.get("accounts")) else ([], [])
     for (ex, _), r in zip(targets, results):
         if isinstance(r, Exception):
             state.log_event("error", f"{tag}TS-Hunter full_close FAILED for {ex.name}: {r} — the position may still be open")
@@ -232,8 +235,9 @@ async def handle_full_close(payload, trade_id, target, executors, active_map, ta
     reason = payload.get("reason", "")
     suffix = f": {reason}" if reason else ""
     state.log_event(
-        "info", f"{tag}TS-Hunter full_close for trade {trade_id} on {len(targets)} "
+        "info", f"{tag}TS-Hunter full_close for trade {trade_id} on {len(targets) + len(extra_closed)} "
         f"account(s) ({cancelled} working orders cancelled){suffix}"
+        + (f"; untracked position closed on {', '.join(extra_closed)}" if extra_closed else "")
     )
     return {"status": "ok", "action": "full_close", "trade_id": trade_id,
-            "accounts": len(targets), "cancelled": cancelled, "simulated": tag != ""}
+            "accounts": len(targets) + len(extra_closed), "cancelled": cancelled, "failed": failed + extra_failed, "simulated": tag != ""}

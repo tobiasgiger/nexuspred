@@ -4,6 +4,17 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.62
+- **Close tracking per account** (PR #10 by andrasmining, merged). A `close_all` /
+  TS-Hunter `full_close` with a mixed outcome keeps the accounts whose close failed in
+  the trade record and retries only those — a failed account is never forgotten while it
+  still holds a position, and accounts that already closed are not flattened again.
+- **Untracked positions are still closed.** With a trade record present, accounts that
+  are enabled on the webhook but not in the record (an entry whose broker answer was lost,
+  or a position opened by hand on a routed account) are checked at the broker and closed
+  when they hold the contract; flat accounts get no liquidate call. Close results now
+  carry a `failed` list.
+
 ## 5.0.0-alpha.61
 - **Performance pass** (see `docs/PERFORMANCE.md` for the numbers). Settings reads hand
   out a pickled snapshot instead of a Python deep copy (135 → 25 µs on a normal workspace,

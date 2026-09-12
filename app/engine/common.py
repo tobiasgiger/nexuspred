@@ -146,6 +146,33 @@ async def _close_contract(ex: Any, tag: str, contract: str) -> int:
     return cancelled
 
 
+async def _close_untracked(executors: list[Any], tracked_names: set[str], tag: str, target: str) -> tuple[list[str], list[str]]:
+    """Accounts enabled on the webhook but absent from the trade record: an
+    entry whose answer was lost ("outcome unknown"), or an account routed here
+    after the entry. They are closed too — but only when the broker shows a
+    position in the contract, so a flat account gets no liquidate call and no
+    rejection. Returns (closed, failed) account names."""
+    async def one(ex: Any) -> bool:
+        contract = await ex.resolve_contract(target)
+        rows = await ex.positions()
+        if not any(str(p.get("symbol") or "") == contract and (p.get("netPos") or 0) for p in rows or []):
+            return False
+        state.log_event("warn", f"{tag}{ex.name} holds {contract} without a trade record (lost entry answer or manual position) — closing it too")
+        await _close_contract(ex, tag, contract)
+        return True
+
+    extra = [ex for ex in executors if ex.name not in tracked_names]
+    results = await asyncio.gather(*(one(ex) for ex in extra), return_exceptions=True)
+    closed, failed = [], []
+    for ex, r in zip(extra, results):
+        if isinstance(r, Exception):
+            failed.append(ex.name)
+            state.log_event("error", f"{tag}close of untracked {ex.name} FAILED: {r} — check the account")
+        elif r:
+            closed.append(ex.name)
+    return closed, failed
+
+
 async def _cancel_working(ex: Any, tag: str, errors: list[str] | None = None,
                           contract: str | None = None) -> int:
     """Cancel working orders on one account with all cancels in flight at once.

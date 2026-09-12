@@ -191,7 +191,7 @@ async def test_simple_close_all_cancels_liquidates_and_untracks(live):
     w = wh(id="wh_c")
     await signals.process({"action": "buy", "symbol": "MNQ1!", "qty": 1}, w)
     r = await signals.process({"action": "close_all", "symbol": "MNQ1!"}, w)
-    assert r == {"status": "ok", "action": "close_all", "accounts": 1, "cancelled": 2, "simulated": False}
+    assert r == {"status": "ok", "action": "close_all", "accounts": 1, "cancelled": 2, "failed": [], "simulated": False}
     assert [c["order_id"] for c in a.of("cancel")] == [5, 6]
     assert a.of("liquidate") == [{"symbol": "MNQU6"}]
     assert "wh_c:MNQ" not in active()
@@ -446,7 +446,7 @@ async def test_ts_hunter_full_lifecycle_from_real_payloads(live):
 
     r = await signals.process(full, w)
     assert r == {"status": "ok", "action": "full_close", "trade_id": tid, "accounts": 2,
-                 "cancelled": 0, "simulated": False}
+                 "cancelled": 0, "failed": [], "simulated": False}
     assert a.of("liquidate") == [{"symbol": "MNQ"}] and b.of("liquidate") == [{"symbol": "MNQ"}]
     assert tid not in active()
     # the stop price never moved (no break-even step in TS-Hunter)

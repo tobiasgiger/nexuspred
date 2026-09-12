@@ -7,7 +7,7 @@ from typing import Any
 
 from .. import config, state
 from ..tradovate import TradovateError
-from .common import _cancel_working, _close_contract, _lock, _trade_key
+from .common import _cancel_working, _close_contract, _close_untracked, _lock, _trade_key
 
 
 async def handle_close_all(root, target, executors, active_map, tag, webhook):
@@ -31,6 +31,8 @@ async def handle_close_all(root, target, executors, active_map, tag, webhook):
     cancelled = sum(r for r in results if isinstance(r, int))
     failed = [ex.name for ex, r in zip(targets, results) if isinstance(r, Exception)]
     succeeded = [ex.name for ex, r in zip(targets, results) if isinstance(r, int)]
+    # enabled accounts the record does not list are closed too when they hold the contract
+    extra_closed, extra_failed = await _close_untracked(executors, {ex.name for ex in targets}, tag, target) if tracked_names else ([], [])
     for ex, r in zip(targets, results):
         if isinstance(r, Exception):
             state.log_event("error", f"{tag}close_all FAILED for {ex.name}: {r} — the position may still be open")
@@ -53,10 +55,11 @@ async def handle_close_all(root, target, executors, active_map, tag, webhook):
 
     state.log_event(
         "info", f"{tag}[{webhook.get('name', '?')}] Closed all for {root} on "
-        f"{len(targets)} account(s) ({cancelled} working orders cancelled)"
+        f"{len(targets) + len(extra_closed)} account(s) ({cancelled} working orders cancelled)"
+        + (f"; untracked position closed on {', '.join(extra_closed)}" if extra_closed else "")
     )
-    return {"status": "ok", "action": "close_all", "accounts": len(targets),
-            "cancelled": cancelled, "simulated": tag != ""}
+    return {"status": "ok", "action": "close_all", "accounts": len(targets) + len(extra_closed),
+            "cancelled": cancelled, "failed": failed + extra_failed, "simulated": tag != ""}
 
 
 async def handle_set_sl_tp(payload, root, target, executors, active_map, tag, webhook):
