@@ -84,13 +84,44 @@ async def test_close_all_also_closes_an_untracked_account_that_holds_the_contrac
     assert d_pos.of("liquidate") == [{"symbol": "MNQ"}]          # the untracked position is closed, ESU6 untouched
 
 
-async def test_ts_full_close_also_closes_an_untracked_account_that_holds_the_contract(admin):
+async def test_ts_full_close_leaves_an_untracked_account_alone_and_reports_it(admin):
+    """Policy: a TS-Hunter full_close is isolated — an account the record does not
+    list keeps its position (it may belong to another trade); it is reported."""
+    from app import state
     a = FakeExecutor("A")
     d_pos = FakeExecutor("D", positions=[{"symbol": "MNQ", "netPos": -1}])
+    c_flat = FakeExecutor("C", positions=[])
     active = {"T1": _tracked("A")}
-    r = await handle_full_close({}, "T1", "MNQ", [a, d_pos], active, "")
-    assert "T1" not in active and r["accounts"] == 2
-    assert d_pos.of("liquidate") == [{"symbol": "MNQ"}]
+    r = await handle_full_close({}, "T1", "MNQ", [a, d_pos, c_flat], active, "")
+    assert "T1" not in active and r["accounts"] == 1 and r["untracked"] == ["D"] and r["status"] == "ok"
+    assert d_pos.of("liquidate") == [] and d_pos.of("place") == [] and c_flat.of("liquidate") == []
+    assert any("D hold(s) MNQ without a record of trade T1" in e["message"] for e in state.recent_events())
+
+
+async def test_ts_full_close_closes_only_the_trades_quantity(admin):
+    a = FakeExecutor("A")
+    active = {"T1": {"side": "sell", "accounts": {"A": {"name": "A", "contract": "MNQ", "qty": 2, "remaining_qty": 2, "sl_order_id": 55}}}}
+    r = await handle_full_close({}, "T1", "MNQ", [a], active, "")
+    assert r["status"] == "ok" and r["cancelled"] == 1 and "T1" not in active
+    assert a.of("cancel") == [{"order_id": 55}] and a.of("liquidate") == []
+    assert [(p["action"], p["qty"], p["order_type"]) for p in a.of("place")] == [("Buy", 2, "Market")]
+    # already flat after partial closes: only the stop goes, no order
+    b = FakeExecutor("B")
+    active = {"T2": {"side": "buy", "accounts": {"B": {"name": "B", "contract": "MNQ", "qty": 0, "remaining_qty": 0, "sl_order_id": None}}}}
+    r = await handle_full_close({}, "T2", "MNQ", [b], active, "")
+    assert r["status"] == "ok" and r["cancelled"] == 0 and b.of("place") == [] and b.of("cancel") == []
+
+
+async def test_ts_full_close_stop_that_will_not_cancel_is_an_error(admin):
+    a = FakeExecutor("A")
+
+    async def refuse(order_id):
+        raise TradovateError("cancel refused")
+    a.cancel_order = refuse
+    active = {"T1": {"side": "buy", "accounts": {"A": {"name": "A", "contract": "MNQ", "remaining_qty": 1, "sl_order_id": 9}}}}
+    r = await handle_full_close({}, "T1", "MNQ", [a], active, "")
+    assert r["status"] == "error" and r["failed"] == ["A"] and "T1" in active         # stays tracked for a retry
+    assert [(p["action"], p["qty"]) for p in a.of("place")] == [("Sell", 1)]            # the position itself was closed
 
 
 async def test_untracked_close_failure_is_reported_not_fatal(admin):

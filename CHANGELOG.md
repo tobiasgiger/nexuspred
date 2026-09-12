@@ -4,6 +4,22 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.72
+- **Policy: TS-Hunter `full_close` is isolated.** It cancels the trade's own stop and closes
+  its remaining quantity at market on every tracked account; other trades or manual
+  positions in the same contract stay. Accounts the record does not list are no longer
+  flattened — when they hold the contract, the log and an alert report it
+  (`untracked` in the response). An untracked trade (restart) or a record without a
+  quantity still falls back to flattening the contract.
+- **Policy: an entry whose protective stop fails twice is closed again.** `bracket` and
+  `ts_hunter` cancel the trade's own targets (every working order of the contract when the
+  stop's outcome is unknown), flatten the entered quantity at market, alert *Entry closed
+  again* and drop the account from the trade. Only when that close fails too does the
+  position stay live and tracked, alerted as *Unprotected position* as before.
+- Decided and unchanged: a second entry on an open webhook + symbol is still executed (the
+  new trade replaces the tracking); the login lockout stays per account across addresses
+  with the last successful address exempt.
+
 ## 5.0.0-alpha.71
 - **Trading window per webhook.** Drawer → General: a local time range and weekdays
   inside which entries (`buy` / `sell`, TS-Hunter `signal`) run; outside they are answered

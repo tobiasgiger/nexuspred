@@ -98,12 +98,30 @@ async def _orders_for_contract(ex: Any, orders: list[dict[str, Any]], contract: 
 STOP_PENALTY_WAIT_S = 30.0        # the longest a protective stop waits for a 429 penalty before its retry
 
 
+class StopFailed(TradovateError):
+    """The protective stop could not be placed twice and the entry was closed
+    again at market: the account holds nothing of this trade (policy: never
+    leave an entry live without its stop)."""
+
+
 async def _place_stop_with_retry(ex: Any, *, symbol: str, action: str, qty: int, order_type: str,
-                                 stop_price: float, tag: str, what: str = "stop") -> dict[str, Any] | None:
+                                 stop_price: float, tag: str, what: str = "stop",
+                                 cancel_ids: list[int] | None = None,
+                                 resting_entry_id: int | None = None) -> dict[str, Any] | None:
     """Place a protective stop; one retry on failure. When it still fails the
-    position is live without protection — that is reported at error level and
-    through every alert channel so the operator acts now. Returns the order or None."""
+    entry is **closed again**: the trade's own orders (``cancel_ids``, the
+    bracket's targets) are cancelled — every working order of the contract when
+    the stop's outcome is unknown, since a stop that did reach the broker would
+    open a reverse trade on a flat account — then ``qty`` is flattened at
+    market, the operator is alerted and ``StopFailed`` is raised so the caller
+    drops the account from the trade. Only when that close fails too does the
+    position stay live: reported at error level and on every alert channel.
+    ``resting_entry_id`` names a limit entry that may not have filled: it is
+    cancelled and only what the broker shows as filled is closed (a blind market
+    order on an unfilled limit would open the opposite position).
+    Returns the stop order."""
     from .. import alerts
+    from ..tradovate import OrderOutcomeUnknown, RateLimited, _fire
     last: Exception | None = None
     for attempt in (1, 2):
         try:
@@ -115,14 +133,47 @@ async def _place_stop_with_retry(ex: Any, *, symbol: str, action: str, qty: int,
             if attempt == 1:
                 # a 429 penalty set by some poll must not leave the entry naked: the
                 # stop is protective, not latency-critical, so it waits the penalty out
-                from ..tradovate import RateLimited
                 wait = min(float(getattr(exc, "retry_after", 0) or 0) + 0.2, STOP_PENALTY_WAIT_S) if isinstance(exc, RateLimited) else 0.5
                 await asyncio.sleep(wait)
-    state.log_event("error", f"{tag}{what} for {ex.name} on {symbol} FAILED twice — position is unprotected: {last}")
-    from ..tradovate import _fire
-    _fire(alerts.execution_problem(f"Unprotected position on {ex.name}",
-                                   f"{symbol}: the {what} could not be placed ({last}). Set a stop by hand or close the position."))
-    return None
+    state.log_event("error", f"{tag}{what} for {ex.name} on {symbol} FAILED twice ({last}) — closing the entry again")
+    errors: list[str] = []
+    if isinstance(last, OrderOutcomeUnknown):
+        # the stop may be working after all: it must not survive on a flat account
+        await _cancel_working(ex, tag, errors, contract=symbol)
+    else:
+        ids = [o for o in [*(cancel_ids or []), resting_entry_id] if o]
+        results = await asyncio.gather(*(ex.cancel_order(oid) for oid in ids), return_exceptions=True)
+        errors += [f"cancel {oid}: {r}" for oid, r in zip(ids, results) if isinstance(r, Exception)]
+    close_qty = qty
+    if resting_entry_id:
+        # a limit entry: close only the part that filled (sign must be the entry's)
+        try:
+            rows = await ex.positions()
+            net = sum(int(p.get("netPos") or 0) for p in rows or [] if str(p.get("symbol") or "") == symbol)
+        except Exception as exc:  # noqa: BLE001 - unknown fill state → treat as filled (the safer error)
+            state.log_event("warn", f"{tag}{ex.name}: position on {symbol} could not be read after the failed {what} ({exc}) — closing the full entry")
+            net = qty if action == "Sell" else -qty
+        filled = net if action == "Sell" else -net                 # exit Sell means the entry went long
+        close_qty = max(0, min(qty, filled))
+    if close_qty <= 0:
+        state.log_event("error", f"{tag}{ex.name}: entry on {symbol} cancelled — the {what} could not be placed and nothing had filled")
+        _fire(alerts.execution_problem(f"Entry cancelled on {ex.name}", f"{symbol}: the {what} could not be placed ({last}); the unfilled entry was cancelled."))
+        raise StopFailed(f"{what} could not be placed ({last}); unfilled entry cancelled")
+    try:
+        await ex.place_order(symbol=symbol, action=action, qty=close_qty, order_type="Market")
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        state.log_event("error", f"{tag}{ex.name}: the close after the failed {what} FAILED too ({exc}) — position on {symbol} is unprotected")
+        _fire(alerts.execution_problem(f"Unprotected position on {ex.name}",
+                                       f"{symbol}: the {what} could not be placed ({last}) and the position could not be closed ({exc}). "
+                                       "Set a stop by hand or close the position."))
+        return None
+    left = f"; {len(errors)} order(s) could not be cancelled: {'; '.join(errors)[:200]} — cancel them by hand" if errors else ""
+    state.log_event("error", f"{tag}{ex.name}: {close_qty} × {symbol} closed again at market — the {what} could not be placed{left}")
+    _fire(alerts.execution_problem(f"Entry closed again on {ex.name}",
+                                   f"{symbol}: the {what} could not be placed ({last}); the {close_qty}-lot entry was closed at market{left}."))
+    raise StopFailed(f"{what} could not be placed ({last}); entry closed again at market{left}")
 
 
 class OrdersLeftWorking(TradovateError):

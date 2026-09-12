@@ -350,8 +350,11 @@ the stop to match the new remaining qty (its price is left unchanged):
  "side":"SELL","symbol":"MNQ","percent":33.33333333,"trade_id":"TS-HUNTER-SELL-123"}
 ```
 
-**Full close** (`event: "management"`, `action: "full_close"`) — cancels working orders and
-liquidates whatever remains, regardless of tracked quantity:
+**Full close** (`event: "management"`, `action: "full_close"`) — closes **this trade**: on every
+tracked account its own stop is cancelled and its remaining quantity is closed at market.
+Positions of other trades (or manual ones) in the same contract stay; accounts the webhook
+routes to that the trade record does not list are never touched — when they hold the
+contract, the log and an alert say so:
 ```json
 {"event":"management","action":"full_close","side":"SELL","symbol":"MNQ",
  "trade_id":"TS-HUNTER-SELL-123","reason":"Shot ATR-TSL Confirmed Close"}
@@ -360,7 +363,17 @@ liquidates whatever remains, regardless of tracked quantity:
 Trades are tracked by `trade_id`, not symbol — several concurrent TS-Hunter trades on the
 same symbol never collide. If the bridge restarts and loses track of a trade, `full_close`
 still works: it falls back to flattening the symbol on every account the webhook currently
-routes to.
+routes to (there is no tracked quantity to isolate on).
+
+**Protective stop that cannot be placed.** For `bracket` and `ts_hunter` entries the stop is
+retried once (waiting out a rate-limit penalty). When it fails again the entry is **closed
+again at market**: the trade's own targets are cancelled first (every working order of the
+contract when the stop's outcome is unknown, since a stop that did reach the broker would
+open a reverse trade), the entered quantity is flattened, the account is not tracked for
+that trade and the operator is alerted (*Entry closed again*). A resting limit entry is
+cancelled instead and only the part the broker shows as filled is closed. Only when that close fails
+too does the position stay live, reported as *Unprotected position* on every channel — it
+stays tracked so `close_all` / `full_close` reach it.
 
 ---
 
@@ -380,7 +393,7 @@ routes to.
 | `ts_hunter` | `signal` | entry | Market | `risk.value` × account multiplier |
 | `ts_hunter` | `signal` | sl (if present) | Stop | same as entry qty |
 | `ts_hunter` | `partial_close_percent` | market-close `percent`% of what remains + resize sl | Market | `percent`% of current remaining qty |
-| `ts_hunter` | `full_close` | cancel working orders + flatten | Market | full position |
+| `ts_hunter` | `full_close` | cancel the trade's stop + close its remaining qty (isolated) | Market | tracked remaining qty |
 
 Qty defaults/TP qty are set **per webhook** (Webhooks tab); order types (Market/Limit/Stop)
 are global, configurable on the **Settings** tab (TS-Hunter is always Market, per its contract).

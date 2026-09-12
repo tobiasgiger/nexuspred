@@ -68,7 +68,9 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
             # the protective stop is placed on its own, with a retry and a loud
             # alert when it fails: the entry is live by now
             sl = await _place_stop_with_retry(ex, symbol=contract, action=exit_side, qty=entry_qty,
-                                              order_type=sl_type, stop_price=float(payload["sl"]), tag=tag)
+                                              order_type=sl_type, stop_price=float(payload["sl"]), tag=tag,
+                                              cancel_ids=tp_ids,
+                                              resting_entry_id=entry.get("order_id") if str(entry.get("order_type") or s.get("entry_order_type", "Market")) != "Market" else None)
             if sl is not None:
                 acc_orders.append(sl)
                 sl_id = sl.get("order_id")

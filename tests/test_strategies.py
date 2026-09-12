@@ -268,8 +268,14 @@ async def test_bracket_partial_bracket_failure_is_logged_not_fatal(live, monkeyp
     a.place_order = flaky
     live.use(a)
     r = await signals.process(ENTRY, wh("bracket", default_qty=3, id="wh_f"))
-    assert r["status"] == "ok" and len(r["orders"]) == 4
-    assert active("wh_f:MNQ")["accounts"]["A"]["sl_order_id"] is None
+    # policy: an entry whose stop cannot be placed is closed again — the targets
+    # are cancelled, the 3 lots are sold at market, the account is not tracked
+    assert r["status"] == "ok" and r["orders"] == [] and r["accounts"] == []
+    assert "wh_f:MNQ" not in active()
+    tps = [p["order_id"] for p in a.of("place") if p["order_type"] == "Limit"]
+    assert len(tps) == 3 and [c["order_id"] for c in a.of("cancel")] == tps
+    assert a.of("place")[-1]["order_type"] == "Market" and a.of("place")[-1]["action"] == "Buy" and a.of("place")[-1]["qty"] == 3   # ENTRY is a sell
+    assert any("closed again at market" in e["message"] for e in state.recent_events())
 
 
 async def test_move_sl_at_tp1_goes_to_entry_price_and_resizes(live):
@@ -446,8 +452,13 @@ async def test_ts_hunter_full_lifecycle_from_real_payloads(live):
 
     r = await signals.process(full, w)
     assert r == {"status": "ok", "action": "full_close", "trade_id": tid, "accounts": 2,
-                 "cancelled": 0, "failed": [], "simulated": False}
-    assert a.of("liquidate") == [{"symbol": "MNQ"}] and b.of("liquidate") == [{"symbol": "MNQ"}]
+                 "cancelled": 2, "failed": [], "untracked": [], "simulated": False}
+    # isolated: the trade's own stop is cancelled and its remaining 1 / 2 lots are
+    # bought back at market — nothing is liquidated, other trades in MNQ would survive
+    assert a.of("liquidate") == [] and b.of("liquidate") == []
+    assert a.of("cancel")[-1] == {"order_id": sa["order_id"]} and b.of("cancel")[-1] == {"order_id": [p for p in b.of("place") if p["order_type"] == "Stop"][0]["order_id"]}
+    ca, cb = a.of("place")[-1], b.of("place")[-1]
+    assert (ca["action"], ca["qty"], ca["order_type"]) == ("Buy", 1, "Market") and (cb["action"], cb["qty"]) == ("Buy", 2)
     assert tid not in active()
     # the stop price never moved (no break-even step in TS-Hunter)
     assert {m["stop_price"] for m in a.of("modify")} == {29658.5}
@@ -550,7 +561,7 @@ async def test_ts_hunter_full_close_uses_tracked_contract(live):
     await signals.process({"event": "signal", "side": "SELL", "symbol": "MNQ1!", "risk": {"value": 1}, "trade_id": "C1"}, w)
     assert active("C1")["contract"] == "MNQU6"
     await signals.process({"event": "management", "action": "full_close", "symbol": "MNQ1!", "trade_id": "C1"}, w)
-    assert a.of("liquidate") == [{"symbol": "MNQU6"}]
+    assert a.of("liquidate") == [] and a.of("place")[-1]["symbol"] == "MNQU6" and a.of("place")[-1]["action"] == "Buy"
 
 
 async def test_ts_hunter_stop_cancelled_when_position_flat(live):

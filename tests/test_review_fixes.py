@@ -144,25 +144,76 @@ async def test_bracket_retries_the_stop_once(live, problems):
     assert problems == []
 
 
-async def test_bracket_alerts_when_the_stop_fails_twice_but_keeps_tracking(live, problems):
+async def test_bracket_closes_the_entry_again_when_the_stop_fails_twice(live, problems):
     a = Flaky("A", fail_stops=2)
     live.use(a)
-    r = await signals.process({**ENTRY, "sl": 90.0}, wh("bracket", id="wh_naked"))
+    r = await signals.process({**ENTRY, "sl": 90.0, "tp1": 105.0}, wh("bracket", id="wh_naked"))
     await asyncio.sleep(0.01)
-    assert problems and "Unprotected position" in problems[0][0]
-    assert any("unprotected" in e["message"] for e in state.recent_events())
-    assert signals._active[1]["wh_naked:MNQ"]["accounts"]["A"]["sl_order_id"] is None    # tracked, so close_all reaches it
+    assert r["accounts"] == [] and "wh_naked:MNQ" not in signals._active[1]        # not tracked: nothing of it is left
+    assert problems and "Entry closed again" in problems[0][0]
+    tp = [p for p in a.of("place") if p["order_type"] == "Limit"][0]
+    assert a.of("cancel") == [{"order_id": tp["order_id"]}]                         # only the trade's own target
+    assert a.of("place")[-1]["order_type"] == "Market" and a.of("place")[-1]["action"] == "Buy"        # ENTRY is a sell
+    assert any("closed again at market" in e["message"] for e in state.recent_events())
 
 
-async def test_ts_hunter_keeps_the_account_when_the_stop_fails(live, problems):
+async def test_ts_hunter_closes_the_entry_again_when_the_stop_fails(live, problems):
     a = Flaky("A", fail_stops=2)
     live.use(a)
     from tests.test_strategies import ts
     r = await signals.process({"event": "signal", "trade_id": "t9", "symbol": "MNQ1!", "side": "buy",
                                "risk": {"value": 100}, "sl": {"value": 95.0}, "tv": {"entry_price": 100.0}}, ts())
     await asyncio.sleep(0.01)
-    assert r["status"] == "ok" and r["accounts"] and problems
-    assert signals._active[1]["t9"]["accounts"]["A"]["sl_order_id"] is None
+    assert r["status"] == "ok" and r["accounts"] == [] and "t9" not in signals._active[1] and problems
+    assert [(p["action"], p["qty"], p["order_type"]) for p in a.of("place")] == [("Buy", 100, "Market"), ("Sell", 100, "Market")]
+
+
+async def test_position_stays_and_is_alerted_when_the_close_fails_too(live, problems):
+    class Stuck(Flaky):
+        async def place_order(self, **kw):
+            if kw.get("order_type") == "Market" and any(p["order_type"] == "Market" for p in self.of("place")):
+                raise tradovate.TradovateError("gateway down")                       # the entry went through, the close does not
+            return await super().place_order(**kw)
+    a = Stuck("A", fail_stops=2)
+    live.use(a)
+    r = await signals.process({**ENTRY, "sl": 90.0}, wh("bracket", id="wh_stuck"))
+    await asyncio.sleep(0.01)
+    assert r["accounts"] and signals._active[1]["wh_stuck:MNQ"]["accounts"]["A"]["sl_order_id"] is None   # tracked, so close_all reaches it
+    assert problems and "Unprotected position" in problems[0][0]
+
+
+async def test_limit_entry_that_never_filled_is_cancelled_not_reversed(live, problems):
+    """A resting limit entry whose stop fails is cancelled; a market close would
+    open the opposite position. A partial fill is closed for the filled part."""
+    config.save_settings({"entry_order_type": "Limit"})
+    a = Flaky("A", fail_stops=2, positions=[])                                   # nothing filled
+    live.use(a)
+    r = await signals.process({**ENTRY, "sl": 90.0, "tp1": 105.0}, wh("bracket", id="wh_lim"))
+    await asyncio.sleep(0.01)
+    entry = a.of("place")[0]
+    assert entry["order_type"] == "Limit" and r["accounts"] == [] and "wh_lim:MNQ" not in signals._active[1]
+    assert {c["order_id"] for c in a.of("cancel")} == {entry["order_id"], a.of("place")[1]["order_id"]}   # entry + target
+    assert not [p for p in a.of("place") if p["order_type"] == "Market"] and "Entry cancelled" in problems[0][0]
+    b = Flaky("B", fail_stops=2, positions=[{"symbol": "MNQU6", "netPos": -1}])  # 1 of 2 lots filled (a sell entry)
+    live.use(b)
+    await signals.process({**ENTRY, "qty": 2, "sl": 90.0}, wh("bracket", id="wh_lim2"))
+    await asyncio.sleep(0.01)
+    closes = [p for p in b.of("place") if p["order_type"] == "Market"]
+    assert [(p["action"], p["qty"]) for p in closes] == [("Buy", 1)]
+
+
+async def test_unknown_stop_outcome_cancels_the_contracts_orders_before_the_close(live, problems):
+    class Unknown(FakeExecutor):
+        async def place_order(self, **kw):
+            if kw.get("order_type") == "Stop":
+                raise tradovate.OrderOutcomeUnknown("timeout after send")
+            return await super().place_order(**kw)
+    a = Unknown("A", working=[{"id": 41, "symbol": "MNQU6"}, {"id": 42, "symbol": "ESU6"}])
+    live.use(a)
+    await signals.process({**ENTRY, "sl": 90.0}, wh("bracket", id="wh_unk"))
+    await asyncio.sleep(0.01)
+    assert [c["order_id"] for c in a.of("cancel")] == [41]                           # every MNQ order (the stop may be working), ES untouched
+    assert a.of("place")[-1]["order_type"] == "Market"
 
 
 async def test_bracket_retires_the_stop_after_the_last_target(live):
