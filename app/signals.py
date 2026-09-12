@@ -215,19 +215,21 @@ async def process_background(payload: dict[str, Any], webhook: dict[str, Any], *
     """Run the pipeline for an already-accepted signal: log the outcome, alert on
     failure, never raise (a background task must not die silently)."""
     name = webhook.get("name", "?")
+    started = time.perf_counter()
     try:
         result = await process(payload, webhook, trusted=trusted, settings=settings)
         state.log_signal(payload, result=result.get("status", "ok"), webhook=name)
-        events.emit("signal.done", webhook=name, status=result.get("status", "ok"), reason=result.get("reason", ""), action=result.get("action", ""))
+        events.emit("signal.done", webhook=name, status=result.get("status", "ok"), reason=result.get("reason", ""), action=result.get("action", ""),
+                    seconds=time.perf_counter() - started)
     except (SignalError, TradovateError) as exc:
         state.log_event("error", f"Signal error: {exc}", payload=payload)
         state.log_signal(payload, result=f"error: {exc}", webhook=name)
-        events.emit("signal.done", webhook=name, status="error", reason=str(exc)[:200], action="")
+        events.emit("signal.done", webhook=name, status="error", reason=str(exc)[:200], action="", seconds=time.perf_counter() - started)
         await events.emit_async("signal.failed", webhook=name, reason=str(exc), settings=settings)
     except Exception as exc:  # noqa: BLE001
         state.log_event("error", f"Signal failed: {exc}", payload=payload)
         state.log_signal(payload, result=f"error: {exc}", webhook=name)
-        events.emit("signal.done", webhook=name, status="error", reason=str(exc)[:200], action="")
+        events.emit("signal.done", webhook=name, status="error", reason=str(exc)[:200], action="", seconds=time.perf_counter() - started)
         await events.emit_async("signal.failed", webhook=name, reason=str(exc), settings=settings)
 
 
@@ -486,6 +488,12 @@ def active_trades(simulate: bool = False) -> dict[str, Any]:
     src = _map_for(simulate)
     with _lock:
         return {k: dict(v) for k, v in src.items()}
+
+
+def active_trades_for(area_id: int) -> dict[str, Any]:
+    """The live active-trade map of one area (metrics; no context switch)."""
+    with _lock:
+        return {k: dict(v) for k, v in (_active.get(area_id) or {}).items()}
 
 
 def reset_simulation() -> None:

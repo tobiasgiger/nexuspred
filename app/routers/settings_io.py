@@ -15,7 +15,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from .. import config, context, db, marketplace, news, settings_schema, sizing, state, trade_window
+from .. import automations, config, context, db, marketplace, news, settings_schema, sizing, state, trade_window
 from .core import validate_settings
 
 router = APIRouter(prefix="/api/settings", tags=["settings-io"])
@@ -100,6 +100,11 @@ async def _validate(doc: Any, area_id: int) -> dict[str, Any]:
             incoming["news_lock"] = news.normalize(incoming["news_lock"])
         except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=f"news_lock: {exc}") from exc
+    if "automations" in incoming:
+        try:
+            incoming["automations"] = automations.normalize_rules(incoming["automations"])
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"automations: {exc}") from exc
     if "symbol_map" in incoming:
         sm = incoming["symbol_map"]
         if not isinstance(sm, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in sm.items()):
@@ -107,7 +112,7 @@ async def _validate(doc: Any, area_id: int) -> dict[str, Any]:
     if "allowed_symbols" in incoming and not isinstance(incoming["allowed_symbols"], (list, str)):
         raise HTTPException(status_code=400, detail="allowed_symbols must be a list")
     try:                                                  # the schema types and bounds every key (webhooks / news_lock were normalised above)
-        incoming.update(settings_schema.coerce({k: v for k, v in incoming.items() if k not in ("webhooks", "news_lock")}, allow_protected=True))
+        incoming.update(settings_schema.coerce({k: v for k, v in incoming.items() if k not in ("webhooks", "news_lock", "automations")}, allow_protected=True))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     await validate_settings(incoming)                     # the same checks the settings form runs

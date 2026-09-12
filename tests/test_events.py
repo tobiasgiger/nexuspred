@@ -53,7 +53,7 @@ async def test_emit_async_awaits_every_handler_and_isolates_failures():
 
     async def bad(e):
         raise RuntimeError("boom")
-    offs = [events.subscribe("z.test", slow), events.subscribe("z.test", bad), events.subscribe("*", lambda e: got.append("star"))]
+    offs = [events.subscribe("z.test", slow), events.subscribe("z.test", bad), events.subscribe("*", lambda k, e: got.append("star" if k == "z.test" else k))]
     try:
         assert await events.emit_async("z.test", n=1) == 2                    # two coroutines, the sync star handler ran inline
     finally:

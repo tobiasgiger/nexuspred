@@ -46,9 +46,12 @@ export const actions = {
   }),
   async refreshPositions() {
     try {
-      store.set("positions", await api.get("/api/positions"));
+      const x = await api.get("/api/exposure");        // one broker poll: the rows and what they add up to
+      store.set("positions", x.positions || []);
+      store.set("exposure", x);
     } catch (e) {
       store.set("positions", { error: e.message });
+      store.set("exposure", null);
     }
   },
   loadWebhooks: () => quiet(async () => { const w = await api.get("/api/webhooks"); store.set("webhooks", w); return w; }),

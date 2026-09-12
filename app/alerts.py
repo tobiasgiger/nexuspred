@@ -288,6 +288,15 @@ async def execution_problem(title: str, message: str) -> None:
                          _send_push(title, message, url="/#/"))
 
 
+async def automation(name: str, message: str) -> None:
+    """A rule under Settings → Automations fired: every channel, no switch
+    (the rule is the switch)."""
+    tr = _tr(config.load_settings())
+    body = tr("⚙️ **Automation {name}** — {message}", name=name, message=message)
+    await asyncio.gather(_send_discord(body), _send_email(f"Fluxbridge: {name}", body),
+                         _send_push(tr("Automation: {name}", name=name), message, url="/#/settings/automations"))
+
+
 async def news_lock(title: str, currency: str, until: str, *, flatten: bool = False) -> None:
     """A news-lock window opened: no new entries until ``until`` (and, with
     ``flatten``, open positions are being closed)."""

@@ -9,8 +9,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 
-from .. import alerts, config, context, db, news, pnl, rollover, security, settings_schema, signals, state, tradovate, watchdog
-from ..tradovate import TradovateError
+from .. import alerts, config, context, db, exposure, news, pnl, rollover, security, settings_schema, signals, state, tradovate, watchdog
 from ..web import BASE_DIR, render
 from .accounts import trade_accounts_overview
 
@@ -351,32 +350,8 @@ async def api_stream(request: Request) -> StreamingResponse:
 # ------------------------------------------------------------ broker checks
 @router.get("/api/positions")
 async def api_positions() -> Any:
-    """Open positions across every enabled account: one ``/position/list`` per
-    login (not per account), logins fetched concurrently."""
-    async def one(ex) -> list[dict[str, Any]]:
-        try:
-            return await ex.positions()
-        except TradovateError:
-            return []
-
-    async def per_login(sess, exs) -> list[dict[str, Any]]:
-        try:
-            raw = await sess.positions_snapshot()
-        except Exception:  # noqa: BLE001 - one login down must not hide the others
-            return []
-        rows = [r for ex in exs for r in sess.positions_from(raw or [], account_id=ex.id, account_name=ex.name)]
-        return await sess.positions_named(rows)
-
-    groups: dict[int, tuple[Any, list[Any]]] = {}
-    singles: list[Any] = []
-    for ex in tradovate.manager().enabled():
-        sess = getattr(ex, "session", None)
-        if sess is not None and getattr(sess, "kind", "tradovate") == "tradovate" and hasattr(sess, "positions_from") and getattr(ex, "id", 0):
-            groups.setdefault(id(sess), (sess, []))[1].append(ex)
-        else:
-            singles.append(ex)
-    results = await asyncio.gather(*[per_login(s, exs) for s, exs in groups.values()], *(one(ex) for ex in singles))
-    return [p for chunk in results for p in chunk]
+    """Open positions across every enabled account (one ``/position/list`` per login)."""
+    return await exposure.collect_positions()
 
 
 @router.post("/api/connect")

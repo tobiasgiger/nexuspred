@@ -138,6 +138,8 @@ ALERT_DE = {
     "Contract rollover due": "Kontrakt-Rollover fällig",
     "🔔 **Test alert** — Fluxbridge notifications are configured correctly.": "🔔 **Testbenachrichtigung** — die Fluxbridge-Benachrichtigungen sind korrekt konfiguriert.",
     "🚨 **{title}** — {message}": "🚨 **{title}** — {message}",
+    "⚙️ **Automation {name}** — {message}": "⚙️ **Automation {name}** — {message}",
+    "Automation: {name}": "Automation: {name}",
 }
 
 

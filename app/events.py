@@ -33,8 +33,8 @@ _bg: set[asyncio.Task] = set()
 
 
 def subscribe(kind: str, handler: Handler) -> Callable[[], None]:
-    """Register ``handler(data)`` for ``kind`` (``"*"`` = every event).
-    Returns the unsubscribe function."""
+    """Register ``handler(data)`` for ``kind``; a ``"*"`` subscriber gets every
+    event as ``handler(kind, data)``. Returns the unsubscribe function."""
     _handlers[kind].append(handler)
 
     def off() -> None:
@@ -45,8 +45,9 @@ def subscribe(kind: str, handler: Handler) -> Callable[[], None]:
     return off
 
 
-def _targets(kind: str) -> list[Handler]:
-    return list(_handlers.get(kind, ())) + list(_handlers.get("*", ()))
+def _targets(kind: str) -> list[tuple[Handler, bool]]:
+    """(handler, is_star) — ``"*"`` subscribers get ``(kind, data)``, the rest ``data``."""
+    return [(h, False) for h in _handlers.get(kind, ())] + [(h, True) for h in _handlers.get("*", ())]
 
 
 def _remember(kind: str, data: dict[str, Any]) -> None:
@@ -73,13 +74,13 @@ def _schedule(coro: Awaitable[Any], kind: str) -> None:
 
 def emit(kind: str, /, **data: Any) -> int:
     """Announce ``kind``; coroutines returned by handlers run in the background.
-    Returns how many handlers were invoked."""
+    Returns how many kind-specific handlers were invoked (``"*"`` listeners not counted)."""
     _remember(kind, data)
     n = 0
-    for h in _targets(kind):
-        n += 1
+    for h, star in _targets(kind):
+        n += 0 if star else 1
         try:
-            r = h(data)
+            r = h(kind, data) if star else h(data)
         except Exception as exc:  # noqa: BLE001 - one listener never breaks the producer
             log.warning("event handler for %s failed: %r", kind, exc)
             continue
@@ -93,9 +94,9 @@ async def emit_async(kind: str, /, **data: Any) -> int:
     alert out before it returns)."""
     _remember(kind, data)
     coros = []
-    for h in _targets(kind):
+    for h, star in _targets(kind):
         try:
-            r = h(data)
+            r = h(kind, data) if star else h(data)
         except Exception as exc:  # noqa: BLE001
             log.warning("event handler for %s failed: %r", kind, exc)
             continue

@@ -24,6 +24,7 @@ export const NAV = [
       { path: "/settings/symbols", label: t("Symbol Mapping") },
       { path: "/settings/discord", label: t("Discord Listener"), gate: "discord" },
       { path: "/settings/alerts", label: t("Alerts") },
+      { path: "/settings/automations", label: t("Automations") },
       { path: "/settings/security", label: t("Security") },
       { path: "/settings/account", label: t("Account") },
       { path: "/settings/users", label: t("Users"), gate: "admin" },

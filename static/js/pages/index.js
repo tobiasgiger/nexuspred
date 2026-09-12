@@ -15,6 +15,7 @@ import users from "./users.js";
 import agents from "./agents.js";
 import news from "./news.js";
 import calendar from "./calendar.js";
+import automations from "./automations.js";
 import { general, security, updates, alerts, symbols, account } from "./settings.js";
 
 export const ROUTES = [
@@ -34,6 +35,7 @@ export const ROUTES = [
   { path: "/settings/symbols", page: symbols },
   { path: "/settings/discord", page: discordSettings },
   { path: "/settings/alerts", page: alerts },
+  { path: "/settings/automations", page: automations },
   { path: "/settings/security", page: security },
   { path: "/settings/account", page: account },
   { path: "/settings/users", page: users },

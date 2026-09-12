@@ -44,6 +44,7 @@ export const store = createStore({
   events: [],
   signals: [],
   positions: null,     // null = not loaded yet
+  exposure: null,      // /api/exposure summary (with the positions)
   discordStatus: null,
   discordFeed: [],
   discordConfig: null,

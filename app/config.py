@@ -142,6 +142,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
                   "action": "block", "manual": [], "alert": True},
     # Copy-trading groups (leader → followers); managed by /api/copy.
     "copy_groups": [],
+    "automations": [],                # per-workspace rules: when <event> then <action> (app.automations)
     # One summary per day (local time in journal_timezone) with realised P&L.
     "alert_daily_summary": True,
     "daily_summary_time": "22:05",
@@ -557,7 +558,7 @@ SETTINGS_PROTECTED_KEYS = frozenset({
     "token_accounts", "webhooks", "webhooks_migrated", "webhook_secret",
     "discord_enabled", "discord_user_token", "discord_dry_run", "discord_channels",
     "rollover_notified", "journal_last_import", "journal_report_cursor", "journal_report_window",
-    "dd_state", "copy_groups", "risk_state", "news_lock",
+    "dd_state", "copy_groups", "risk_state", "news_lock", "automations",
 })
 
 # Fields that must never be returned to the browser in plain text.

@@ -81,6 +81,7 @@ SCHEMA: dict[str, Field] = {
     "risk_state": Field("dict", protected=True, portable=False),
     "news_lock": Field("dict", protected=True),
     "copy_groups": Field("list", protected=True, portable=False),
+    "automations": Field("list", protected=True, max_len=50),
     # --- Discord listener (own endpoint)
     "discord_enabled": Field("bool", protected=True, portable=False),
     "discord_user_token": Field("str", secret=True, protected=True, portable=False),

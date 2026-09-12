@@ -688,6 +688,53 @@ contract immediately; open positions and working orders on the old contract are 
 alone. The rollover alert (Discord / email / push) points to that page.
 
 ---
+## Automations (per workspace)
+
+Settings → Automations: rules the bridge runs on its own — *when* something happens,
+*then* do one thing. Events come from the internal event bus (the same one the alerts
+listen on): position closed (with its P&L), position opened, risk guard fired, execution
+problem, signal received but not executed, signal executed, connection lost / restored,
+news lock, execution agent offline, copy-trading alert, Discord listener offline, daily
+summary. Filters: accounts, symbol roots, webhooks, and for closes a minimum loss.
+Actions: notify (Discord + email + push), switch trading OFF, flatten the account,
+flatten + lock the account for today (like the risk guard), flatten everything, pause the
+webhook. Each rule has a cooldown (default 60 s) and fires at most once per cooldown; every
+firing is logged under Logs, announced on the alert channels and listed under *Recent
+firings*. Rules travel with the settings file export; `GET/PUT /api/automations`.
+
+Example: *Position closed · loss ≥ 200 · → switch trading OFF* stops every strategy after
+one bad trade; *Connection lost · → notify* with a custom message; *Execution problem · →
+flatten the account* closes what is left when a stop could not be placed.
+
+## Order ticket & exposure (Overview)
+
+The Overview carries an **order ticket**: pick a connected trade account, type a symbol
+(the symbol map is applied — `MNQ1!` becomes the mapped contract; anything else goes to
+the broker as typed), Buy / Sell, quantity (1–100), Market / Limit / Stop / StopLimit.
+A confirmation names the account (red for a live account). The order takes the same path
+as a signal: the Trading switch must be on, the account's risk lock holds, and it shows up
+under Recent orders and in the history. No stop is attached — you manage the position.
+Every open position has a **Close** button: the contract's working orders are cancelled
+first, then the position is liquidated; the bridge stops managing that trade on that
+account. Both actions are written to the admin audit log.
+
+The **Exposure** card sums the open positions across all accounts per symbol root: long /
+short / net contracts, number of accounts, notional at the average entry price
+(contracts × price × value per point) and each root's share. It flags a root that is long
+on one account and short on another (hedged across accounts) and a root above 60 % of the
+notional. `GET /api/exposure` returns the rows and the summary in one broker poll.
+
+## Metrics (Prometheus)
+
+Set `NEXUSPRED_METRICS_TOKEN` and `GET /metrics` answers in the Prometheus text format
+with `Authorization: Bearer <token>` (a session cookie is not accepted; without the
+variable the path is a 404). Gauges: `fluxbridge_up`, uptime, version, broker connection
+per login, active trades and live-feed subscribers per area, queued signals, users.
+Counters fed by the event bus: events per kind, signals per outcome, trades, execution
+problems, risk triggers, connection changes, automations fired, copy alerts, signal
+failures. Histogram `fluxbridge_signal_seconds` — wall time from webhook acceptance to
+the broker's answer, per outcome.
+
 ## Risk guard (per trade account)
 
 Settings → Broker Accounts → *Discovered trade accounts* → **Risk guard** sets, per
@@ -922,6 +969,11 @@ the dashboard **Update** button works.
 | `POST` | `/api/rollover/check` | Re-run the contract-rollover check for the caller's area |
 | `GET`  | `/api/stream` | Live feed (Server-Sent Events): `event`, `signal`, `order`, `session`, `discord`, `pnl` messages + `ping` heartbeat |
 | `POST` | `/api/flatten-all` | 🆘 Cancel every working order and flatten every position on all accounts (ignores the trading switch) |
+| `POST` | `/api/orders/manual` | Order ticket: `{lid, spec, symbol, action, qty, order_type, price?, stop_price?}` — Trading switch and risk lock apply |
+| `POST` | `/api/positions/close` | Cancel one contract's working orders and close the position at market (`{lid, spec, symbol}`) |
+| `GET`  | `/api/exposure` | Open positions (with their login) + per-symbol / per-account exposure summary and warnings |
+| `GET/PUT` | `/api/automations` | Rules (`{rules: [...]}`), recent firings, the event and action catalogue |
+| `GET`  | `/metrics` | Prometheus text format; `Authorization: Bearer $NEXUSPRED_METRICS_TOKEN` (404 when unset) |
 | `POST` | `/api/alerts/test` | Send a test notification on every enabled alert channel |
 | `GET`  | `/api/push/public-key` | VAPID public key for `PushManager.subscribe` · `GET /sw.js` serves the service worker (public) |
 | `POST` | `/api/push/subscribe` | Register this device's push subscription · `DELETE` removes it (`{endpoint}` or `{id}`) · `GET /api/push/subscriptions` lists the area's devices · `POST /api/push/test` sends a test push |

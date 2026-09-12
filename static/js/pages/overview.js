@@ -1,5 +1,5 @@
 /* Overview: KPIs, connection health, positions, active trades, recent orders — all live. */
-import { h, tag, card, fmtTime, fmtDateTime, pageHead, debounce, clear, toast } from "../ui.js";
+import { h, tag, card, fmtTime, fmtDateTime, pageHead, debounce, clear, toast, confirmDialog } from "../ui.js";
 import { maskAccount } from "../privacy.js";
 import { icon } from "../icons.js";
 import { api } from "../api.js";
@@ -45,6 +45,17 @@ export default {
         { label: t("Last error"), render: (x) => h("span", { class: x.last_error ? "neg" : "muted" }, x.last_error || "—") },
       ],
     });
+    async function closePosition(p) {
+      const ok = await confirmDialog({ title: t("Close {symbol} on {account}?", { symbol: p.symbol, account: maskAccount(p.account) }),
+        body: t("Working orders on this contract are cancelled first, then the position ({qty}) is closed at market.", { qty: p.netPos }), confirmText: t("Close position"), danger: true });
+      if (!ok) return;
+      try {
+        const r = await api.post("/api/positions/close", { lid: p.lid || "", token_idx: p.token_idx, spec: p.spec || p.account, symbol: p.symbol });
+        toast(t("{symbol} closed on {account} ({n} order(s) cancelled)", { symbol: r.contract, account: maskAccount(r.account), n: r.cancelled }), "success");
+        if (r.errors && r.errors.length) toast(r.errors.join("; "), "warn");
+      } catch (e) { toast(e.message, "error"); }
+      actions.refreshPositions();
+    }
     const positions = dataTable({
       empty: t("No open positions"),
       columns: [
@@ -52,8 +63,95 @@ export default {
         { label: t("Account"), render: (p) => maskAccount(p.account) || "—" },
         { label: t("Net pos"), className: "num", render: (p) => h("span", { class: (p.netPos ?? 0) >= 0 ? "pos" : "neg" }, String(p.netPos ?? 0)) },
         { label: t("Avg price"), className: "num", render: (p) => p.netPrice ?? "—" },
+        { label: "", render: (p) => (p.spec || p.account) && p.symbol ? h("button", { type: "button", class: "btn btn-ghost btn-sm", title: t("Cancel this contract's orders and close the position at market"), onClick: () => closePosition(p) }, t("Close")) : null },
       ],
     });
+
+    // ---- order ticket -----------------------------------------------------
+    const acctSel = h("select", { class: "input-sm" });
+    const symbolList = h("datalist", { id: "ticket-symbols" });
+    const symbolIn = h("input", { type: "text", class: "input-sm", list: "ticket-symbols", placeholder: "MNQ1!", autocomplete: "off", spellcheck: "false", style: "max-width:130px" });
+    const qtyIn = h("input", { type: "number", class: "input-sm", min: 1, max: 100, step: 1, value: 1, inputmode: "numeric", style: "max-width:80px" });
+    const typeSel = h("select", { class: "input-sm" }, ["Market", "Limit", "Stop", "StopLimit"].map((v) => h("option", { value: v }, v)));
+    const priceIn = h("input", { type: "number", class: "input-sm", step: "any", placeholder: t("Limit price"), inputmode: "decimal", style: "max-width:120px", hidden: true });
+    const stopIn = h("input", { type: "number", class: "input-sm", step: "any", placeholder: t("Stop price"), inputmode: "decimal", style: "max-width:120px", hidden: true });
+    const ticketHint = h("div", { class: "muted", style: "font-size:12px" }, "");
+    let side = "buy";
+    const buyBtn = h("button", { type: "button", class: "btn btn-sm" }, t("Buy"));
+    const sellBtn = h("button", { type: "button", class: "btn btn-sm" }, t("Sell"));
+    const paintSide = () => { buyBtn.className = `btn btn-sm ${side === "buy" ? "btn-primary" : ""}`; sellBtn.className = `btn btn-sm ${side === "sell" ? "btn-sos" : ""}`; };
+    buyBtn.addEventListener("click", () => { side = "buy"; paintSide(); }); sellBtn.addEventListener("click", () => { side = "sell"; paintSide(); }); paintSide();
+    typeSel.addEventListener("change", () => { priceIn.hidden = !["Limit", "StopLimit"].includes(typeSel.value); stopIn.hidden = !["Stop", "StopLimit"].includes(typeSel.value); });
+    function paintTicketAccounts(s) {
+      const cur = acctSel.value;
+      clear(acctSel);
+      const list = (s && s.trade_accounts || []).filter((a) => a.token_enabled);
+      if (!list.length) { acctSel.append(h("option", { value: "" }, t("No trade account"))); ticketHint.textContent = t("Connect a login under Settings → Broker Accounts."); return; }
+      for (const a of list) {
+        acctSel.append(h("option", { value: `${a.lid || ""}|${a.token_idx}|${a.spec}`, disabled: !a.connected || !!a.locked },
+          `${maskAccount(a.spec)} · ${a.environment}${a.connected ? "" : t(" · offline")}${a.locked ? t(" · locked") : ""}`));
+      }
+      if ([...acctSel.options].some((o) => o.value === cur)) acctSel.value = cur;
+      else { const first = [...acctSel.options].find((o) => !o.disabled); if (first) acctSel.value = first.value; }
+      ticketHint.textContent = s.trading_enabled ? t("Respects the account's risk lock. No stop is attached — manage the position yourself.") : t("Trading is OFF — the ticket is blocked until you switch it on.");
+      ticketHint.className = s.trading_enabled ? "muted" : "neg";
+      ticketHint.style.fontSize = "12px";
+    }
+    function paintSymbols(settings) {
+      clear(symbolList);
+      const names = new Set([...Object.keys((settings && settings.symbol_map) || {}), ...((settings && settings.allowed_symbols) || [])]);
+      for (const n of names) symbolList.append(h("option", { value: n }));
+    }
+    const sendBtn = h("button", { type: "button", class: "btn btn-primary btn-sm", onClick: async () => {
+      const [lid, token_idx, spec] = (acctSel.value || "").split("|");
+      if (!spec) return toast(t("Choose a trade account"), "error");
+      const symbol = symbolIn.value.trim();
+      if (!symbol) return toast(t("Enter a symbol"), "error");
+      const body = { lid, token_idx: token_idx === "" || token_idx === "undefined" ? null : Number(token_idx), spec, symbol, action: side, qty: Number(qtyIn.value) || 0, order_type: typeSel.value,
+        price: priceIn.hidden ? null : priceIn.value, stop_price: stopIn.hidden ? null : stopIn.value };
+      const acct = ((store.get("status") || {}).trade_accounts || []).find((a) => a.spec === spec);
+      const ok = await confirmDialog({ title: t("{side} {qty} × {symbol} on {account}?", { side: side === "buy" ? t("Buy") : t("Sell"), qty: body.qty, symbol, account: maskAccount(spec) }),
+        body: `${typeSel.value}${priceIn.hidden ? "" : ` @ ${priceIn.value}`}${stopIn.hidden ? "" : ` stop ${stopIn.value}`}` + (acct && acct.environment === "live" ? t(" — LIVE account, real money.") : ""),
+        confirmText: t("Send order"), danger: acct && acct.environment === "live" });
+      if (!ok) return;
+      sendBtn.disabled = true;
+      try {
+        const r = await api.post("/api/orders/manual", body);
+        toast(t("{side} {qty} × {contract} sent to {account}", { side: r.action, qty: r.qty, contract: r.contract, account: maskAccount(r.account) }), "success");
+        refreshPositionsSoon();
+      } catch (e) { toast(e.message, "error"); } finally { sendBtn.disabled = false; }
+    } }, icon("send"), t("Send order"));
+    const ticket = h("div", null,
+      h("div", { style: "display:flex;flex-wrap:wrap;gap:8px;align-items:center" }, acctSel, symbolList, symbolIn, buyBtn, sellBtn, qtyIn, typeSel, priceIn, stopIn, sendBtn),
+      h("div", { style: "margin-top:8px" }, ticketHint));
+
+    // ---- exposure ---------------------------------------------------------
+    const expoTable = dataTable({
+      empty: t("Flat — nothing open."),
+      columns: [
+        { label: t("Symbol"), render: (x) => h("span", { title: (x.contracts || []).join(", ") }, x.root) },
+        { label: t("Long"), className: "num", render: (x) => x.long ? h("span", { class: "pos" }, String(x.long)) : "—" },
+        { label: t("Short"), className: "num", render: (x) => x.short ? h("span", { class: "neg" }, String(x.short)) : "—" },
+        { label: t("Net"), className: "num", render: (x) => h("span", { class: x.net > 0 ? "pos" : x.net < 0 ? "neg" : "" }, String(x.net)) },
+        { label: t("Accounts"), className: "num", render: (x) => String(x.accounts) },
+        { label: t("Notional"), className: "num", render: (x) => fmtMoney(x.notional, 0) },
+        { label: t("Share"), className: "num", render: (x) => `${Math.round((x.share || 0) * 100)}%` },
+      ],
+    });
+    const expoWarn = h("div", { class: "callout warn", hidden: true });
+    const expoSub = h("div", { class: "muted", style: "font-size:12px;margin-top:6px" }, "");
+    function paintExposure(x) {
+      if (!x) { expoTable.update([]); expoWarn.hidden = true; expoSub.textContent = ""; return; }
+      expoTable.update(x.symbols || []);
+      clear(expoWarn);
+      const warns = x.warnings || [];
+      expoWarn.hidden = !warns.length;
+      for (const w of warns) {
+        expoWarn.append(h("div", null, h("strong", null, w.kind === "hedged" ? t("{root} is hedged across accounts: ", { root: w.root }) : t("{root} concentration: ", { root: w.root })), w.detail));
+      }
+      const accts = (x.accounts || []).map((a) => `${maskAccount(a.account)} ${fmtMoney(a.notional, 0)} (${Math.round((a.share || 0) * 100)}%)`).join(" · ");
+      expoSub.textContent = (x.symbols || []).length ? t("{n} contract(s), notional {total} at average entry · ", { n: x.contracts, total: fmtMoney(x.total_notional, 0) }) + accts : "";
+    }
     const active = dataTable({
       empty: t("No trades tracked by the bridge right now."),
       columns: [
@@ -246,6 +344,9 @@ export default {
       h("div", { class: "grid grid-2" },
         card({ title: t("Open positions"), actions: [h("button", { class: "btn btn-ghost btn-sm", onClick: () => actions.refreshPositions() }, icon("refresh"), t("Refresh"))] }, positions.el),
         card({ title: t("Active trades"), hint: t("Positions the bridge is managing (stop / targets / partial closes).") }, active.el)),
+      h("div", { class: "grid grid-2" },
+        card({ title: t("Order ticket"), hint: t("A manual order straight to one trade account — the same path a signal takes.") }, ticket),
+        card({ title: t("Exposure"), hint: t("Open contracts per symbol across all accounts, notional at the average entry price.") }, expoWarn, expoTable.el, expoSub)),
       card({ title: t("Recent orders") }, orders.el),
     );
 
@@ -272,7 +373,10 @@ export default {
         active.update(rows);
         sessions.update(s.sessions || []);
         paintRollover(s.rollover);
+        paintTicketAccounts(s);
       }, { immediate: true }),
+      store.subscribe("settings", (st) => paintSymbols(st), { immediate: true }),
+      store.subscribe("exposure", (x) => paintExposure(x), { immediate: true }),
       store.subscribe("orders", (o) => { orders.update((o || []).slice(0, 50)); refreshPositionsSoon(); }, { immediate: true }),
       store.subscribe("positions", (p) => {
         if (p && p.error) { positions.update([]); positions.tbody.firstChild.firstChild.textContent = p.error; return; }

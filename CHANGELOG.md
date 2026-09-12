@@ -4,6 +4,33 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.76
+New features (615 tests, 19 new); the signal path is unchanged.
+- **Automations** (Settings → Automations): "when <event> [matching …] then <action>" rules
+  per workspace on top of the event bus — position closed with a loss ≥ X, risk guard
+  fired, execution problem, signal failed, connection lost, news lock, agent / Discord
+  offline, copy alert, daily summary; filters by account, symbol root and webhook; actions
+  notify, switch trading off, flatten the account, flatten + lock for today, flatten all,
+  pause the webhook. Cooldown per rule, every firing logged, announced and listed; rules
+  travel with the settings export. `GET/PUT /api/automations`.
+- **Order ticket** on the Overview: one manual order to a connected trade account (symbol
+  map applied, Market / Limit / Stop / StopLimit, 1–100 contracts, confirmation, red for a
+  live account). Same path as a signal: Trading switch and risk lock apply; audited.
+  **Close** button per open position: the contract's working orders are cancelled, then
+  the position is liquidated and untracked on that account.
+- **Exposure** card: open contracts per symbol root across all accounts, long / short /
+  net, notional at the average entry, share; warnings for a root hedged across accounts
+  and for concentration above 60 %. `GET /api/exposure` (positions + summary, one poll;
+  the dashboard's position refresh uses it).
+- **`GET /metrics`** (Prometheus): on when `NEXUSPRED_METRICS_TOKEN` is set, bearer-only.
+  Gauges (up, uptime, version, broker connection per login, active trades, live-feed
+  subscribers, queued signals, users), counters fed by the event bus (events, signals per
+  outcome, trades, execution problems, risk triggers, connection changes, automations,
+  copy alerts, signal failures) and the `fluxbridge_signal_seconds` latency histogram
+  (the `signal.done` event now carries the wall time).
+- Event bus: `"*"` subscribers receive `(kind, data)`; `emit` counts kind-specific
+  handlers only; `automation.fired` event.
+
 ## 5.0.0-alpha.75
 Restructuring round 2 — no trading behaviour change (596 tests, 33 new):
 - **Settings schema** `app/settings_schema.py`: one typed entry per setting (type, bounds,

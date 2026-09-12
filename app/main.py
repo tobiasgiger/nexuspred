@@ -13,7 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, config, context, copy, crypto, db, drawdown, health, history, http, journal, news, pnl, push, security, state, watchdog
+from . import auth, automations, config, context, copy, crypto, db, drawdown, health, history, http, journal, metrics, news, pnl, push, security, state, watchdog  # noqa: F401 - automations / metrics subscribe to the event bus on import
 from .discord_signals.routes import router as discord_router
 from .routers import ROUTERS
 from .web import BASE_DIR, is_auth_exempt, mfa_setup_allowed, wants_html
