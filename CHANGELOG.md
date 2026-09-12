@@ -4,6 +4,12 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.52
+- **Journal calendar: weekly totals.** A *Week* column on the right of the calendar sums
+  each week's net P&L and trade count (Monday–Sunday within the shown month), coloured like
+  the day cells; the tooltip shows the exact figure and the trades. On phones the day and
+  week cells show a compact figure (`+1.2k`, `−78`) instead of an ellipsized `+$1…`.
+
 ## 5.0.0-alpha.51
 - **Copy trading: first follower seed on a freshly booted host.** The reseed throttle
   took "never seeded" (0) for "seeded a moment ago" while the host's monotonic clock was

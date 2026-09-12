@@ -208,21 +208,45 @@ export function barList(data, { valueFmt = fmtSigned } = {}) {
 
 /* ------------------------------------------------------- calendar heat-map
    days: [{day: 'YYYY-MM-DD', weekday: 0..6 (Mon=0), net_pnl, trades}] for one month. */
+/** A signed amount for a calendar cell: the full figure, plus a compact "+1.2k"
+ *  form that CSS shows instead on narrow screens (phones ellipsized "+$1…"). */
+function calVal(v) {
+  const a = Math.abs(v), sign = v < 0 ? "−" : "+";
+  const short = a >= 10000 ? `${sign}${Math.round(a / 1000)}k` : a >= 1000 ? `${sign}${(a / 1000).toFixed(1)}k` : `${sign}${Math.round(a)}`;
+  return h("span", { class: "viz-cal-val" }, h("span", { class: "viz-cal-full" }, fmtSigned(v)), h("span", { class: "viz-cal-short" }, short));
+}
+
 export function calendarHeatmap(days, { onSelect = null } = {}) {
   const el = h("div", { class: "viz-cal" });
-  for (const w of ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]) el.append(h("div", { class: "viz-cal-head" }, w));
+  for (const w of ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "Week"]) el.append(h("div", { class: "viz-cal-head" }, w));
   if (!days.length) return el;
   const max = Math.max(1, ...days.map((d) => Math.abs(Number(d.net_pnl) || 0)));
   for (let i = 0; i < days[0].weekday; i++) el.append(h("div", { class: "viz-cal-cell blank" }));
+  let week = { net: 0, trades: 0, from: days[0].day };
+  const weekCell = (last) => {
+    // rightmost column: the week's total (Monday–Sunday within the shown month)
+    const cell = h("div", { class: `viz-cal-cell week ${week.trades ? (week.net >= 0 ? "pos" : "neg") : "flat"}` },
+      h("span", { class: "viz-cal-day" }, "Total"),
+      week.trades ? calVal(week.net) : null);
+    const net = week.net, trades = week.trades, from = week.from;
+    bindTip(cell, () => [{ value: fmtSigned(net, 2), label: `week of ${from} – ${last}` }, { value: String(trades), label: trades === 1 ? "trade" : "trades" }]);
+    el.append(cell);
+  };
   for (const d of days) {
     const v = Number(d.net_pnl) || 0;
     const level = d.trades ? Math.max(1, Math.ceil((Math.abs(v) / max) * 4)) : 0;
     const cell = h("div", { class: `viz-cal-cell ${d.trades ? (v >= 0 ? "pos" : "neg") : "flat"} l${level}` },
       h("span", { class: "viz-cal-day" }, String(Number(d.day.slice(8)))),
-      d.trades ? h("span", { class: "viz-cal-val" }, fmtSigned(v)) : null);
+      d.trades ? calVal(v) : null);
     bindTip(cell, () => [{ value: fmtSigned(v, 2), label: d.day }, { value: String(d.trades), label: d.trades === 1 ? "trade" : "trades" }]);
     if (onSelect && d.trades) { cell.style.cursor = "pointer"; cell.addEventListener("click", () => onSelect(d)); }
     el.append(cell);
+    week.net += v; week.trades += Number(d.trades) || 0;
+    if (d.weekday === 6) { weekCell(d.day); week = { net: 0, trades: 0, from: "" }; }
+    else if (d === days[days.length - 1]) {
+      for (let i = d.weekday + 1; i < 7; i++) el.append(h("div", { class: "viz-cal-cell blank" }));
+      weekCell(d.day);
+    } else if (!week.from) week.from = d.day;
   }
   return el;
 }
