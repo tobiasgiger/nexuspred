@@ -2,41 +2,42 @@
 import { h, clear } from "../ui.js";
 import { icon } from "../icons.js";
 import { can } from "../store.js";
+import { t } from "../i18n.js";
 
 export const NAV = [
-  { group: "Monitoring", items: [
-    { path: "/", label: "Overview", icon: "dashboard" },
-    { path: "/discord", label: "Discord", icon: "discord", gate: "discord" },
-    { path: "/logs", label: "Logs", icon: "logs" },
-    { path: "/journal", label: "Journal", icon: "activity" },
-    { path: "/calendar", label: "Calendar", icon: "calendar" },
+  { group: t("Monitoring"), items: [
+    { path: "/", label: t("Overview"), icon: "dashboard" },
+    { path: "/discord", label: t("Discord"), icon: "discord", gate: "discord" },
+    { path: "/logs", label: t("Logs"), icon: "logs" },
+    { path: "/journal", label: t("Journal"), icon: "activity" },
+    { path: "/calendar", label: t("Calendar"), icon: "calendar" },
   ] },
-  { group: "Routing", items: [
-    { path: "/webhooks", label: "Webhooks", icon: "webhook" },
-    { path: "/marketplace", label: "Marketplace", icon: "store" },
-    { path: "/copy", label: "Copy Trading", icon: "share" },
+  { group: t("Routing"), items: [
+    { path: "/webhooks", label: t("Webhooks"), icon: "webhook" },
+    { path: "/marketplace", label: t("Marketplace"), icon: "store" },
+    { path: "/copy", label: t("Copy Trading"), icon: "share" },
   ] },
-  { group: "Configuration", items: [
-    { path: "/settings", label: "Settings", icon: "settings", children: [
-      { path: "/settings/general", label: "General & Trading" },
-      { path: "/settings/accounts", label: "Broker Accounts" },
-      { path: "/settings/symbols", label: "Symbol Mapping" },
-      { path: "/settings/discord", label: "Discord Listener", gate: "discord" },
-      { path: "/settings/alerts", label: "Alerts" },
-      { path: "/settings/security", label: "Security" },
-      { path: "/settings/account", label: "Account" },
-      { path: "/settings/users", label: "Users", gate: "admin" },
-      { path: "/settings/agents", label: "Execution Agents", gate: "admin" },
-      { path: "/settings/news", label: "News & Calendar", gate: "admin" },
-      { path: "/settings/updates", label: "Updates", gate: "admin" },
+  { group: t("Configuration"), items: [
+    { path: "/settings", label: t("Settings"), icon: "settings", children: [
+      { path: "/settings/general", label: t("General & Trading") },
+      { path: "/settings/accounts", label: t("Broker Accounts") },
+      { path: "/settings/symbols", label: t("Symbol Mapping") },
+      { path: "/settings/discord", label: t("Discord Listener"), gate: "discord" },
+      { path: "/settings/alerts", label: t("Alerts") },
+      { path: "/settings/security", label: t("Security") },
+      { path: "/settings/account", label: t("Account") },
+      { path: "/settings/users", label: t("Users"), gate: "admin" },
+      { path: "/settings/agents", label: t("Execution Agents"), gate: "admin" },
+      { path: "/settings/news", label: t("News & Calendar"), gate: "admin" },
+      { path: "/settings/updates", label: t("Updates"), gate: "admin" },
     ] },
   ] },
-  { group: "Tools", items: [
-    { path: "/tools", label: "Tools", icon: "tools" },
-    { path: "/simulator", label: "Simulator", icon: "flask" },
+  { group: t("Tools"), items: [
+    { path: "/tools", label: t("Tools"), icon: "tools" },
+    { path: "/simulator", label: t("Simulator"), icon: "flask" },
   ] },
-  { group: "Help", items: [
-    { path: "/guide", label: "Setup Guide", icon: "book" },
+  { group: t("Help"), items: [
+    { path: "/guide", label: t("Setup Guide"), icon: "book" },
   ] },
 ];
 
@@ -60,7 +61,7 @@ export function renderSidebar(root, { me, path, collapsed, onToggleCollapse, nav
   clear(root);
   root.append(h("div", { class: "brand" },
     h("span", { class: "logo", "aria-hidden": "true" }, "◈"),
-    h("div", { class: "brand-text" }, h("strong", null, "Fluxbridge"), h("span", null, "TradingView → your broker"))));
+    h("div", { class: "brand-text" }, h("strong", null, t("Fluxbridge")), h("span", null, t("TradingView → your broker")))));
 
   const nav = h("nav", { class: "nav" });
   for (const g of NAV) {
@@ -92,7 +93,7 @@ export function renderSidebar(root, { me, path, collapsed, onToggleCollapse, nav
   }
   root.append(nav);
   root.append(h("div", { class: "sidebar-foot" },
-    h("button", { type: "button", class: "sidebar-collapse", title: collapsed ? "Expand sidebar" : "Collapse sidebar",
+    h("button", { type: "button", class: "sidebar-collapse", title: collapsed ? t("Expand sidebar") : t("Collapse sidebar"),
       onClick: () => onToggleCollapse(!collapsed) },
-      icon("chevronLeft"), h("span", { class: "lbl" }, `Collapse · v${version}`))));
+      icon("chevronLeft"), h("span", { class: "lbl" }, `${t("Collapse")} · v${version}`))));
 }

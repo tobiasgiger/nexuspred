@@ -1,3 +1,4 @@
+import { t, locale } from "./i18n.js";
 /* Tiny DOM + UI helpers: element builder, formatting, toasts, dialogs, clipboard. */
 
 export const $ = (sel, root = document) => root.querySelector(sel);
@@ -52,20 +53,20 @@ export function fmtTime(iso) {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return d.toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 export function fmtDateTime(iso) {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return d.toLocaleString(locale(), { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 export function fmtNum(v, digits = 2) {
   if (v == null || v === "") return "—";
   const n = Number(v);
-  return Number.isFinite(n) ? n.toLocaleString([], { maximumFractionDigits: digits }) : String(v);
+  return Number.isFinite(n) ? n.toLocaleString(locale(), { maximumFractionDigits: digits }) : String(v);
 }
 
 export function plural(n, one, many = one + "s") {
@@ -76,12 +77,12 @@ export function plural(n, one, many = one + "s") {
 export function toast(message, type = "") {
   const root = $("#toasts");
   if (!root) return;
-  const t = h("div", { class: `toast ${type}`, role: "status" }, message);
-  root.append(t);
-  requestAnimationFrame(() => t.classList.add("show"));
+  const el = h("div", { class: `toast ${type}`, role: "status" }, message);
+  root.append(el);
+  requestAnimationFrame(() => el.classList.add("show"));
   setTimeout(() => {
-    t.classList.remove("show");
-    setTimeout(() => t.remove(), 300);
+    el.classList.remove("show");
+    setTimeout(() => el.remove(), 300);
   }, type === "error" ? 5000 : 3400);
 }
 
@@ -141,14 +142,14 @@ export async function copyText(text) {
 export function copyButton(getText, label = "Copy", cls = "btn btn-ghost btn-sm") {
   return h("button", {
     type: "button", class: cls,
-    onClick: async () => toast((await copyText(getText())) ? "Copied" : "Copy failed", "success"),
+    onClick: async () => toast((await copyText(getText())) ? t("Copied") : t("Copy failed"), "success"),
   }, label);
 }
 
 /* ------------------------------------------------------------- utilities */
 export function debounce(fn, ms) {
-  let t = null;
-  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+  let timer = null;
+  return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
 }
 
 export function tag(text, tone = "") {

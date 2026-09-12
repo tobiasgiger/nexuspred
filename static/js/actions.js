@@ -3,6 +3,7 @@ import { api } from "./api.js";
 import { store, can } from "./store.js";
 import { toast } from "./ui.js";
 import { setPublicOrigin } from "./templates.js";
+import { adopt as adoptLanguage } from "./i18n.js";
 
 const quiet = async (fn) => { try { return await fn(); } catch (e) { return undefined; } };
 
@@ -15,12 +16,14 @@ export const actions = {
   async loadSettings() {
     const s = await api.get("/api/settings");
     store.set("settings", s);
+    if (adoptLanguage(s.ui_language)) window.location.reload();   // the workspace's language differs from the cached one
     return s;
   },
   async saveSettings(updates) {
     const s = await api.post("/api/settings", updates);
     store.set("settings", s);
     quiet(() => actions.refreshStatus());
+    if ("ui_language" in updates && adoptLanguage(s.ui_language)) setTimeout(() => window.location.reload(), 150);
     return s;
   },
   refreshStatus: () => quiet(async () => {
@@ -91,7 +94,7 @@ export const actions = {
   }),
   async setTrading(enabled) {
     await actions.saveSettings({ trading_enabled: !!enabled });
-    toast(enabled ? "Trading ENABLED" : "Trading disabled", enabled ? "warn" : "success");
+    toast(enabled ? t("Trading ENABLED") : t("Trading disabled"), enabled ? "warn" : "success");
   },
   async flattenAll() {
     const r = await api.post("/api/flatten-all");

@@ -1,6 +1,7 @@
 /* Right-hand drawer (detail panel) with scrim, Esc to close. One at a time. */
 import { h, $, clear } from "../ui.js";
 import { icon } from "../icons.js";
+import { t } from "../i18n.js";
 
 let current = null;
 let closeTimer = null;
@@ -17,7 +18,7 @@ export function openDrawer({ title, body, foot = null, onClose = null, width = n
   const panel = h("div", { class: "drawer", role: "dialog", "aria-modal": "true", style: width ? `width:min(${width}, 100vw)` : null },
     h("div", { class: "drawer-head" },
       titleEl,
-      h("button", { type: "button", class: "btn btn-ghost btn-icon", title: "Close", onClick: () => closeDrawer() }, icon("x"))),
+      h("button", { type: "button", class: "btn btn-ghost btn-icon", title: t("Close"), onClick: () => closeDrawer() }, icon("x"))),
     bodyEl, foot ? footEl : null);
   const scrim = h("div", { class: "drawer-scrim", onClick: () => closeDrawer() });
   root.append(scrim, panel);
@@ -27,7 +28,7 @@ export function openDrawer({ title, body, foot = null, onClose = null, width = n
   document.body.style.overflow = "hidden";
   current = { root, onClose, onKey, titleEl, bodyEl, footEl };
   return {
-    setTitle: (t) => { titleEl.textContent = t; },
+    setTitle: (v) => { titleEl.textContent = v; },
     setBody: (...c) => { clear(bodyEl); bodyEl.append(...c); },
     setFoot: (...c) => { clear(footEl); footEl.append(...c); if (!footEl.parentNode) panel.append(footEl); },
     close: closeDrawer,

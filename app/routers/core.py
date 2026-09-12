@@ -121,6 +121,10 @@ async def api_save_settings(request: Request) -> dict[str, Any]:
     # endpoints; the generic form must not be able to write them.
     for field in config.SETTINGS_PROTECTED_KEYS:
         updates.pop(field, None)
+    if "ui_language" in updates:
+        if str(updates.get("ui_language") or "auto") not in ("auto", "de", "en"):
+            raise HTTPException(status_code=400, detail="ui_language must be auto, de or en")
+        updates["ui_language"] = str(updates.get("ui_language") or "auto")
     if "journal_import_time" in updates:
         raw = str(updates.get("journal_import_time") or "23:30").strip()
         parts = raw.split(":")

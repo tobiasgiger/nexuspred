@@ -7,6 +7,7 @@ import { fmtMoney, fmtSigned } from "../charts.js";
 import { store, can } from "../store.js";
 import { actions } from "../actions.js";
 import { dataTable } from "../components/table.js";
+import { t } from "../i18n.js";
 
 function kpi(label, iconName) {
   const v = h("div", { class: "v" }, h("span", null, "—"));
@@ -16,7 +17,7 @@ function kpi(label, iconName) {
 }
 
 export default {
-  title: "Overview",
+  title: t("Overview"),
   render(root, { navigate }) {
     const me = store.get("me");
     const k = {
@@ -28,56 +29,56 @@ export default {
       stream: kpi("Live updates", "wifi"),
     };
     k.trading.el.classList.add("clickable");
-    k.trading.el.title = "Open General & Trading";
+    k.trading.el.title = t("Open General & Trading");
     k.trading.el.addEventListener("click", () => navigate("/settings/general"));
     if (k.discord) { k.discord.el.classList.add("clickable"); k.discord.el.addEventListener("click", () => navigate("/discord")); }
 
     const sessions = dataTable({
-      empty: "No logins configured — add one under Settings → Broker Accounts.",
+      empty: t("No logins configured — add one under Settings → Broker Accounts."),
       columns: [
-        { label: "Login", render: (x) => h("span", { class: "health-row" }, h("span", { class: `dot ${x.connected ? "on" : ""}` }), x.name || "—") },
-        { label: "Env", render: (x) => tag((x.environment || "—").toUpperCase(), x.environment === "live" ? "live" : "demo") },
-        { label: "Status", render: (x) => h("span", { class: x.connected ? "pos" : "neg" }, x.connected ? "Connected" : "Disconnected") },
-        { label: "Token expires", render: (x) => fmtDateTime(x.token_expires) },
-        { label: "Last renew", render: (x) => fmtDateTime(x.last_renew) },
-        { label: "Last check", render: (x) => fmtDateTime(x.last_check) },
-        { label: "Last error", render: (x) => h("span", { class: x.last_error ? "neg" : "muted" }, x.last_error || "—") },
+        { label: t("Login"), render: (x) => h("span", { class: "health-row" }, h("span", { class: `dot ${x.connected ? "on" : ""}` }), x.name || "—") },
+        { label: t("Env"), render: (x) => tag((x.environment || "—").toUpperCase(), x.environment === "live" ? "live" : "demo") },
+        { label: t("Status"), render: (x) => h("span", { class: x.connected ? "pos" : "neg" }, x.connected ? t("Connected") : t("Disconnected")) },
+        { label: t("Token expires"), render: (x) => fmtDateTime(x.token_expires) },
+        { label: t("Last renew"), render: (x) => fmtDateTime(x.last_renew) },
+        { label: t("Last check"), render: (x) => fmtDateTime(x.last_check) },
+        { label: t("Last error"), render: (x) => h("span", { class: x.last_error ? "neg" : "muted" }, x.last_error || "—") },
       ],
     });
     const positions = dataTable({
-      empty: "No open positions",
+      empty: t("No open positions"),
       columns: [
-        { label: "Symbol", render: (p) => p.symbol ?? "—" },
-        { label: "Account", render: (p) => maskAccount(p.account) || "—" },
-        { label: "Net pos", className: "num", render: (p) => h("span", { class: (p.netPos ?? 0) >= 0 ? "pos" : "neg" }, String(p.netPos ?? 0)) },
-        { label: "Avg price", className: "num", render: (p) => p.netPrice ?? "—" },
+        { label: t("Symbol"), render: (p) => p.symbol ?? "—" },
+        { label: t("Account"), render: (p) => maskAccount(p.account) || "—" },
+        { label: t("Net pos"), className: "num", render: (p) => h("span", { class: (p.netPos ?? 0) >= 0 ? "pos" : "neg" }, String(p.netPos ?? 0)) },
+        { label: t("Avg price"), className: "num", render: (p) => p.netPrice ?? "—" },
       ],
     });
     const active = dataTable({
-      empty: "No trades tracked by the bridge right now.",
+      empty: t("No trades tracked by the bridge right now."),
       columns: [
-        { label: "Webhook", render: (t) => t.webhook_name || "—" },
-        { label: "Symbol", render: (t) => t.sym },
-        { label: "Contract", render: (t) => t.contract || "—" },
-        { label: "Side", render: (t) => tag((t.side || "").toUpperCase(), t.side) },
-        { label: "Account", render: (t) => maskAccount(t.account) },
-        { label: "Qty", className: "num", render: (t) => String(t.qty ?? "—") },
-        { label: "SL order", render: (t) => String(t.sl_order_id || "—") },
-        { label: "TP orders", render: (t) => (t.tp_order_ids || []).join(", ") || "—" },
-        { label: "Trade id", render: (t) => t.trade_id ? h("code", null, t.trade_id) : "—" },
+        { label: t("Webhook"), render: (x) => x.webhook_name || "—" },
+        { label: t("Symbol"), render: (x) => x.sym },
+        { label: t("Contract"), render: (x) => x.contract || "—" },
+        { label: t("Side"), render: (x) => tag((x.side || "").toUpperCase(), x.side) },
+        { label: t("Account"), render: (x) => maskAccount(x.account) },
+        { label: t("Qty"), className: "num", render: (x) => String(x.qty ?? "—") },
+        { label: t("SL order"), render: (x) => String(x.sl_order_id || "—") },
+        { label: t("TP orders"), render: (x) => (x.tp_order_ids || []).join(", ") || "—" },
+        { label: t("Trade id"), render: (x) => x.trade_id ? h("code", null, x.trade_id) : "—" },
       ],
     });
     const orders = dataTable({
-      empty: "No orders yet",
+      empty: t("No orders yet"),
       columns: [
-        { label: "Time", render: (o) => fmtTime(o.ts) },
-        { label: "Action", render: (o) => tag(o.action || "—", (o.action || "").toLowerCase() === "buy" ? "buy" : (o.action || "").toLowerCase() === "sell" ? "sell" : "") },
-        { label: "Symbol", render: (o) => [o.symbol || "—", o.simulated ? [" ", tag("SIM", "sim")] : null] },
-        { label: "Account", render: (o) => maskAccount(o.account) || "—" },
-        { label: "Qty", className: "num", render: (o) => String(o.qty ?? "—") },
-        { label: "Type", render: (o) => o.order_type || "—" },
-        { label: "Price", className: "num", render: (o) => String(o.price ?? o.stop_price ?? "—") },
-        { label: "Status", render: (o) => tag(o.status || "—", (o.status || "").includes("reject") ? "rejected" : "ok") },
+        { label: t("Time"), render: (o) => fmtTime(o.ts) },
+        { label: t("Action"), render: (o) => tag(o.action || "—", (o.action || "").toLowerCase() === "buy" ? "buy" : (o.action || "").toLowerCase() === "sell" ? "sell" : "") },
+        { label: t("Symbol"), render: (o) => [o.symbol || "—", o.simulated ? [" ", tag("SIM", "sim")] : null] },
+        { label: t("Account"), render: (o) => maskAccount(o.account) || "—" },
+        { label: t("Qty"), className: "num", render: (o) => String(o.qty ?? "—") },
+        { label: t("Type"), render: (o) => o.order_type || "—" },
+        { label: t("Price"), className: "num", render: (o) => String(o.price ?? o.stop_price ?? "—") },
+        { label: t("Status"), render: (o) => tag(o.status || "—", (o.status || "").includes("reject") ? "rejected" : "ok") },
       ],
     });
 
@@ -91,18 +92,18 @@ export default {
       rollover.classList.toggle("danger", expired);
       rollover.classList.toggle("warn", !expired);
       rollover.append(
-        h("strong", null, expired ? "Contract rollover overdue — " : "Contract rollover due — "),
-        "update the symbol map: ",
+        h("strong", null, expired ? t("Contract rollover overdue — ") : t("Contract rollover due — ")),
+        t("update the symbol map: "),
         h("ul", { style: "margin:6px 0 8px 18px" }, items.map((w) => h("li", null,
           h("code", null, w.tv_symbol), " → ", h("code", null, w.contract), ` (${w.date_kind} ${w.date}, `,
           w.days_left < 0 ? `${-w.days_left}d ago` : w.days_left === 0 ? "today" : `in ${w.days_left}d`,
-          w.source === "broker" ? ", broker date" : ", estimated", ") → suggested ", h("code", null, w.next)))),
-        h("button", { class: "btn btn-sm", onClick: () => navigate("/settings/symbols") }, "Review & confirm the rollover"));
+          w.source === "broker" ? t(", broker date") : t(", estimated"), t(") → suggested "), h("code", null, w.next)))),
+        h("button", { class: "btn btn-sm", onClick: () => navigate("/settings/symbols") }, t("Review & confirm the rollover")));
     }
 
     // ---- live P&L (today's realised + open, per account) -----------------
     const pnlHero = h("div", { class: "journal-hero" }, "—");
-    const pnlSub = h("div", { class: "muted", style: "font-size:12.5px" }, "Waiting for the first snapshot from the broker…");
+    const pnlSub = h("div", { class: "muted", style: "font-size:12.5px" }, t("Waiting for the first snapshot from the broker…"));
     const pnlRows = h("div", { class: "pnl-rows" });
     const pnlStamp = h("span", { class: "muted", style: "font-size:11px" }, "");
     const pnlTone = (v) => (Number(v) > 0 ? "pos" : Number(v) < 0 ? "neg" : "");
@@ -110,7 +111,7 @@ export default {
 
     // Sort + idle filter, remembered per browser. "activity" = accounts that did
     // something today first (largest realised / open movement on top), idle last.
-    const PNL_COLS = [["spec", "Account"], ["realized", "Realised"], ["open", "Open"], ["week", "Week"], ["cash", "Balance"], ["dd_room", "Drawdown"]];
+    const PNL_COLS = [["spec", t("Account")], ["realized", t("Realised")], ["open", t("Open")], ["week", t("Week")], ["cash", t("Balance")], ["dd_room", t("Drawdown")]];
     // Room left to the trailing-drawdown liquidation level: tone by how much of the
     // drawdown is used up. Intraday ("RealTime") trailing is the dangerous one —
     // the level follows the open equity, so a red cell can be minutes from a liquidation.
@@ -128,21 +129,21 @@ export default {
       if (v === null) return;
       try {
         const r = await api.post("/api/pnl/drawdown", { account_id: a.account_id, level: v.trim() === "" ? null : Number(v.replace(/[^0-9.\-]/g, "")) });
-        paintPnl(r, true); toast(v.trim() === "" ? "Drawdown tracker reset" : "Threshold pinned", "success");
+        paintPnl(r, true); toast(v.trim() === "" ? t("Drawdown tracker reset") : t("Threshold pinned"), "success");
       } catch (e) { toast(e.message, "error"); }
     }
     const ddCell = (a) => {
       if (a.dd_room == null && a.dd_size == null) return h("span", { class: "muted" }, "—");
       const mode = a.dd_mode ? h("span", { class: `dd-mode${a.dd_mode === "Intraday" ? " intraday" : ""}` }, a.dd_mode) : null;
       const since = a.dd_since ? fmtDateTime(a.dd_since) : "";
-      const tip = a.dd_level == null ? `Max drawdown ${fmtMoney(a.dd_size, 0)}`
-        : `Peak ${fmtMoney(a.dd_peak, 2)} − drawdown ${fmtMoney(a.dd_size, 0)}${a.dd_cap ? ` (trails up to ${fmtMoney(a.dd_cap, 0)})` : ""} = threshold ${fmtMoney(a.dd_level, 2)}. `
-          + (a.dd_seeded ? `Pinned from your prop firm's figure${since ? " on " + since : ""}.` : `Tracked by the bridge${since ? " since " + since : ""} — pin the exact threshold from your prop firm with ✎ if it differs.`);
-      const pin = h("button", { type: "button", class: "dd-pin", title: "Pin the threshold shown by your prop firm", onClick: () => pinThreshold(a) }, "✎");
+      const tip = a.dd_level == null ? t("Max drawdown {size}", { size: fmtMoney(a.dd_size, 0) })
+        : t("Peak {peak} − drawdown {size}{cap} = threshold {level}. ", { peak: fmtMoney(a.dd_peak, 2), size: fmtMoney(a.dd_size, 0), cap: a.dd_cap ? t(" (trails up to {cap})", { cap: fmtMoney(a.dd_cap, 0) }) : "", level: fmtMoney(a.dd_level, 2) })
+          + (a.dd_seeded ? t("Pinned from your prop firm's figure{since}.", { since: since ? t(" on {when}", { when: since }) : "" }) : t("Tracked by the bridge{since} — pin the exact threshold from your prop firm with ✎ if it differs.", { since: since ? t(" since {when}", { when: since }) : "" }));
+      const pin = h("button", { type: "button", class: "dd-pin", title: t("Pin the threshold shown by your prop firm"), onClick: () => pinThreshold(a) }, "✎");
       return h("span", { title: tip },
         a.dd_room == null ? h("span", { class: "muted" }, fmtMoney(a.dd_size, 0)) : h("span", { class: `pnl ${ddTone(a)}` }, fmtSigned(a.dd_room, 2)),
         h("span", { class: "sub" }, a.dd_level != null ? ["level ", fmtMoney(a.dd_level, 0), " "] : null, mode, " ", pin,
-          a.dd_level != null && !a.dd_seeded ? h("span", { class: "dd-unpinned", title: "Peak tracked by the bridge only since it started watching — pin the prop firm's threshold for exact figures" }, "≈") : null));
+          a.dd_level != null && !a.dd_seeded ? h("span", { class: "dd-unpinned", title: t("Peak tracked by the bridge only since it started watching — pin the prop firm's threshold for exact figures") }, "≈") : null));
     };
     let pnlSort = { key: "activity", dir: "desc" };
     let hideIdle = false;
@@ -199,7 +200,7 @@ export default {
       const accounts = p.accounts || [];
       const idle = accounts.filter(isIdle).length;
       clear(pnlSub);
-      pnlSub.append("Today · realised ", money(p.realized), " · open ", money(p.open), " · week ", money(p.week),
+      pnlSub.append(t("Today · realised "), money(p.realized), t(" · open "), money(p.open), t(" · week "), money(p.week),
         ` · ${accounts.length - idle} active`, idle ? ` · ${idle} idle` : "");
       if (p.error) pnlSub.append(h("span", { class: "neg" }, ` · ${p.error}`));
       paintHead();
@@ -221,28 +222,28 @@ export default {
           cell("max drawdown", ddCell(a), ch("dd_room"))));
       }
       if (!keepPrev) prevValues = next;
-      if (!accounts.length) pnlRows.append(h("div", { class: "muted" }, "No connected trade account — connect a login under Settings → Broker Accounts."));
-      else if (hideIdle && idle === accounts.length) pnlRows.append(h("div", { class: "muted" }, "All accounts are idle today — untick “Hide idle” to see them."));
-      pnlStamp.textContent = `updated ${fmtTime(p.ts)}`;
+      if (!accounts.length) pnlRows.append(h("div", { class: "muted" }, t("No connected trade account — connect a login under Settings → Broker Accounts.")));
+      else if (hideIdle && idle === accounts.length) pnlRows.append(h("div", { class: "muted" }, t("All accounts are idle today — untick “Hide idle” to see them.")));
+      pnlStamp.textContent = t("updated {when}", { when: fmtTime(p.ts) });
     }
-    const pnlCard = card({ title: "Today's P&L", actions: [pnlStamp,
-      h("label", { class: "pnl-toggle", title: "Hide accounts with no realised, open or weekly P&L today" }, hideIdleBox, " Hide idle"),
-      h("button", { class: "btn btn-ghost btn-sm", title: "Refresh now", onClick: async () => { try { paintPnl(await api.get("/api/pnl?refresh=1")); } catch (e) { toast(e.message, "error"); } } }, icon("refresh"))] },
+    const pnlCard = card({ title: t("Today's P&L"), actions: [pnlStamp,
+      h("label", { class: "pnl-toggle", title: t("Hide accounts with no realised, open or weekly P&L today") }, hideIdleBox, t(" Hide idle")),
+      h("button", { class: "btn btn-ghost btn-sm", title: t("Refresh now"), onClick: async () => { try { paintPnl(await api.get("/api/pnl?refresh=1")); } catch (e) { toast(e.message, "error"); } } }, icon("refresh"))] },
       pnlHero, pnlSub, pnlRows);
     pnlCard.classList.add("pnl-card");
 
     root.append(
-      pageHead("Overview", "Live view of your bridge: broker sessions, positions, tracked trades and the latest orders.", [
-        h("button", { class: "btn", onClick: () => actions.healthCheck() }, icon("refresh"), "Check connections"),
+      pageHead(t("Overview"), t("Live view of your bridge: broker sessions, positions, tracked trades and the latest orders."), [
+        h("button", { class: "btn", onClick: () => actions.healthCheck() }, icon("refresh"), t("Check connections")),
       ]),
       rollover,
       pnlCard,
       h("div", { class: "kpis" }, Object.values(k).filter(Boolean).map((x) => x.el)),
-      card({ title: "Connection health", actions: [h("button", { class: "btn btn-ghost btn-sm", onClick: () => navigate("/settings/accounts") }, "Manage logins")] }, sessions.el),
+      card({ title: t("Connection health"), actions: [h("button", { class: "btn btn-ghost btn-sm", onClick: () => navigate("/settings/accounts") }, t("Manage logins"))] }, sessions.el),
       h("div", { class: "grid grid-2" },
-        card({ title: "Open positions", actions: [h("button", { class: "btn btn-ghost btn-sm", onClick: () => actions.refreshPositions() }, icon("refresh"), "Refresh")] }, positions.el),
-        card({ title: "Active trades", hint: "Positions the bridge is managing (stop / targets / partial closes)." }, active.el)),
-      card({ title: "Recent orders" }, orders.el),
+        card({ title: t("Open positions"), actions: [h("button", { class: "btn btn-ghost btn-sm", onClick: () => actions.refreshPositions() }, icon("refresh"), t("Refresh"))] }, positions.el),
+        card({ title: t("Active trades"), hint: t("Positions the bridge is managing (stop / targets / partial closes).") }, active.el)),
+      card({ title: t("Recent orders") }, orders.el),
     );
 
     const refreshPositionsSoon = debounce(() => actions.refreshPositions(), 1500);
@@ -252,11 +253,11 @@ export default {
         if (!s) return;
         const c = s.connection || {};
         const total = c.accounts_total || 0, con = c.accounts_connected || 0;
-        k.trading.set(s.trading_enabled ? "ENABLED" : "DISABLED", s.trading_enabled ? "on" : "off", s.trading_enabled ? "signals execute" : "signals are logged only");
-        k.logins.set(total ? `${con}/${total}` : "—", total ? (con ? "on" : "off") : "", total ? "connected" : "none configured");
+        k.trading.set(s.trading_enabled ? t("ENABLED") : t("DISABLED"), s.trading_enabled ? "on" : "off", s.trading_enabled ? t("signals execute") : t("signals are logged only"));
+        k.logins.set(total ? `${con}/${total}` : "—", total ? (con ? "on" : "off") : "", total ? t("connected") : t("none configured"));
         const ta = s.trade_accounts || [];
         const taConn = ta.filter((a) => a.connected).length;
-        k.accounts.set(ta.length ? `${taConn}/${ta.length}` : "—", ta.length ? (taConn ? "on" : "off") : "", ta.length ? "connected" : "discover under Settings");
+        k.accounts.set(ta.length ? `${taConn}/${ta.length}` : "—", ta.length ? (taConn ? "on" : "off") : "", ta.length ? t("connected") : t("discover under Settings"));
         const rows = [];
         for (const [key, t] of Object.entries(s.active_trades || {})) {
           const accts = t.accounts || {};
@@ -264,7 +265,7 @@ export default {
             rows.push({ ...t, sym: t.root || key.split(":").pop(), account: a.name || id, qty: a.qty, sl_order_id: a.sl_order_id, tp_order_ids: a.tp_order_ids });
           }
         }
-        k.trades.set(String(rows.length), rows.length ? "on" : "", rows.length ? "managed by the bridge" : "flat");
+        k.trades.set(String(rows.length), rows.length ? "on" : "", rows.length ? t("managed by the bridge") : "flat");
         active.update(rows);
         sessions.update(s.sessions || []);
         paintRollover(s.rollover);
@@ -274,12 +275,12 @@ export default {
         if (p && p.error) { positions.update([]); positions.tbody.firstChild.firstChild.textContent = p.error; return; }
         positions.update(p || []);
       }, { immediate: true }),
-      store.subscribe("stream", (s) => k.stream.set(s === "live" ? "Live" : s === "reconnecting" ? "Reconnecting…" : "Offline", s === "live" ? "on" : s === "reconnecting" ? "warn" : "off", "event stream"), { immediate: true }),
+      store.subscribe("stream", (s) => k.stream.set(s === "live" ? t("Live") : s === "reconnecting" ? t("Reconnecting…") : t("Offline"), s === "live" ? "on" : s === "reconnecting" ? "warn" : "off", t("event stream")), { immediate: true }),
       k.discord ? store.subscribe("discordStatus", (d) => {
         if (!d) return;
-        const label = d.state === "token_invalid" ? "Token rejected" : d.health === "down" ? "Offline"
+        const label = d.state === "token_invalid" ? t("Token rejected") : d.health === "down" ? t("Offline")
           : ({ connected: "Connected", connecting: "Connecting…", disabled: "Disabled", error: "Error", library_missing: "No library", stopped: "Stopped", not_entitled: "Not enabled" }[d.state] || d.state);
-        k.discord.set(d.enabled ? label : "Off", d.state === "connected" ? "on" : (d.health === "down" || d.state === "error") ? "off" : "", d.user ? `as ${d.user}` : `${(d.watched_channels || []).length} channel(s) watched`);
+        k.discord.set(d.enabled ? label : t("Off"), d.state === "connected" ? "on" : (d.health === "down" || d.state === "error") ? "off" : "", d.user ? `as ${d.user}` : `${(d.watched_channels || []).length} channel(s) watched`);
       }, { immediate: true }) : null,
     ].filter(Boolean);
 

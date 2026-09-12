@@ -1,12 +1,12 @@
 {% extends "auth_base.html" %}
-{% block title %}Sign in · Fluxbridge{% endblock %}
+{% block title %}{{ t("Sign in · Fluxbridge") }}{% endblock %}
 {% block heading %}Fluxbridge{% endblock %}
-{% block subheading %}Sign in to your area{% endblock %}
+{% block subheading %}{{ t("Sign in to your area") }}{% endblock %}
 {% block content %}
 <form method="post" action="/login">
-  <label>Email <input type="email" name="email" autocomplete="username" required autofocus /></label>
-  <label>Password <input type="password" name="password" autocomplete="current-password" required /></label>
-  <button type="submit">Sign in</button>
+  <label>{{ t("Email") }} <input type="email" name="email" autocomplete="username" required autofocus /></label>
+  <label>{{ t("Password") }} <input type="password" name="password" autocomplete="current-password" required /></label>
+  <button type="submit">{{ t("Sign in") }}</button>
 </form>
-<div class="auth-note">Access is invite-only. Have an invite link? Open it to create your account.</div>
+<div class="auth-note">{{ t("Access is invite-only. Have an invite link? Open it to create your account.") }}</div>
 {% endblock %}

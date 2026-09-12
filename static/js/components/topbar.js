@@ -6,53 +6,54 @@ import { store } from "../store.js";
 import { actions } from "../actions.js";
 import { getTheme, setTheme } from "../theme.js";
 import { isPrivate, setPrivate } from "../privacy.js";
+import { t } from "../i18n.js";
 
 export function renderTopbar(root, { navigate, onHamburger, onPrivacy }) {
   clear(root);
-  const title = h("span", { class: "title" }, "Fluxbridge");
+  const title = h("span", { class: "title" }, t("Fluxbridge"));
 
   // Stream liveness
   const streamDot = h("span", { class: "dot off" });
-  const streamPill = h("span", { class: "pill hide-mobile", title: "Live updates (Server-Sent Events)" }, streamDot, h("span", { class: "pill-text" }, "offline"));
+  const streamPill = h("span", { class: "pill hide-mobile", title: t("Live updates (Server-Sent Events)") }, streamDot, h("span", { class: "pill-text" }, t("offline")));
 
   // Broker connection
   const connDot = h("span", { class: "dot" });
-  const connText = h("span", { class: "pill-text" }, "Disconnected");
-  const connPill = h("button", { type: "button", class: "pill clickable", title: "Connection health — open Overview", onClick: () => navigate("/") }, connDot, connText);
+  const connText = h("span", { class: "pill-text" }, t("Disconnected"));
+  const connPill = h("button", { type: "button", class: "pill clickable", title: t("Connection health — open Overview"), onClick: () => navigate("/") }, connDot, connText);
 
   // Trading kill-switch
   const tradingText = h("strong", null, "—");
-  const tradingPill = h("button", { type: "button", class: "pill clickable", title: "Toggle the trading master switch" },
-    icon("zap", "ic"), h("span", { class: "pill-text" }, "Trading "), tradingText);
+  const tradingPill = h("button", { type: "button", class: "pill clickable", title: t("Toggle the trading master switch") },
+    icon("zap", "ic"), h("span", { class: "pill-text" }, t("Trading ")), tradingText);
   tradingPill.addEventListener("click", async () => {
     const cur = !!(store.get("settings") || {}).trading_enabled;
     const ok = await confirmDialog({
-      title: cur ? "Disable trading?" : "Enable trading?",
-      body: cur ? "Incoming signals will be logged but NOT executed until you enable trading again."
-        : "Incoming signals on enabled webhooks will place REAL orders on the routed accounts.",
-      confirmText: cur ? "Disable trading" : "Enable trading", danger: !cur,
+      title: cur ? t("Disable trading?") : t("Enable trading?"),
+      body: cur ? t("Incoming signals will be logged but NOT executed until you enable trading again.")
+        : t("Incoming signals on enabled webhooks will place REAL orders on the routed accounts."),
+      confirmText: cur ? t("Disable trading") : t("Enable trading"), danger: !cur,
     });
     if (!ok) return;
     try { await actions.setTrading(!cur); } catch (e) { toast(e.message, "error"); }
   });
 
   // News lock (economic calendar): shown only while a window is active
-  const newsPill = h("button", { type: "button", class: "pill clickable off hidden", title: "News lock active — no new entries; open Settings → News & Calendar", onClick: () => navigate("/settings/news") },
-    icon("alert", "ic"), h("span", { class: "pill-text" }, "News lock"));
+  const newsPill = h("button", { type: "button", class: "pill clickable off hidden", title: t("News lock active — no new entries; open Settings → News & Calendar"), onClick: () => navigate("/settings/news") },
+    icon("alert", "ic"), h("span", { class: "pill-text" }, t("News lock")));
 
   // SOS
-  const sosBtn = h("button", { type: "button", class: "btn btn-sos btn-sm", title: "Flatten ALL accounts now" }, "🆘", h("span", { class: "pill-text" }, "Flatten all"));
+  const sosBtn = h("button", { type: "button", class: "btn btn-sos btn-sm", title: t("Flatten ALL accounts now") }, "🆘", h("span", { class: "pill-text" }, t("Flatten all")));
   sosBtn.addEventListener("click", async () => {
     const ok = await confirmDialog({
-      title: "🆘 Flatten ALL accounts",
-      body: "Cancel every working order and close every open position on ALL of your trade accounts (every broker), right now — even if trading is paused.\n\nThis cannot be undone.",
-      confirmText: "Flatten everything", danger: true,
+      title: t("🆘 Flatten ALL accounts"),
+      body: t("Cancel every working order and close every open position on ALL of your trade accounts (every broker), right now — even if trading is paused.\n\nThis cannot be undone."),
+      confirmText: t("Flatten everything"), danger: true,
     });
     if (!ok) return;
     sosBtn.disabled = true;
     try {
       const r = await actions.flattenAll();
-      const msg = `Flattened ${r.flattened} position(s), cancelled ${r.cancelled} order(s) on ${r.accounts} account(s)`;
+      const msg = t("Flattened {p} position(s), cancelled {c} order(s) on {a} account(s)", { p: r.flattened, c: r.cancelled, a: r.accounts });
       if (r.errors && r.errors.length) toast(`${msg} — ${r.errors.length} error(s), see Logs`, "error");
       else toast(msg, "success");
     } catch (e) {
@@ -63,15 +64,15 @@ export function renderTopbar(root, { navigate, onHamburger, onPrivacy }) {
   });
 
   // Update badge
-  const updateBtn = h("button", { type: "button", class: "btn btn-update btn-sm hidden", onClick: () => navigate("/settings/updates") }, "Update available");
+  const updateBtn = h("button", { type: "button", class: "btn btn-update btn-sm hidden", onClick: () => navigate("/settings/updates") }, t("Update available"));
 
   // Theme toggle
-  const themeBtn = h("button", { type: "button", class: "btn btn-ghost btn-icon hide-mobile", title: "Toggle dark / light" });
-  const themeMenuItem = h("button", { type: "button" }, icon("moon"), "Switch theme");
+  const themeBtn = h("button", { type: "button", class: "btn btn-ghost btn-icon hide-mobile", title: t("Toggle dark / light") });
+  const themeMenuItem = h("button", { type: "button" }, icon("moon"), t("Switch theme"));
   const paintTheme = () => {
     const dark = getTheme() === "dark";
     themeBtn.replaceChildren(icon(dark ? "sun" : "moon"));
-    themeMenuItem.replaceChildren(icon(dark ? "sun" : "moon"), dark ? "Light theme" : "Dark theme");
+    themeMenuItem.replaceChildren(icon(dark ? "sun" : "moon"), dark ? t("Light theme") : t("Dark theme"));
   };
   const flipTheme = () => { setTheme(getTheme() === "dark" ? "light" : "dark"); paintTheme(); };
   themeBtn.addEventListener("click", flipTheme);
@@ -83,10 +84,10 @@ export function renderTopbar(root, { navigate, onHamburger, onPrivacy }) {
   const privacyMenuItem = h("button", { type: "button" });
   const paintPrivacy = () => {
     const on = isPrivate();
-    privacyBtn.title = on ? "Privacy mode on — account names are masked. Click to show them." : "Privacy mode — mask account names (for screenshots / streaming)";
+    privacyBtn.title = on ? t("Privacy mode on — account names are masked. Click to show them.") : t("Privacy mode — mask account names (for screenshots / streaming)");
     privacyBtn.classList.toggle("active", on);
     privacyBtn.replaceChildren(icon(on ? "eyeOff" : "eye"));
-    privacyMenuItem.replaceChildren(icon(on ? "eye" : "eyeOff"), on ? "Show account names" : "Mask account names");
+    privacyMenuItem.replaceChildren(icon(on ? "eye" : "eyeOff"), on ? t("Show account names") : t("Mask account names"));
   };
   const flipPrivacy = () => { setPrivate(!isPrivate()); paintPrivacy(); if (onPrivacy) onPrivacy(isPrivate()); };
   privacyBtn.addEventListener("click", flipPrivacy);
@@ -94,10 +95,10 @@ export function renderTopbar(root, { navigate, onHamburger, onPrivacy }) {
   paintPrivacy();
 
   // User menu
-  const who = h("div", { class: "who" }, h("strong", null, "…"), "signed in");
-  const avatar = h("button", { type: "button", class: "avatar", title: "Account" }, "?");
+  const who = h("div", { class: "who" }, h("strong", null, "…"), t("signed in"));
+  const avatar = h("button", { type: "button", class: "avatar", title: t("Account") }, "?");
   const menu = h("div", { class: "menu" }, who,
-    h("a", { href: "#/settings/account", onClick: (e) => { e.preventDefault(); userMenu.classList.remove("open"); navigate("/settings/account"); } }, icon("user"), "Account"),
+    h("a", { href: "#/settings/account", onClick: (e) => { e.preventDefault(); userMenu.classList.remove("open"); navigate("/settings/account"); } }, icon("user"), t("Account")),
     themeMenuItem,
     privacyMenuItem,
     h("a", { href: "/logout", onClick: async (e) => {
@@ -105,27 +106,27 @@ export function renderTopbar(root, { navigate, onHamburger, onPrivacy }) {
       e.preventDefault();
       try { await fetch("/logout", { method: "POST", credentials: "same-origin", redirect: "manual" }); } catch { /* cookie is cleared server-side; fall through */ }
       window.location.href = "/login";
-    } }, icon("logout"), "Sign out"));
+    } }, icon("logout"), t("Sign out")));
   const userMenu = h("div", { class: "user-menu" }, avatar, menu);
   avatar.addEventListener("click", (e) => { e.stopPropagation(); userMenu.classList.toggle("open"); });
   document.addEventListener("click", () => userMenu.classList.remove("open"));
 
   root.append(
-    h("button", { type: "button", class: "btn btn-ghost btn-icon hamburger", title: "Menu", onClick: onHamburger }, icon("menu")),
+    h("button", { type: "button", class: "btn btn-ghost btn-icon hamburger", title: t("Menu"), onClick: onHamburger }, icon("menu")),
     title, h("span", { class: "spacer" }),
     h("div", { class: "right" }, updateBtn, streamPill, connPill, tradingPill, newsPill, sosBtn, privacyBtn, themeBtn, userMenu));
 
   const unsubs = [
-    store.subscribe("route", (r) => { title.textContent = r ? r.title : "Fluxbridge"; }, { immediate: true }),
+    store.subscribe("route", (r) => { title.textContent = r ? r.title : t("Fluxbridge"); }, { immediate: true }),
     store.subscribe("stream", (s) => {
       streamDot.className = "dot " + (s === "live" ? "on" : s === "reconnecting" ? "warn" : "off");
-      streamPill.querySelector(".pill-text").textContent = s === "live" ? "live" : s === "reconnecting" ? "reconnecting…" : "offline";
+      streamPill.querySelector(".pill-text").textContent = s === "live" ? t("live") : s === "reconnecting" ? t("reconnecting…") : t("offline");
     }, { immediate: true }),
     store.subscribe("status", (s) => {
       const c = (s && s.connection) || {};
       const total = c.accounts_total || 0, con = c.accounts_connected || 0;
       connDot.className = "dot" + (c.connected ? " on" : total ? "" : " off");
-      connText.textContent = total ? `${con}/${total} connected` : "No logins";
+      connText.textContent = total ? t("{c}/{n} connected", { c: con, n: total }) : t("No logins");
       connPill.className = "pill clickable " + (c.connected ? "on" : total ? "off" : "");
       const nl = s && s.news_lock;
       newsPill.classList.toggle("hidden", !(nl && nl.active));
@@ -140,7 +141,7 @@ export function renderTopbar(root, { navigate, onHamburger, onPrivacy }) {
     store.subscribe("me", (me) => {
       if (!me) return;
       avatar.textContent = (me.email || "?").slice(0, 2).toUpperCase();
-      who.replaceChildren(h("strong", null, me.email), me.is_admin ? "Administrator" : "User");
+      who.replaceChildren(h("strong", null, me.email), me.is_admin ? t("Administrator") : t("User"));
     }, { immediate: true }),
   ];
   return () => unsubs.forEach((u) => u());

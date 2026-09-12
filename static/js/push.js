@@ -1,5 +1,6 @@
 /* Web Push client: register the service worker, subscribe this device, tell the bridge. */
 import { api } from "./api.js";
+import { t } from "./i18n.js";
 
 const b64ToBytes = (s) => {
   const pad = "=".repeat((4 - (s.length % 4)) % 4);
@@ -14,8 +15,8 @@ export const isStandalone = () => window.matchMedia("(display-mode: standalone)"
 export function unsupportedReason() {
   if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
     return isIOS() && !isStandalone()
-      ? "On iPhone/iPad, add this app to the Home Screen first (Share → Add to Home Screen) and open it from there — Safari only allows push for installed apps."
-      : "This browser does not support Web Push.";
+      ? t("On iPhone/iPad, add this app to the Home Screen first (Share → Add to Home Screen) and open it from there — Safari only allows push for installed apps.")
+      : t("This browser does not support Web Push.");
   }
   if (!window.isSecureContext) return "Push needs HTTPS.";
   return "";
@@ -47,10 +48,10 @@ export async function currentSubscription() {
 
 export function deviceName() {
   const ua = navigator.userAgent;
-  const os = isIOS() ? (/iPad/.test(ua) || navigator.maxTouchPoints > 1 && navigator.platform === "MacIntel" ? "iPad" : "iPhone")
-    : /Android/.test(ua) ? "Android" : /Windows/.test(ua) ? "Windows" : /Mac OS/.test(ua) ? "Mac" : /Linux/.test(ua) ? "Linux" : "Device";
-  const browser = /CriOS|Chrome/.test(ua) && !/Edg/.test(ua) ? "Chrome" : /Edg/.test(ua) ? "Edge" : /Firefox|FxiOS/.test(ua) ? "Firefox" : /Safari/.test(ua) ? "Safari" : "Browser";
-  return `${os} · ${browser}${isStandalone() ? " (app)" : ""}`;
+  const os = isIOS() ? (/iPad/.test(ua) || navigator.maxTouchPoints > 1 && navigator.platform === "MacIntel" ? t("iPad") : t("iPhone"))
+    : /Android/.test(ua) ? t("Android") : /Windows/.test(ua) ? t("Windows") : /Mac OS/.test(ua) ? t("Mac") : /Linux/.test(ua) ? t("Linux") : t("Device");
+  const browser = /CriOS|Chrome/.test(ua) && !/Edg/.test(ua) ? t("Chrome") : /Edg/.test(ua) ? t("Edge") : /Firefox|FxiOS/.test(ua) ? t("Firefox") : /Safari/.test(ua) ? t("Safari") : t("Browser");
+  return `${os} · ${browser}${isStandalone() ? t(" (app)") : ""}`;
 }
 
 /** Ask permission (must run from a user gesture), subscribe, register with the bridge. */
@@ -58,9 +59,9 @@ export async function enablePush() {
   const why = unsupportedReason();
   if (why) throw new Error(why);
   const reg = await registerWorker();
-  if (!reg) throw new Error("Service worker registration failed");
+  if (!reg) throw new Error(t("Service worker registration failed"));
   const perm = await Notification.requestPermission();
-  if (perm !== "granted") throw new Error("Notification permission was not granted");
+  if (perm !== "granted") throw new Error(t("Notification permission was not granted"));
   const { public_key } = await api.get("/api/push/public-key");
   const appKey = b64ToBytes(public_key);
   let sub = await reg.pushManager.getSubscription();

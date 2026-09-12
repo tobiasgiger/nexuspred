@@ -1,14 +1,13 @@
 {% extends "auth_base.html" %}
-{% block title %}First-run setup · Fluxbridge{% endblock %}
-{% block heading %}Welcome to Fluxbridge{% endblock %}
-{% block subheading %}Create the first admin account{% endblock %}
+{% block title %}{{ t("First-run setup · Fluxbridge") }}{% endblock %}
+{% block heading %}{{ t("Welcome to Fluxbridge") }}{% endblock %}
+{% block subheading %}{{ t("Create the first admin account") }}{% endblock %}
 {% block content %}
 <form method="post" action="/setup">
-  <label>Email <input type="email" name="email" autocomplete="username" required autofocus /></label>
-  <label>Password <input type="password" name="password" autocomplete="new-password" required minlength="8" /></label>
-  <label>Confirm password <input type="password" name="password2" autocomplete="new-password" required minlength="8" /></label>
-  <button type="submit">Create admin &amp; continue</button>
+  <label>{{ t("Email") }} <input type="email" name="email" autocomplete="username" required autofocus /></label>
+  <label>{{ t("Password") }} <input type="password" name="password" autocomplete="new-password" required minlength="8" /></label>
+  <label>{{ t("Confirm password") }} <input type="password" name="password2" autocomplete="new-password" required minlength="8" /></label>
+  <button type="submit">{{ t("Create admin & continue") }}</button>
 </form>
-<div class="auth-note">This becomes the admin who can invite other users. Any existing
-  single-user configuration is migrated into this account's area.</div>
+<div class="auth-note">{{ t("This becomes the admin who can invite other users. Any existing single-user configuration is migrated into this account's area.") }}</div>
 {% endblock %}

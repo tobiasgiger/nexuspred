@@ -384,6 +384,22 @@ subscription has its own **Sizing** rule — the same three as copy trading:
 **Max** caps the result (0 = no cap). Older entries that only carried `qty_multiplier`
 keep working: a factor other than 1 is *Multiplier*, 1 is *Same*.
 
+## Language (German / English)
+
+The dashboard speaks German and English. By default it follows the browser's language
+(`Accept-Language` / `navigator.languages`: German → Deutsch, everything else → English);
+**Settings → General & Trading → Display → Language** forces one for the workspace
+(*Browser default*, *Deutsch*, *English*). The page reloads after a change, the sign-in
+/ setup / reset pages use the same choice (via the `fb_lang` cookie, else
+`Accept-Language`), and dates and numbers are formatted for the chosen language
+(`de-CH` for German).
+
+How it works: English is the source language in the code (`t("Save logins")`); the
+German dictionary lives in `static/js/locales/de.js` (English text → German) and
+`app/i18n.py` for the server-rendered auth pages. A missing entry falls back to English,
+`tests/test_i18n.py` fails when a sentence-like UI string has no German entry. Log events,
+alerts and API error texts stay English (they are also read by tooling and support).
+
 ## Simulator
 
 The **Simulator** tab lets you rehearse complete trades without sending anything to

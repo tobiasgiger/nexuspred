@@ -1,3 +1,4 @@
+import { t } from "./i18n.js";
 /* TradingView alert-message templates, test-signal presets, Discord test embeds,
    and the token bookmarklets — shared by the Webhooks drawer and the Tools page. */
 
@@ -46,64 +47,64 @@ export function alertMessageTemplate(strategy) {
 
 export const STRATEGY_LABEL = { simple: "simple", bracket: "bracket", ts_hunter: "TS-Hunter" };
 export const STRATEGY_OPTIONS = [
-  { value: "simple", label: "simple — buy/sell only" },
-  { value: "bracket", label: "bracket — entry + TP/SL" },
-  { value: "ts_hunter", label: "TS-Hunter — signal + partial closes" },
+  { value: "simple", label: t("simple — buy/sell only") },
+  { value: "bracket", label: t("bracket — entry + TP/SL") },
+  { value: "ts_hunter", label: t("TS-Hunter — signal + partial closes") },
 ];
 
 export const PRESETS = {
-  simple_buy: { label: "Simple buy", payload: { action: "buy", symbol: "MNQ1!", qty: 2 } },
-  simple_sell: { label: "Simple sell", payload: { action: "sell", symbol: "MNQ1!", qty: 2 } },
-  entry: { label: "Bracket entry (sell)", payload: {
+  simple_buy: { label: t("Simple buy"), payload: { action: "buy", symbol: "MNQ1!", qty: 2 } },
+  simple_sell: { label: t("Simple sell"), payload: { action: "sell", symbol: "MNQ1!", qty: 2 } },
+  entry: { label: t("Bracket entry (sell)"), payload: {
     event: "entry", action: "sell", symbol: "MNQ1!", entry: 30267,
     sl: 30285.06839, tp1: 30261.57948, tp2: 30265.19316, tp3: 30247.0425,
     qty: 4.95623, risk_usd: 179.10204,
   } },
-  move_sl: { label: "Move SL", payload: {
+  move_sl: { label: t("Move SL"), payload: {
     event: "tp1_hit", action: "move_sl", symbol: "MNQ1!", new_sl: 30266.01,
     message: "TP1 reached — SL moved to net-breakeven",
   } },
-  trail: { label: "Trail active", payload: {
+  trail: { label: t("Trail active"), payload: {
     event: "tp2_hit", action: "trail_active", symbol: "MNQ1!",
     trail_ema: "ema9", trail_buffer: 0.15, message: "TP2 reached — trailing stop active",
   } },
-  close: { label: "Close all", payload: {
+  close: { label: t("Close all"), payload: {
     event: "tp3_hit", action: "close_all", symbol: "MNQ1!",
     exit_price: 30241.70425, pnl: 250.70285, message: "TP3 full kill — close all",
   } },
-  runner: { label: "Runner exit", payload: {
+  runner: { label: t("Runner exit"), payload: {
     event: "runner_exit", action: "close_all", symbol: "MNQ1!",
     exit_price: 29761.94756, realized_R: 1.7, message: "Runner trailed out past TP3 — closed in profit",
   } },
-  ts_signal: { label: "TS-Hunter signal", payload: {
+  ts_signal: { label: t("TS-Hunter signal"), payload: {
     contract_version: "at_execution_command_v5", event: "signal", side: "SELL", symbol: "MNQ",
     risk: { mode: "fixed_lot", value: 4 }, sl: { mode: "fixed_price_from_alert", value: 29658.5 },
     tv: { entry_price: 29329 }, trade_id: "TS-HUNTER-DEMO-1",
   } },
-  ts_tp1: { label: "TS-Hunter TP1 (25%)", payload: {
+  ts_tp1: { label: t("TS-Hunter TP1 (25%)"), payload: {
     contract_version: "at_execution_command_v5", event: "management", action: "partial_close_percent",
     percent: 25, lifecycle_stage: "TP1", symbol: "MNQ", trade_id: "TS-HUNTER-DEMO-1",
   } },
-  ts_close: { label: "TS-Hunter full close", payload: {
+  ts_close: { label: t("TS-Hunter full close"), payload: {
     contract_version: "at_execution_command_v5", event: "management", action: "full_close",
     reason: "sl_hit", symbol: "MNQ", trade_id: "TS-HUNTER-DEMO-1",
   } },
 };
 
 export const DS_TEST_PRESETS = {
-  entry: { label: "Entry (SELL)", embed: {
+  entry: { label: t("Entry (SELL)"), embed: {
     title: "AkSniper 🎯 · SELL MNQ",
     fields: [{ name: "Contracts", value: "3" }, { name: "Entry", value: "20450.25" }, { name: "Time", value: "10:31" }],
   } },
-  update: { label: "Stop / target moved", embed: {
+  update: { label: t("Stop / target moved"), embed: {
     title: "AkSniper 🎯 · Stop / target moved · MNQ",
     fields: [{ name: "Stop", value: "20440.0 → 20450.0" }, { name: "Target", value: "20500.0 → 20520.5" }, { name: "Position", value: "3" }],
   } },
-  close: { label: "Closed", embed: {
+  close: { label: t("Closed"), embed: {
     title: "Closed MNQ · +90.75 pts",
     fields: [{ name: "P&L", value: "+$181.50" }, { name: "Move", value: "+90.75" }, { name: "Exit", value: "20541.0" }, { name: "Held", value: "12m" }],
   } },
-  junk: { label: "Unrecognised", embed: {
+  junk: { label: t("Unrecognised"), embed: {
     title: "Brand-new message type nobody expected",
     fields: [{ name: "Whatever", value: "???" }],
   } },

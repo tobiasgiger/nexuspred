@@ -9,7 +9,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 
-from . import auth, config
+from . import auth, config, i18n
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -31,9 +31,13 @@ def is_auth_exempt(path: str) -> bool:
 
 def render(request: Request, name: str, context: dict[str, Any] | None = None) -> HTMLResponse:
     """Render a template with the request and its CSP nonce in scope."""
-    ctx = {"nonce": getattr(request.state, "csp_nonce", "")}
+    lang = i18n.language_of(request)
+    tr = i18n.translator(lang)
+    ctx = {"nonce": getattr(request.state, "csp_nonce", ""), "lang": lang, "t": tr}
     if context:
         ctx.update(context)
+        if ctx.get("error"):
+            ctx["error"] = tr(str(ctx["error"]))       # the auth forms' error texts are English source strings
     return templates.TemplateResponse(request, name, ctx)
 
 

@@ -1,17 +1,17 @@
 {% extends "auth_base.html" %}
-{% block title %}Reset password · Fluxbridge{% endblock %}
-{% block heading %}Set a new password{% endblock %}
+{% block title %}{{ t("Reset password · Fluxbridge") }}{% endblock %}
+{% block heading %}{{ t("Set a new password") }}{% endblock %}
 {% block subheading %}Fluxbridge{% endblock %}
 {% block content %}
 {% if valid_token %}
   <form method="post" action="/reset">
     <input type="hidden" name="token" value="{{ token }}" />
-    <label>New password <input type="password" name="password" autocomplete="new-password" required minlength="8" autofocus /></label>
-    <label>Confirm password <input type="password" name="password2" autocomplete="new-password" required minlength="8" /></label>
-    <button type="submit">Set password</button>
+    <label>{{ t("New password") }} <input type="password" name="password" autocomplete="new-password" required minlength="8" autofocus /></label>
+    <label>{{ t("Confirm password") }} <input type="password" name="password2" autocomplete="new-password" required minlength="8" /></label>
+    <button type="submit">{{ t("Set password") }}</button>
   </form>
 {% else %}
-  <div class="auth-err">This reset link is invalid or has expired. Ask an admin for a new one.</div>
-  <div class="auth-note"><a href="/login">Back to sign in</a></div>
+  <div class="auth-err">{{ t("This reset link is invalid or has expired. Ask an admin for a new one.") }}</div>
+  <div class="auth-note"><a href="/login">{{ t("Back to sign in") }}</a></div>
 {% endif %}
 {% endblock %}

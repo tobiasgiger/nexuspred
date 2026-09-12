@@ -188,6 +188,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
 
     # --- Auto-updater ---------------------------------------------------------
     "auto_check_updates": True,
+    "ui_language": "auto",           # dashboard language: auto (browser), de, en
 
     # --- Connection health ----------------------------------------------------
     # How often (seconds) the bridge verifies the Tradovate session is alive and

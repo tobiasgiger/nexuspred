@@ -13,6 +13,7 @@ import { openDrawer, closeDrawer } from "../components/drawer.js";
 import { alertMessageTemplate, STRATEGY_LABEL, STRATEGY_OPTIONS, PRESETS, webhookUrl } from "../templates.js";
 import { openSubscriptionDrawer } from "./marketplace.js";
 import { sizingOf } from "../sizing.js";
+import { t } from "../i18n.js";
 
 const accountKey = (idx, spec) => `${idx}::${spec}`;
 
@@ -42,12 +43,12 @@ function webhookDrawer(wh, { navigate }) {
   const enabledSw = h("input", { type: "checkbox", class: "switch", checked: !!w.enabled });
   const defQty = h("input", { type: "number", min: 1, value: w.default_qty ?? 1 });
   const tpQty = h("input", { type: "number", min: 1, value: w.tp_qty ?? 1 });
-  const defQtyField = h("div", { class: "field" }, h("label", null, "Default qty"), defQty, h("div", { class: "field-hint" }, "Fallback when the alert payload omits qty/contracts."));
-  const tpQtyField = h("div", { class: "field" }, h("label", null, "Contracts per take-profit"), tpQty, h("div", { class: "field-hint" }, "Bracket only: size of each TP limit order."));
+  const defQtyField = h("div", { class: "field" }, h("label", null, t("Default qty")), defQty, h("div", { class: "field-hint" }, t("Fallback when the alert payload omits qty/contracts.")));
+  const tpQtyField = h("div", { class: "field" }, h("label", null, t("Contracts per take-profit")), tpQty, h("div", { class: "field-hint" }, t("Bracket only: size of each TP limit order.")));
   const STRATEGY_BLURB = {
-    simple: "executes buy/sell for the qty in the alert, no TP/SL. close_all flattens the tracked position.",
-    bracket: "market entry + TP1/TP2/TP3 limits + protective stop from the alert; move_sl / trail_active manage the stop.",
-    ts_hunter: "entry sized from risk.value with a stop at sl.value; partial_close_percent slices and full_close, correlated by trade_id.",
+    simple: t("executes buy/sell for the qty in the alert, no TP/SL. close_all flattens the tracked position."),
+    bracket: t("market entry + TP1/TP2/TP3 limits + protective stop from the alert; move_sl / trail_active manage the stop."),
+    ts_hunter: t("entry sized from risk.value with a stop at sl.value; partial_close_percent slices and full_close, correlated by trade_id."),
   };
   const blurb = h("div", { class: "callout" });
   const footTag = tag(STRATEGY_LABEL[w.strategy] || w.strategy, w.strategy);
@@ -65,18 +66,18 @@ function webhookDrawer(wh, { navigate }) {
   // --- Accounts
   const selected = new Map((w.accounts || []).map((a) => [accountKey(a.token_idx, a.spec), a]));
   const accTable = dataTable({
-    empty: "No trade accounts discovered yet — add a login under Settings → Broker Accounts and Connect & Verify.",
+    empty: t("No trade accounts discovered yet — add a login under Settings → Broker Accounts and Connect & Verify."),
     columns: [
-      { label: "Route", render: (a) => h("input", { type: "checkbox", class: "switch acc-on", checked: !!(selected.get(accountKey(a.token_idx, a.spec)) || {}).enabled, dataset: { key: accountKey(a.token_idx, a.spec) } }) },
-      { label: "Login", render: (a) => a.token_name || "—" },
-      { label: "Account", render: (a) => h("code", null, maskAccount(a.spec) || "—") },
-      { label: "Env", render: (a) => tag((a.environment || "—").toUpperCase(), a.environment === "live" ? "live" : "demo") },
-      { label: "Status", render: (a) => h("span", { class: a.connected ? "pos" : "muted" }, a.connected ? "connected" : "offline") },
-      { label: "Sizing", render: (a) => { const sz = sizingOf(selected.get(accountKey(a.token_idx, a.spec))); return h("select", { class: "acc-mode input-sm", dataset: { key: accountKey(a.token_idx, a.spec) } },
-        h("option", { value: "same", selected: sz.mode === "same" }, "Same (1:1)"), h("option", { value: "multiplier", selected: sz.mode === "multiplier" }, "Multiplier"), h("option", { value: "fixed", selected: sz.mode === "fixed" }, "Fixed")); } },
+      { label: t("Route"), render: (a) => h("input", { type: "checkbox", class: "switch acc-on", checked: !!(selected.get(accountKey(a.token_idx, a.spec)) || {}).enabled, dataset: { key: accountKey(a.token_idx, a.spec) } }) },
+      { label: t("Login"), render: (a) => a.token_name || "—" },
+      { label: t("Account"), render: (a) => h("code", null, maskAccount(a.spec) || "—") },
+      { label: t("Env"), render: (a) => tag((a.environment || "—").toUpperCase(), a.environment === "live" ? "live" : "demo") },
+      { label: t("Status"), render: (a) => h("span", { class: a.connected ? "pos" : "muted" }, a.connected ? "connected" : "offline") },
+      { label: t("Sizing"), render: (a) => { const sz = sizingOf(selected.get(accountKey(a.token_idx, a.spec))); return h("select", { class: "acc-mode input-sm", dataset: { key: accountKey(a.token_idx, a.spec) } },
+        h("option", { value: "same", selected: sz.mode === "same" }, t("Same (1:1)")), h("option", { value: "multiplier", selected: sz.mode === "multiplier" }, t("Multiplier")), h("option", { value: "fixed", selected: sz.mode === "fixed" }, t("Fixed"))); } },
       { label: "×", render: (a) => h("input", { type: "number", class: "acc-mult input-sm", min: 0.01, step: 0.01, style: "width:70px", value: sizingOf(selected.get(accountKey(a.token_idx, a.spec))).multiplier, dataset: { key: accountKey(a.token_idx, a.spec) } }) },
-      { label: "Fixed", render: (a) => h("input", { type: "number", class: "acc-fixed input-sm", min: 1, step: 1, style: "width:64px", value: sizingOf(selected.get(accountKey(a.token_idx, a.spec))).fixed, dataset: { key: accountKey(a.token_idx, a.spec) } }) },
-      { label: "Max", render: (a) => h("input", { type: "number", class: "acc-max input-sm", min: 0, step: 1, style: "width:64px", title: "0 = no cap", value: sizingOf(selected.get(accountKey(a.token_idx, a.spec))).max_contracts, dataset: { key: accountKey(a.token_idx, a.spec) } }) },
+      { label: t("Fixed"), render: (a) => h("input", { type: "number", class: "acc-fixed input-sm", min: 1, step: 1, style: "width:64px", value: sizingOf(selected.get(accountKey(a.token_idx, a.spec))).fixed, dataset: { key: accountKey(a.token_idx, a.spec) } }) },
+      { label: t("Max"), render: (a) => h("input", { type: "number", class: "acc-max input-sm", min: 0, step: 1, style: "width:64px", title: t("0 = no cap"), value: sizingOf(selected.get(accountKey(a.token_idx, a.spec))).max_contracts, dataset: { key: accountKey(a.token_idx, a.spec) } }) },
     ],
   });
   accTable.update(known);
@@ -94,9 +95,9 @@ function webhookDrawer(wh, { navigate }) {
   const tmplPre = h("pre", { class: "code" });
   const tmplHint = h("p", { class: "hint" });
   function paintTemplate() {
-    const t = alertMessageTemplate(stratSel.value);
-    tmplPre.textContent = t.json;
-    tmplHint.textContent = t.hint;
+    const tpl = alertMessageTemplate(stratSel.value);
+    tmplPre.textContent = tpl.json;
+    tmplHint.textContent = tpl.hint;
   }
   paintTemplate();
 
@@ -105,26 +106,26 @@ function webhookDrawer(wh, { navigate }) {
   const testResult = h("pre", { class: "result-box hidden" });
   const forwardCb = h("input", { type: "checkbox", class: "switch" });
   const forwardRow = h("label", { class: `switch-row ${sharingOf(w).enabled ? "" : "hidden"}` },
-    h("span", null, "Also forward to marketplace subscribers", h("small", null, "Off by default — a test signal then runs only in your own area.")), forwardCb);
+    h("span", null, t("Also forward to marketplace subscribers"), h("small", null, t("Off by default — a test signal then runs only in your own area."))), forwardCb);
   const presetRow = h("div", { class: "preset-row" }, Object.entries(PRESETS).map(([k, p]) =>
     h("button", { type: "button", class: "chip", onClick: () => { payloadTa.value = JSON.stringify(p.payload, null, 2); } }, p.label)));
   const sendBtn = h("button", { type: "button", class: "btn btn-primary", onClick: async () => {
     let payload;
     try { payload = JSON.parse(payloadTa.value); } catch { return toast("Payload is not valid JSON", "error"); }
-    if (forwardCb.checked && !(await confirmDialog({ title: "Forward the test signal to subscribers?", body: "It will execute on every subscriber's routed accounts (subject to their own Trading switch).", confirmText: "Send to everyone", danger: true }))) return;
+    if (forwardCb.checked && !(await confirmDialog({ title: t("Forward the test signal to subscribers?"), body: t("It will execute on every subscriber's routed accounts (subject to their own Trading switch)."), confirmText: t("Send to everyone"), danger: true }))) return;
     sendBtn.disabled = true;
     try {
       const r = await api.post(`/api/webhooks/${w.id}/test${forwardCb.checked ? "?subscribers=true" : ""}`, payload);
       testResult.textContent = JSON.stringify(r, null, 2);
       testResult.classList.remove("hidden");
-      toast(r.forwarded ? `Signal processed, forwarded to ${r.forwarded} subscriber(s)` : "Signal processed", "success");
+      toast(r.forwarded ? t("Signal processed, forwarded to {n} subscriber(s)", { n: r.forwarded }) : t("Signal processed"), "success");
       actions.refreshOrders(); actions.refreshLogs(); actions.refreshStatus();
     } catch (e) {
-      testResult.textContent = "Error: " + e.message;
+      testResult.textContent = t("Error: ") + e.message;
       testResult.classList.remove("hidden");
       toast(e.message, "error");
     } finally { sendBtn.disabled = false; }
-  } }, icon("send"), "Send test signal");
+  } }, icon("send"), t("Send test signal"));
 
   // --- Sharing (admins)
   let sharingPane = null;
@@ -132,29 +133,29 @@ function webhookDrawer(wh, { navigate }) {
     const sh = sharingOf(w);
     const pubSw = h("input", { type: "checkbox", class: "switch", checked: sh.enabled });
     const titleInp = h("input", { value: sh.title, placeholder: w.name, maxlength: 80 });
-    const descTa = h("textarea", { rows: 3, maxlength: 1000, placeholder: "What this signal trades, timeframe, typical size…", style: "font-family:inherit" }, sh.description);
-    const visSel = h("select", null, h("option", { value: "all", selected: sh.visibility === "all" }, "Every registered user"), h("option", { value: "selected", selected: sh.visibility === "selected" }, "Only selected users"));
-    const userList = h("div", { class: "check-list" }, h("span", { class: "muted" }, "Loading users…"));
-    const userBox = h("div", { class: `field ${sh.visibility === "selected" ? "" : "hidden"}` }, h("label", null, "Allowed users"), userList);
+    const descTa = h("textarea", { rows: 3, maxlength: 1000, placeholder: t("What this signal trades, timeframe, typical size…"), style: "font-family:inherit" }, sh.description);
+    const visSel = h("select", null, h("option", { value: "all", selected: sh.visibility === "all" }, t("Every registered user")), h("option", { value: "selected", selected: sh.visibility === "selected" }, t("Only selected users")));
+    const userList = h("div", { class: "check-list" }, h("span", { class: "muted" }, t("Loading users…")));
+    const userBox = h("div", { class: `field ${sh.visibility === "selected" ? "" : "hidden"}` }, h("label", null, t("Allowed users")), userList);
     visSel.addEventListener("change", () => userBox.classList.toggle("hidden", visSel.value !== "selected"));
     api.get("/api/users").then((r) => {
       const users = (r.users || r).filter((u) => u.id !== me.id);
       clear(userList);
-      if (!users.length) userList.append(h("span", { class: "muted" }, "No other users yet — invite them under Settings → Users."));
+      if (!users.length) userList.append(h("span", { class: "muted" }, t("No other users yet — invite them under Settings → Users.")));
       userList.append(users.map((u) => h("label", null, h("input", { type: "checkbox", class: "allow-user", value: String(u.id), checked: sh.allowed_user_ids.includes(u.id) }), u.email)));
-    }).catch(() => { clear(userList); userList.append(h("span", { class: "muted" }, "Could not load users.")); });
-    const subsTable = dataTable({ empty: "No subscribers yet.", compact: true, columns: [
-      { label: "Subscriber", render: (s) => s.email },
-      { label: "Status", render: (s) => s.enabled ? tag("on", "on") : tag("off", "off") },
-      { label: "Accounts", className: "num", render: (s) => String(Array.isArray(s.accounts) ? s.accounts.filter((a) => a.enabled).length : (s.accounts || 0)) },
-      { label: "Since", render: (s) => fmtDateTime(s.created_at) },
+    }).catch(() => { clear(userList); userList.append(h("span", { class: "muted" }, t("Could not load users."))); });
+    const subsTable = dataTable({ empty: t("No subscribers yet."), compact: true, columns: [
+      { label: t("Subscriber"), render: (s) => s.email },
+      { label: t("Status"), render: (s) => s.enabled ? tag("on", "on") : tag("off", "off") },
+      { label: t("Accounts"), className: "num", render: (s) => String(Array.isArray(s.accounts) ? s.accounts.filter((a) => a.enabled).length : (s.accounts || 0)) },
+      { label: t("Since"), render: (s) => fmtDateTime(s.created_at) },
       { label: "", render: (s) => h("button", { type: "button", class: "btn btn-ghost btn-sm", onClick: async () => {
-        if (!(await confirmDialog({ title: `Remove ${s.email}?`, body: "They stop receiving this signal immediately and can subscribe again unless you restrict visibility.", confirmText: "Remove", danger: true }))) return;
+        if (!(await confirmDialog({ title: t("Remove {email}?", { email: s.email }), body: t("They stop receiving this signal immediately and can subscribe again unless you restrict visibility."), confirmText: t("Remove"), danger: true }))) return;
         try { await api.del(`/api/webhooks/${w.id}/subscribers/${s.id}`); toast("Subscriber removed", "success"); loadSubs(); }
         catch (e) { toast(e.message, "error"); }
-      } }, icon("trash"), "Remove") },
+      } }, icon("trash"), t("Remove")) },
     ] });
-    const loadSubs = () => api.get(`/api/webhooks/${w.id}/subscribers`).then((list) => subsTable.update(list)).catch((e) => { subsTable.update([]); const c = subsTable.tbody.querySelector("td.empty"); if (c) c.textContent = "Could not load subscribers: " + e.message; });
+    const loadSubs = () => api.get(`/api/webhooks/${w.id}/subscribers`).then((list) => subsTable.update(list)).catch((e) => { subsTable.update([]); const c = subsTable.tbody.querySelector("td.empty"); if (c) c.textContent = t("Could not load subscribers: ") + e.message; });
     loadSubs();
     const shareBtn = h("button", { type: "button", class: "btn btn-primary", onClick: async () => {
       shareBtn.disabled = true;
@@ -166,68 +167,68 @@ function webhookDrawer(wh, { navigate }) {
         w = { ...w, ...updated };
         store.update("webhooks", (list) => list.map((x) => (x.id === w.id ? { ...x, ...updated } : x)));
         forwardRow.classList.toggle("hidden", !sharingOf(w).enabled);
-        toast(sharingOf(w).enabled ? "Published on the marketplace" : "Sharing saved", "success");
+        toast(sharingOf(w).enabled ? t("Published on the marketplace") : t("Sharing saved"), "success");
       } catch (e) { toast(e.message, "error"); } finally { shareBtn.disabled = false; }
-    } }, icon("share"), "Save sharing");
+    } }, icon("share"), t("Save sharing"));
     sharingPane = h("div", null,
-      h("label", { class: "switch-row" }, h("span", null, "Publish on the marketplace", h("small", null, "Other users can subscribe and run this signal on their own accounts. They never see your URL, token or accounts. Unpublishing pauses existing subscriptions.")), pubSw),
+      h("label", { class: "switch-row" }, h("span", null, t("Publish on the marketplace"), h("small", null, t("Other users can subscribe and run this signal on their own accounts. They never see your URL, token or accounts. Unpublishing pauses existing subscriptions."))), pubSw),
       h("div", { class: "grid grid-2", style: "margin-top:14px" },
-        h("div", { class: "field" }, h("label", null, "Title shown to subscribers"), titleInp),
-        h("div", { class: "field" }, h("label", null, "Visibility"), visSel)),
-      h("div", { class: "field" }, h("label", null, "Description"), descTa),
+        h("div", { class: "field" }, h("label", null, t("Title shown to subscribers")), titleInp),
+        h("div", { class: "field" }, h("label", null, t("Visibility")), visSel)),
+      h("div", { class: "field" }, h("label", null, t("Description")), descTa),
       userBox,
       h("div", { class: "form-actions" }, shareBtn),
-      h("h3", null, "Subscribers"),
+      h("h3", null, t("Subscribers")),
       subsTable.el);
   }
 
   // --- Tabs
   const panes = {
     general: h("div", null,
-      h("label", { class: "switch-row" }, h("span", null, "Webhook enabled", h("small", null, "Disabled webhooks answer 403 to TradingView (and nothing is forwarded to subscribers).")), enabledSw),
+      h("label", { class: "switch-row" }, h("span", null, t("Webhook enabled"), h("small", null, t("Disabled webhooks answer 403 to TradingView (and nothing is forwarded to subscribers)."))), enabledSw),
       h("div", { class: "grid grid-2", style: "margin-top:14px" },
-        h("div", { class: "field" }, h("label", null, "Name"), nameInp),
-        h("div", { class: "field" }, h("label", null, "Strategy"), stratSel),
+        h("div", { class: "field" }, h("label", null, t("Name")), nameInp),
+        h("div", { class: "field" }, h("label", null, t("Strategy")), stratSel),
         defQtyField, tpQtyField),
       blurb),
     accounts: h("div", null,
-      h("p", { class: "hint" }, "Every routed account receives each signal in parallel. Sizing per account — Same: the contracts the signal carries, 1:1. Multiplier: signal × factor (rounded half up, never below 1). Fixed: always this many contracts for the entry; bracket take-profit slices scale proportionally. Max caps the result (0 = no cap)."),
+      h("p", { class: "hint" }, t("Every routed account receives each signal in parallel. Sizing per account — Same: the contracts the signal carries, 1:1. Multiplier: signal × factor (rounded half up, never below 1). Fixed: always this many contracts for the entry; bracket take-profit slices scale proportionally. Max caps the result (0 = no cap).")),
       accTable.el),
     template: h("div", null,
-      h("h3", null, "Webhook URL"),
+      h("h3", null, t("Webhook URL")),
       h("div", { class: "url-box" }, urlCode, copyButton(() => urlCode.textContent)),
-      h("h3", null, "TradingView alert message"),
-      h("p", { class: "hint" }, "Paste into the alert's Message box (Notifications → Webhook URL = the URL above)."),
+      h("h3", null, t("TradingView alert message")),
+      h("p", { class: "hint" }, t("Paste into the alert's Message box (Notifications → Webhook URL = the URL above).")),
       tmplPre, h("div", { class: "form-actions" }, copyButton(() => tmplPre.textContent, "Copy message", "btn btn-secondary btn-sm")), tmplHint),
     test: h("div", null,
-      h("div", { class: "callout warn" }, "Runs the full live pipeline for this webhook: with trading enabled this places REAL orders on the routed accounts."),
+      h("div", { class: "callout warn" }, t("Runs the full live pipeline for this webhook: with trading enabled this places REAL orders on the routed accounts.")),
       presetRow, payloadTa, forwardRow, h("div", { class: "form-actions" }, sendBtn), testResult),
     sharing: sharingPane,
     danger: h("div", null,
-      card({ title: "Regenerate token", cls: "danger", hint: "The current URL stops working immediately — update every TradingView alert that uses it. Subscriptions are unaffected." },
+      card({ title: t("Regenerate token"), cls: "danger", hint: t("The current URL stops working immediately — update every TradingView alert that uses it. Subscriptions are unaffected.") },
         h("button", { type: "button", class: "btn btn-danger", onClick: async () => {
-          if (!(await confirmDialog({ title: "Regenerate token?", body: "The old webhook URL will stop working. Update your TradingView alerts afterwards.", confirmText: "Regenerate", danger: true }))) return;
+          if (!(await confirmDialog({ title: t("Regenerate token?"), body: t("The old webhook URL will stop working. Update your TradingView alerts afterwards."), confirmText: t("Regenerate"), danger: true }))) return;
           try {
             const updated = await api.post(`/api/webhooks/${w.id}/regenerate-token`);
             store.update("webhooks", (list) => list.map((x) => (x.id === w.id ? { ...x, ...updated } : x)));
             w = { ...w, ...updated }; urlCode.textContent = webhookUrl(w.token);
             toast("Token regenerated — copy the new URL", "success");
           } catch (e) { toast(e.message, "error"); }
-        } }, icon("key"), "Regenerate token")),
-      card({ title: "Delete webhook", cls: "danger", hint: "Removes the webhook, its routing and every marketplace subscription to it. Signals to its URL will be rejected (403)." },
+        } }, icon("key"), t("Regenerate token"))),
+      card({ title: t("Delete webhook"), cls: "danger", hint: t("Removes the webhook, its routing and every marketplace subscription to it. Signals to its URL will be rejected (403).") },
         h("button", { type: "button", class: "btn btn-danger", onClick: async () => {
-          if (!(await confirmDialog({ title: `Delete "${w.name}"?`, body: (w.subscriber_count ? `${w.subscriber_count} subscriber(s) lose this signal. ` : "") + "This cannot be undone.", confirmText: "Delete", danger: true }))) return;
+          if (!(await confirmDialog({ title: t("Delete \"{name}\"?", { name: w.name }), body: (w.subscriber_count ? t("{n} subscriber(s) lose this signal. ", { n: w.subscriber_count }) : "") + t("This cannot be undone."), confirmText: t("Delete"), danger: true }))) return;
           try {
             await api.del(`/api/webhooks/${w.id}`);
             store.update("webhooks", (list) => list.filter((x) => x.id !== w.id));
             toast("Webhook deleted", "success");
             closeDrawer();
           } catch (e) { toast(e.message, "error"); }
-        } }, icon("trash"), "Delete webhook"))),
+        } }, icon("trash"), t("Delete webhook")))),
   };
-  const tabNames = [["general", "General"], ["accounts", `Accounts (${(w.accounts || []).filter((a) => a.enabled).length})`], ["template", "Alert template"], ["test", "Test signal"]];
-  if (sharingPane) tabNames.push(["sharing", `Sharing${w.subscriber_count ? ` (${w.subscriber_count})` : ""}`]);
-  tabNames.push(["danger", "Danger zone"]);
+  const tabNames = [["general", t("General")], ["accounts", `${t("Accounts")} (${(w.accounts || []).filter((a) => a.enabled).length})`], ["template", t("Alert template")], ["test", t("Test signal")]];
+  if (sharingPane) tabNames.push(["sharing", `${t("Sharing")}${w.subscriber_count ? ` (${w.subscriber_count})` : ""}`]);
+  tabNames.push(["danger", t("Danger zone")]);
   const body = h("div");
   const tabsEl = h("div", { class: "tabs" });
   const paneHost = h("div");
@@ -252,9 +253,9 @@ function webhookDrawer(wh, { navigate }) {
       tabsEl.querySelector('[data-tab="accounts"]').textContent = `Accounts (${(w.accounts || []).filter((a) => a.enabled).length})`;
       toast("Webhook saved", "success");
     } catch (e) { toast(e.message, "error"); } finally { saveBtn.disabled = false; }
-  } }, icon("check"), "Save");
+  } }, icon("check"), t("Save"));
   const drawer = openDrawer({
-    title: w.name, body, foot: [saveBtn, h("button", { type: "button", class: "btn btn-ghost", onClick: () => closeDrawer() }, "Close"),
+    title: w.name, body, foot: [saveBtn, h("button", { type: "button", class: "btn btn-ghost", onClick: () => closeDrawer() }, t("Close")),
       h("span", { class: "spacer", style: "flex:1" }), footTag],
     onClose: () => navigate("/webhooks", { replace: true }),
   });
@@ -262,24 +263,24 @@ function webhookDrawer(wh, { navigate }) {
 }
 
 export default {
-  title: "Webhooks",
+  title: t("Webhooks"),
   render(root, ctx) {
     const { navigate, params } = ctx;
     const table = dataTable({
-      empty: "No webhooks yet — create one per strategy.",
+      empty: t("No webhooks yet — create one per strategy."),
       onRow: (w) => navigate(`/webhooks/${w.id}`),
       columns: [
-        { label: "On", render: (w) => h("input", { type: "checkbox", class: "switch", checked: !!w.enabled, title: "Enable / disable", onChange: async (e) => {
-          try { await saveWebhook(w.id, { enabled: e.target.checked }); toast(e.target.checked ? "Webhook enabled" : "Webhook disabled", "success"); }
+        { label: t("On"), render: (w) => h("input", { type: "checkbox", class: "switch", checked: !!w.enabled, title: t("Enable / disable"), onChange: async (e) => {
+          try { await saveWebhook(w.id, { enabled: e.target.checked }); toast(e.target.checked ? t("Webhook enabled") : t("Webhook disabled"), "success"); }
           catch (err) { e.target.checked = !e.target.checked; toast(err.message, "error"); }
         } }) },
-        { label: "Name", render: (w) => h("span", { class: "inline-actions" }, h("span", { class: "wh-name" }, w.name),
-          sharingOf(w).enabled ? tag(`shared · ${w.subscriber_count || 0}`, "accent") : null) },
-        { label: "Strategy", render: (w) => tag(STRATEGY_LABEL[w.strategy] || w.strategy, w.strategy) },
-        { label: "Accounts", className: "num", render: (w) => String((w.accounts || []).filter((a) => a.enabled).length) },
-        { label: "Webhook URL", render: (w) => h("span", { class: "inline-actions" }, h("code", { class: "wh-url", title: webhookUrl(w.token) }, webhookUrl(w.token)),
-          h("button", { type: "button", class: "btn btn-ghost btn-icon btn-sm", title: "Copy URL", onClick: async () => toast((await copyText(webhookUrl(w.token))) ? "Webhook URL copied" : "Copy failed", "success") }, icon("copy"))) },
-        { label: "", render: (w) => h("button", { type: "button", class: "btn btn-ghost btn-sm", onClick: () => navigate(`/webhooks/${w.id}`) }, "Edit", icon("chevron")) },
+        { label: t("Name"), render: (w) => h("span", { class: "inline-actions" }, h("span", { class: "wh-name" }, w.name),
+          sharingOf(w).enabled ? tag(`${t("shared")} · ${w.subscriber_count || 0}`, "accent") : null) },
+        { label: t("Strategy"), render: (w) => tag(STRATEGY_LABEL[w.strategy] || w.strategy, w.strategy) },
+        { label: t("Accounts"), className: "num", render: (w) => String((w.accounts || []).filter((a) => a.enabled).length) },
+        { label: t("Webhook URL"), render: (w) => h("span", { class: "inline-actions" }, h("code", { class: "wh-url", title: webhookUrl(w.token) }, webhookUrl(w.token)),
+          h("button", { type: "button", class: "btn btn-ghost btn-icon btn-sm", title: t("Copy URL"), onClick: async () => toast((await copyText(webhookUrl(w.token))) ? t("Webhook URL copied") : t("Copy failed"), "success") }, icon("copy"))) },
+        { label: "", render: (w) => h("button", { type: "button", class: "btn btn-ghost btn-sm", onClick: () => navigate(`/webhooks/${w.id}`) }, t("Edit"), icon("chevron")) },
       ],
     });
     const addBtn = h("button", { class: "btn btn-primary", onClick: async () => {
@@ -290,25 +291,25 @@ export default {
         toast("Webhook created", "success");
         navigate(`/webhooks/${wh.id}`);
       } catch (e) { toast(e.message, "error"); }
-    } }, icon("plus"), "Add webhook");
+    } }, icon("plus"), t("Add webhook"));
 
     // --- Subscriptions (signals from the marketplace)
     const subsTable = dataTable({
-      empty: "You haven't subscribed to any published signal.",
+      empty: t("You haven't subscribed to any published signal."),
       columns: [
-        { label: "On", render: (s) => h("input", { type: "checkbox", class: "switch", checked: !!s.enabled, title: "Enable / disable", onChange: async (e) => {
-          try { await api.put(`/api/subscriptions/${s.id}`, { enabled: e.target.checked }); toast(e.target.checked ? "Subscription enabled" : "Subscription disabled", "success"); loadSubs(); }
+        { label: t("On"), render: (s) => h("input", { type: "checkbox", class: "switch", checked: !!s.enabled, title: t("Enable / disable"), onChange: async (e) => {
+          try { await api.put(`/api/subscriptions/${s.id}`, { enabled: e.target.checked }); toast(e.target.checked ? t("Subscription enabled") : t("Subscription disabled"), "success"); loadSubs(); }
           catch (err) { e.target.checked = !e.target.checked; toast(err.message, "error"); }
         } }) },
-        { label: "Signal", render: (s) => h("span", { class: "wh-name" }, s.webhook ? s.webhook.title : s.webhook_id) },
-        { label: "Publisher", render: (s) => (s.webhook && s.webhook.publisher_email) || "—" },
-        { label: "Strategy", render: (s) => s.webhook ? tag(STRATEGY_LABEL[s.webhook.strategy] || s.webhook.strategy, s.webhook.strategy) : "—" },
-        { label: "Accounts", className: "num", render: (s) => String((s.accounts || []).filter((a) => a.enabled).length) },
-        { label: "Status", render: (s) => !s.webhook ? tag("unpublished by publisher", "warn") : !s.webhook.webhook_enabled ? tag("paused by publisher", "warn") : s.enabled ? tag("active", "on") : tag("off", "off") },
+        { label: t("Signal"), render: (s) => h("span", { class: "wh-name" }, s.webhook ? s.webhook.title : s.webhook_id) },
+        { label: t("Publisher"), render: (s) => (s.webhook && s.webhook.publisher_email) || "—" },
+        { label: t("Strategy"), render: (s) => s.webhook ? tag(STRATEGY_LABEL[s.webhook.strategy] || s.webhook.strategy, s.webhook.strategy) : "—" },
+        { label: t("Accounts"), className: "num", render: (s) => String((s.accounts || []).filter((a) => a.enabled).length) },
+        { label: t("Status"), render: (s) => !s.webhook ? tag("unpublished by publisher", "warn") : !s.webhook.webhook_enabled ? tag("paused by publisher", "warn") : s.enabled ? tag("active", "on") : tag("off", "off") },
         { label: "", render: (s) => h("div", { class: "inline-actions" },
-          h("button", { type: "button", class: "btn btn-ghost btn-sm", disabled: !s.webhook, onClick: () => openSubscriptionDrawer({ ...(s.webhook || {}), subscription: s }, loadSubs) }, "Manage", icon("chevron")),
+          h("button", { type: "button", class: "btn btn-ghost btn-sm", disabled: !s.webhook, onClick: () => openSubscriptionDrawer({ ...(s.webhook || {}), subscription: s }, loadSubs) }, t("Manage"), icon("chevron")),
           h("button", { type: "button", class: "btn btn-ghost btn-sm", onClick: async () => {
-            if (!(await confirmDialog({ title: "Unsubscribe?", body: "Future signals from this publisher won't reach your accounts.", confirmText: "Unsubscribe", danger: true }))) return;
+            if (!(await confirmDialog({ title: t("Unsubscribe?"), body: t("Future signals from this publisher won't reach your accounts."), confirmText: t("Unsubscribe"), danger: true }))) return;
             try { await api.del(`/api/subscriptions/${s.id}`); toast("Unsubscribed", "success"); loadSubs(); } catch (e) { toast(e.message, "error"); }
           } }, icon("trash"))) },
       ],
@@ -316,12 +317,12 @@ export default {
     const loadSubs = () => api.get("/api/subscriptions").then((l) => subsTable.update(l)).catch(() => subsTable.update([]));
 
     root.append(
-      pageHead("Webhooks", "Each strategy gets its own secret URL, its own routed trade accounts and qty multipliers — signals never cross strategies.", [addBtn]),
-      card({ title: "Strategy webhooks" }, table.el),
-      card({ title: "Subscribed signals", actions: [h("button", { class: "btn btn-ghost btn-sm", onClick: () => navigate("/marketplace") }, icon("store"), "Marketplace")],
-        hint: "Signals published by other users that run on your accounts. Your own Trading switch, symbol mapping, alerts and logs apply." }, subsTable.el),
-      h("div", { class: "callout" }, h("strong", null, "simple"), " executes buy/sell for the qty in the alert (no TP/SL) · ",
-        h("strong", null, "bracket"), " adds TP/SL orders from tp1/tp2/tp3/sl · ", h("strong", null, "TS-Hunter"), " matches the TS-Hunter Pine contract. Accounts come from Settings → Broker Accounts."),
+      pageHead(t("Webhooks"), t("Each strategy gets its own secret URL, its own routed trade accounts and qty multipliers — signals never cross strategies."), [addBtn]),
+      card({ title: t("Strategy webhooks") }, table.el),
+      card({ title: t("Subscribed signals"), actions: [h("button", { class: "btn btn-ghost btn-sm", onClick: () => navigate("/marketplace") }, icon("store"), t("Marketplace"))],
+        hint: t("Signals published by other users that run on your accounts. Your own Trading switch, symbol mapping, alerts and logs apply.") }, subsTable.el),
+      h("div", { class: "callout" }, h("strong", null, "simple"), t(" executes buy/sell for the qty in the alert (no TP/SL) · "),
+        h("strong", null, "bracket"), t(" adds TP/SL orders from tp1/tp2/tp3/sl · "), h("strong", null, t("TS-Hunter")), t(" matches the TS-Hunter Pine contract. Accounts come from Settings → Broker Accounts.")),
     );
 
     let openId = null;

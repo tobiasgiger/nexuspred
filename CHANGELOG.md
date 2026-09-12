@@ -4,6 +4,16 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.67
+- **German and English dashboard.** Every page, menu, dialog, toast, hint and the
+  sign-in / setup / reset pages are localised (1 000+ strings). The language follows the
+  browser by default; Settings → General & Trading → Display → Language forces *Deutsch*
+  or *English* per workspace (the page reloads; sign-in pages follow via cookie). Dates
+  and numbers use the chosen language's format. English remains the source text in the
+  code; the German dictionary is `static/js/locales/de.js` (+ `app/i18n.py` for the auth
+  pages), a missing entry falls back to English and a test guards coverage. Log events,
+  alerts and API errors stay English.
+
 ## 5.0.0-alpha.66
 - **Close failures are never reported as clean** (PRs #11 and #12 by andrasmining,
   merged). A working order that survives both cancel attempts after a close makes that

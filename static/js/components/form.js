@@ -1,6 +1,7 @@
 /* Declarative forms with dirty tracking. A page posts only its own keys. */
 import { h, toast } from "../ui.js";
 import { icon } from "../icons.js";
+import { t } from "../i18n.js";
 
 /** Build one field element from a spec. */
 export function fieldEl(spec) {
@@ -18,7 +19,7 @@ export function fieldEl(spec) {
     input = h("textarea", { name: spec.name, id, rows: spec.rows || 4, spellcheck: "false", placeholder: spec.placeholder });
   } else if (spec.type === "password") {
     const inp = h("input", { type: "password", name: spec.name, id, placeholder: spec.placeholder, autocomplete: "off" });
-    const eye = h("button", { type: "button", class: "btn btn-ghost btn-icon", title: "Show / hide",
+    const eye = h("button", { type: "button", class: "btn btn-ghost btn-icon", title: t("Show / hide"),
       onClick: () => { const show = inp.type === "password"; inp.type = show ? "text" : "password"; eye.replaceChildren(icon(show ? "eyeOff" : "eye")); } },
       icon("eye"));
     input = h("div", { style: "display:flex;gap:6px;align-items:center" }, inp, eye);
@@ -74,8 +75,8 @@ export function settingsForm({ sections, values, onSave, saveLabel = "Save chang
     (sec.fields || []).map(fieldEl),
     sec.after || null));
   const saveBtn = h("button", { type: "submit", class: "btn btn-primary", disabled: true }, saveLabel);
-  const discardBtn = h("button", { type: "button", class: "btn btn-ghost", disabled: true }, "Discard");
-  const msg = h("span", { class: "msg muted" }, "No unsaved changes");
+  const discardBtn = h("button", { type: "button", class: "btn btn-ghost", disabled: true }, t("Discard"));
+  const msg = h("span", { class: "msg muted" }, t("No unsaved changes"));
   const bar = h("div", { class: "dirty-bar clean" }, msg, discardBtn, saveBtn);
   if (grid && cards.length > 1) form.append(h("div", { class: "grid grid-2" }, cards), bar);
   else form.append(...cards, bar);
@@ -87,7 +88,7 @@ export function settingsForm({ sections, values, onSave, saveLabel = "Save chang
     bar.classList.toggle("clean", !on);
     saveBtn.disabled = !on;
     discardBtn.disabled = !on;
-    msg.textContent = on ? "You have unsaved changes" : "No unsaved changes";
+    msg.textContent = on ? t("You have unsaved changes") : t("No unsaved changes");
     msg.className = on ? "msg" : "msg muted";
   }
   function apply(v) {
@@ -101,7 +102,7 @@ export function settingsForm({ sections, values, onSave, saveLabel = "Save chang
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     saveBtn.disabled = true;
-    saveBtn.textContent = "Saving…";
+    saveBtn.textContent = t("Saving…");
     try {
       // post only what this form changed: a switch flipped elsewhere meanwhile
       // (the topbar's Trading switch, another device) must not be undone here

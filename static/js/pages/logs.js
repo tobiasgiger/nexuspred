@@ -6,6 +6,7 @@ import { store } from "../store.js";
 import { actions } from "../actions.js";
 import { api } from "../api.js";
 import { dataTable } from "../components/table.js";
+import { t } from "../i18n.js";
 
 function eventLine(e) {
   return h("div", { class: "log-line" },
@@ -26,7 +27,7 @@ function signalLine(s, full = false) {
 
 /* Cursor-paginated "older" section under a live list: one fetch per click,
    appended below what is already shown. */
-function olderLoader(path, renderItem, { label = "Load older", params = () => ({}) } = {}) {
+function olderLoader(path, renderItem, { label = t("Load older"), params = () => ({}) } = {}) {
   const box = h("div", { class: "log-stream" });
   let before = null, exhausted = false;
   const btn = h("button", { type: "button", class: "btn btn-sm", onClick: load }, icon("refresh"), label);
@@ -37,10 +38,10 @@ function olderLoader(path, renderItem, { label = "Load older", params = () => ({
     try {
       const qs = new URLSearchParams({ limit: "100", ...(before ? { before: String(before) } : {}), ...params() });
       const page = await api.get(`${path}?${qs}`);
-      if (!page.items.length && !before) note.textContent = "No older entries.";
+      if (!page.items.length && !before) note.textContent = t("No older entries.");
       box.append(...page.items.map(renderItem));
       before = page.next_before;
-      if (!before) { exhausted = true; btn.hidden = true; note.textContent = page.items.length || box.children.length ? "End of history." : "No older entries."; }
+      if (!before) { exhausted = true; btn.hidden = true; note.textContent = page.items.length || box.children.length ? t("End of history.") : t("No older entries."); }
     } catch (e) { note.textContent = e.message; }
     btn.disabled = false;
   }
@@ -49,13 +50,13 @@ function olderLoader(path, renderItem, { label = "Load older", params = () => ({
 }
 
 export default {
-  title: "Logs",
+  title: t("Logs"),
   render(root) {
     let level = "all";
     let q = "";
     const eventBox = h("div", { class: "log-stream" });
     const signalBox = h("div", { class: "log-stream" });
-    const search = h("input", { type: "search", placeholder: "Filter events…", class: "input-sm", onInput: (e) => { q = e.target.value.toLowerCase(); paintEvents(); } });
+    const search = h("input", { type: "search", placeholder: t("Filter events…"), class: "input-sm", onInput: (e) => { q = e.target.value.toLowerCase(); paintEvents(); } });
     const chips = ["all", "info", "warn", "error"].map((l) => h("button", { type: "button", class: `chip ${l === level ? "active" : ""}`, onClick: (e) => {
       level = l; chips.forEach((c) => c.classList.toggle("active", c === e.currentTarget)); paintEvents();
     } }, l));
@@ -91,61 +92,61 @@ export default {
       const filterKey = `${level}|${q}`;
       const list = all.filter(eventMatch);
       if (filterKey !== prevFilter) { prevEvents = null; prevFilter = filterKey; }
-      incremental(eventBox, prevEvents, list, eventLine, "No events");
+      incremental(eventBox, prevEvents, list, eventLine, t("No events"));
       prevEvents = list;
     }
     function paintSignals() {
       const list = store.get("signals") || [];
-      incremental(signalBox, prevSignals, list, signalLine, "No signals yet");
+      incremental(signalBox, prevSignals, list, signalLine, t("No signals yet"));
       prevSignals = list;
     }
 
     // --- persisted history (survives restarts/deploys) ---------------------
-    const statsBox = h("div", { class: "muted" }, "Loading…");
+    const statsBox = h("div", { class: "muted" }, t("Loading…"));
     async function paintStats() {
       try {
         const st = await api.get("/api/history/stats?days=7");
-        const t = st.totals || {};
+        const tot = st.totals || {};
         clear(statsBox);
-        statsBox.append(`Last 7 days: ${t.received || 0} signals received · ${t.executed || 0} executed · `,
-          h("span", { class: t.errors ? "neg" : "" }, `${t.errors || 0} errors`), ` · ${t.skipped || 0} skipped · ${t.orders || 0} orders`,
-          t.rejected ? h("span", { class: "neg" }, ` (${t.rejected} rejected)`) : null, ".");
+        statsBox.append(t("Last 7 days: {r} signals received · {e} executed · ", { r: tot.received || 0, e: tot.executed || 0 }),
+          h("span", { class: tot.errors ? "neg" : "" }, t("{n} errors", { n: tot.errors || 0 })), t(" · {s} skipped · {o} orders", { s: tot.skipped || 0, o: tot.orders || 0 }),
+          tot.rejected ? h("span", { class: "neg" }, t(" ({n} rejected)", { n: tot.rejected })) : null, ".");
       } catch (e) { statsBox.textContent = ""; }
     }
     const resultFilter = h("select", { class: "input-sm" },
       ["", "ok", "received", "error", "skipped", "test"].map((v) => h("option", { value: v }, v || "any result")));
-    const sigSearch = h("input", { type: "search", placeholder: "Search payload / webhook…", class: "input-sm" });
+    const sigSearch = h("input", { type: "search", placeholder: t("Search payload / webhook…"), class: "input-sm" });
     const olderSignals = olderLoader("/api/history/signals", (x) => signalLine(x, true),
-      { label: "Load older signals", params: () => ({ result: resultFilter.value, q: sigSearch.value }) });
+      { label: t("Load older signals"), params: () => ({ result: resultFilter.value, q: sigSearch.value }) });
     resultFilter.addEventListener("change", () => olderSignals.reset());
     sigSearch.addEventListener("change", () => olderSignals.reset());
 
-    const orderTable = dataTable({ empty: "No orders in history", compact: true, columns: [
-      { label: "Time", render: (o) => fmtDateTime(o.ts) },
-      { label: "Action", render: (o) => tag(o.action || "—", (o.action || "").toLowerCase() === "buy" ? "buy" : (o.action || "").toLowerCase() === "sell" ? "sell" : "") },
-      { label: "Symbol", render: (o) => [o.symbol || "—", o.simulated ? [" ", tag("SIM", "sim")] : null] },
-      { label: "Account", render: (o) => maskAccount(o.account) || "—" },
-      { label: "Qty", className: "num", render: (o) => String(o.qty ?? "—") },
-      { label: "Type", render: (o) => o.order_type || "—" },
-      { label: "Price", className: "num", render: (o) => String(o.price ?? o.stop_price ?? "—") },
-      { label: "Order id", render: (o) => String(o.order_id || "—") },
-      { label: "Status", render: (o) => tag(o.status || "—", (o.status || "").includes("reject") ? "rejected" : "ok") },
+    const orderTable = dataTable({ empty: t("No orders in history"), compact: true, columns: [
+      { label: t("Time"), render: (o) => fmtDateTime(o.ts) },
+      { label: t("Action"), render: (o) => tag(o.action || "—", (o.action || "").toLowerCase() === "buy" ? "buy" : (o.action || "").toLowerCase() === "sell" ? "sell" : "") },
+      { label: t("Symbol"), render: (o) => [o.symbol || "—", o.simulated ? [" ", tag("SIM", "sim")] : null] },
+      { label: t("Account"), render: (o) => maskAccount(o.account) || "—" },
+      { label: t("Qty"), className: "num", render: (o) => String(o.qty ?? "—") },
+      { label: t("Type"), render: (o) => o.order_type || "—" },
+      { label: t("Price"), className: "num", render: (o) => String(o.price ?? o.stop_price ?? "—") },
+      { label: t("Order id"), render: (o) => String(o.order_id || "—") },
+      { label: t("Status"), render: (o) => tag(o.status || "—", (o.status || "").includes("reject") ? "rejected" : "ok") },
     ] });
     const orderRows = [];
     const olderOrders = olderLoader("/api/history/orders", (o) => { orderRows.push(o); orderTable.update(orderRows); return null; },
-      { label: "Load orders" });
+      { label: t("Load orders") });
     const origReset = olderOrders.reset;
     olderOrders.reset = () => { orderRows.length = 0; orderTable.update([]); origReset(); };
 
     root.append(
-      pageHead("Logs", "Every event and every received signal, newest first. Updates arrive live; Refresh re-syncs from the server. Signals and orders are kept for 90 days.", [
-        h("button", { class: "btn", onClick: () => { actions.refreshLogs(); paintStats(); } }, icon("refresh"), "Refresh"),
+      pageHead(t("Logs"), t("Every event and every received signal, newest first. Updates arrive live; Refresh re-syncs from the server. Signals and orders are kept for 90 days."), [
+        h("button", { class: "btn", onClick: () => { actions.refreshLogs(); paintStats(); } }, icon("refresh"), t("Refresh")),
       ]),
-      card({ title: "Event log" }, h("div", { class: "log-toolbar" }, h("div", { class: "chips" }, chips), search), eventBox),
-      card({ title: "Received signals", hint: "Result column: received → executed status (ok / skipped / error). Live buffer; older entries load from history below." },
+      card({ title: t("Event log") }, h("div", { class: "log-toolbar" }, h("div", { class: "chips" }, chips), search), eventBox),
+      card({ title: t("Received signals"), hint: t("Result column: received → executed status (ok / skipped / error). Live buffer; older entries load from history below.") },
         statsBox, signalBox,
         h("div", { class: "log-toolbar", style: "margin-top:10px" }, resultFilter, sigSearch), olderSignals.el),
-      card({ title: "Order history", hint: "Every order the bridge sent, from the database (survives restarts)." }, orderTable.el, olderOrders.el),
+      card({ title: t("Order history"), hint: t("Every order the bridge sent, from the database (survives restarts).") }, orderTable.el, olderOrders.el),
     );
     paintStats();
     const unsubs = [

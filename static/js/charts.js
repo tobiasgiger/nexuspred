@@ -4,6 +4,7 @@
    solid gridlines, text in text tokens (never the series colour), one tooltip
    for every mark, and a table twin next to every chart (built by the page). */
 import { h, clear } from "./ui.js";
+import { t, locale } from "./i18n.js";
 
 const NS = "http://www.w3.org/2000/svg";
 export function svgEl(tag, attrs = {}, ...children) {
@@ -15,7 +16,7 @@ export function svgEl(tag, attrs = {}, ...children) {
 
 export const fmtMoney = (v, digits = 0) => {
   const n = Number(v) || 0;
-  const s = Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  const s = Math.abs(n).toLocaleString(locale(), { minimumFractionDigits: digits, maximumFractionDigits: digits });
   return (n < 0 ? "−$" : "$") + s;
 };
 export const fmtSigned = (v, digits = 0) => (Number(v) > 0 ? "+" : "") + fmtMoney(v, digits);
@@ -39,19 +40,19 @@ function tooltip() {
   return tip;
 }
 export function showTip(x, y, rows) {
-  const t = tooltip();
-  clear(t);
+  const tip = tooltip();
+  clear(tip);
   for (const r of rows) {
     const row = h("div", { class: "viz-tip-row" });
     if (r.swatch) row.append(h("span", { class: "viz-tip-key", style: `background:${r.swatch}` }));
     row.append(h("strong", null, r.value), h("span", { class: "viz-tip-label" }, r.label));
-    t.append(row);
+    tip.append(row);
   }
-  t.hidden = false;
-  const w = t.offsetWidth, hh = t.offsetHeight;
+  tip.hidden = false;
+  const w = tip.offsetWidth, hh = tip.offsetHeight;
   const left = Math.min(x + 14, window.innerWidth - w - 8);
   const top = Math.max(8, y - hh - 12);
-  t.style.left = `${left}px`; t.style.top = `${top}px`;
+  tip.style.left = `${left}px`; tip.style.top = `${top}px`;
 }
 export function hideTip() { if (tip) tip.hidden = true; }
 
@@ -202,7 +203,7 @@ export function barList(data, { valueFmt = fmtSigned } = {}) {
     bindTip(row, () => [{ value: valueFmt(v, 2), label: d.label }, ...(d.sub ? [{ value: d.sub, label: "" }] : [])]);
     el.append(row);
   }
-  if (!data.length) el.append(h("div", { class: "empty-state" }, "No data"));
+  if (!data.length) el.append(h("div", { class: "empty-state" }, t("No data")));
   return el;
 }
 
@@ -226,7 +227,7 @@ export function calendarHeatmap(days, { onSelect = null } = {}) {
   const weekCell = (last) => {
     // rightmost column: the week's total (Monday–Sunday within the shown month)
     const cell = h("div", { class: `viz-cal-cell week ${week.trades ? (week.net >= 0 ? "pos" : "neg") : "flat"}` },
-      h("span", { class: "viz-cal-day" }, "Total"),
+      h("span", { class: "viz-cal-day" }, t("Total")),
       week.trades ? calVal(week.net) : null);
     const net = week.net, trades = week.trades, from = week.from;
     bindTip(cell, () => [{ value: fmtSigned(net, 2), label: `week of ${from} – ${last}` }, { value: String(trades), label: trades === 1 ? "trade" : "trades" }]);

@@ -3,9 +3,10 @@ import { h, card, tag, toast, pageHead, clear } from "../ui.js";
 import { icon } from "../icons.js";
 import { api } from "../api.js";
 import { dataTable } from "../components/table.js";
+import { t } from "../i18n.js";
 
 export default {
-  title: "Simulator",
+  title: t("Simulator"),
   render(root) {
     let scenarios = [];
     let simIndex = 0;
@@ -14,17 +15,17 @@ export default {
     const desc = h("p", { class: "sim-desc" });
     const progress = h("span", { class: "sim-progress" });
     const steps = h("ol", { class: "sim-steps" });
-    const positions = dataTable({ empty: "Flat", columns: [
-      { label: "Symbol", render: (p) => p.symbol },
-      { label: "Net", className: "num", render: (p) => h("span", { class: p.netPos >= 0 ? "pos" : "neg" }, String(p.netPos)) },
-      { label: "Avg price", className: "num", render: (p) => String(p.netPrice ?? "—") },
+    const positions = dataTable({ empty: t("Flat"), columns: [
+      { label: t("Symbol"), render: (p) => p.symbol },
+      { label: t("Net"), className: "num", render: (p) => h("span", { class: p.netPos >= 0 ? "pos" : "neg" }, String(p.netPos)) },
+      { label: t("Avg price"), className: "num", render: (p) => String(p.netPrice ?? "—") },
     ] });
-    const working = dataTable({ empty: "None", columns: [
+    const working = dataTable({ empty: t("None"), columns: [
       { label: "ID", render: (o) => String(o.id) },
-      { label: "Side", render: (o) => tag(o.action, (o.action || "").toLowerCase()) },
-      { label: "Qty", className: "num", render: (o) => String(o.qty) },
-      { label: "Type", render: (o) => o.order_type },
-      { label: "Price", className: "num", render: (o) => String(o.price ?? o.stop_price ?? "—") },
+      { label: t("Side"), render: (o) => tag(o.action, (o.action || "").toLowerCase()) },
+      { label: t("Qty"), className: "num", render: (o) => String(o.qty) },
+      { label: t("Type"), render: (o) => o.order_type },
+      { label: t("Price"), className: "num", render: (o) => String(o.price ?? o.stop_price ?? "—") },
     ] });
 
     const current = () => scenarios[Number(sel.value) || 0];
@@ -39,7 +40,7 @@ export default {
 
     function paintProgress() {
       const sc = current();
-      progress.textContent = sc ? `${simIndex} / ${sc.steps.length} executed` : "";
+      progress.textContent = sc ? t("{i} / {n} executed", { i: simIndex, n: sc.steps.length }) : "";
       steps.querySelectorAll(".sim-step").forEach((el, i) => el.classList.toggle("current", i === simIndex));
     }
 
@@ -67,7 +68,7 @@ export default {
       const el = steps.querySelector(`.sim-step[data-i="${i}"]`);
       const statusEl = el.querySelector(".sim-step-status");
       const resultEl = el.querySelector(".sim-result");
-      statusEl.textContent = "running…";
+      statusEl.textContent = t("running…");
       try {
         const r = await api.post("/api/simulate", step.signal);
         el.classList.remove("failed"); el.classList.add("done");
@@ -78,7 +79,7 @@ export default {
       } catch (e) {
         el.classList.add("failed");
         statusEl.textContent = "✗ " + e.message;
-        resultEl.textContent = "Error: " + e.message; resultEl.classList.remove("hidden");
+        resultEl.textContent = t("Error: ") + e.message; resultEl.classList.remove("hidden");
         return false;
       } finally { refreshState(); }
     }
@@ -93,27 +94,27 @@ export default {
       }
       paintProgress(); running = false; runAll.disabled = false;
       toast("Simulation finished", "success");
-    } }, icon("play"), "Run all");
+    } }, icon("play"), t("Run all"));
     const stepBtn = h("button", { class: "btn btn-secondary", onClick: async () => {
       const sc = current();
       if (!sc || simIndex >= sc.steps.length) return toast("Scenario complete — reset to run again");
       if (await runStep(simIndex)) { simIndex++; paintProgress(); }
-    } }, icon("skip"), "Run next step");
+    } }, icon("skip"), t("Run next step"));
     const resetBtn = h("button", { class: "btn btn-ghost", onClick: async () => {
       try { await api.post("/api/simulate/reset"); } catch (e) { /* ignore */ }
       paintScenario(); toast("Simulation reset");
-    } }, icon("refresh"), "Reset");
+    } }, icon("refresh"), t("Reset"));
     sel.addEventListener("change", async () => { try { await api.post("/api/simulate/reset"); } catch (e) { /* ignore */ } paintScenario(); });
 
     root.append(
-      pageHead("Simulator", "Rehearse a complete trade lifecycle through the real signal logic — entries, brackets, stop moves, partial closes — without sending anything to a broker. No credentials needed."),
-      card({ title: "Scenario" },
-        h("div", { class: "sim-controls" }, h("div", { class: "field" }, h("label", null, "Scenario"), sel), h("div", { class: "sim-buttons" }, runAll, stepBtn, resetBtn)),
+      pageHead(t("Simulator"), t("Rehearse a complete trade lifecycle through the real signal logic — entries, brackets, stop moves, partial closes — without sending anything to a broker. No credentials needed.")),
+      card({ title: t("Scenario") },
+        h("div", { class: "sim-controls" }, h("div", { class: "field" }, h("label", null, t("Scenario")), sel), h("div", { class: "sim-buttons" }, runAll, stepBtn, resetBtn)),
         desc),
       h("div", { class: "grid grid-2" },
-        card({ title: ["Steps", progress] }, steps),
-        card({ title: "Simulated account", actions: [h("button", { class: "btn btn-ghost btn-sm", onClick: refreshState }, icon("refresh"), "Refresh")] },
-          h("h3", null, "Positions"), positions.el, h("h3", null, "Working orders"), working.el)),
+        card({ title: [t("Steps"), progress] }, steps),
+        card({ title: t("Simulated account"), actions: [h("button", { class: "btn btn-ghost btn-sm", onClick: refreshState }, icon("refresh"), t("Refresh"))] },
+          h("h3", null, t("Positions")), positions.el, h("h3", null, t("Working orders")), working.el)),
     );
 
     api.get("/api/scenarios").then((list) => {

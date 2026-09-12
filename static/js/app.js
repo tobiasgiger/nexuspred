@@ -11,6 +11,7 @@ import { renderTopbar } from "./components/topbar.js";
 import { closeDrawer } from "./components/drawer.js";
 import { ROUTES } from "./pages/index.js";
 import { registerWorker } from "./push.js";
+import { t } from "./i18n.js";
 
 const shell = $("#shell");
 const view = $("#view");
@@ -73,7 +74,7 @@ function render() {
     cleanup = page.render(view, { params: m.params, query, navigate, store }) || null;
   } catch (e) {
     console.error(e);
-    view.append(h("div", { class: "callout danger" }, "This page failed to render: ", e.message));
+    view.append(h("div", { class: "callout danger" }, t("This page failed to render: "), e.message));
   }
   paintSidebar();
   document.title = `${titleFor(path)} · Fluxbridge`;
@@ -90,7 +91,7 @@ async function boot() {
   try {
     await actions.loadMe();
   } catch (e) {
-    view.append(h("div", { class: "callout danger" }, "Could not load your account: ", e.message));
+    view.append(h("div", { class: "callout danger" }, t("Could not load your account: "), e.message));
     return;
   }
   // Data the shell and most pages need right away.

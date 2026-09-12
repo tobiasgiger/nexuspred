@@ -1,22 +1,21 @@
 {% extends "auth_base.html" %}
-{% block title %}Create account · Fluxbridge{% endblock %}
-{% block heading %}Create your account{% endblock %}
-{% block subheading %}Fluxbridge — your own isolated area{% endblock %}
+{% block title %}{{ t("Create account · Fluxbridge") }}{% endblock %}
+{% block heading %}{{ t("Create your account") }}{% endblock %}
+{% block subheading %}{{ t("Fluxbridge — your own isolated area") }}{% endblock %}
 {% block content %}
 {% if valid_invite %}
   <form method="post" action="/register">
     <input type="hidden" name="code" value="{{ code }}" />
-    <label>Email
+    <label>{{ t("Email") }}
       <input type="email" name="email" autocomplete="username" required autofocus
              value="{{ invite_email }}" {% if invite_email %}readonly{% endif %} />
     </label>
-    <label>Password <input type="password" name="password" autocomplete="new-password" required minlength="8" /></label>
-    <label>Confirm password <input type="password" name="password2" autocomplete="new-password" required minlength="8" /></label>
-    <button type="submit">Create account</button>
+    <label>{{ t("Password") }} <input type="password" name="password" autocomplete="new-password" required minlength="8" /></label>
+    <label>{{ t("Confirm password") }} <input type="password" name="password2" autocomplete="new-password" required minlength="8" /></label>
+    <button type="submit">{{ t("Create account") }}</button>
   </form>
 {% else %}
-  <div class="auth-err">This invite link is invalid or has already been used. Ask an
-    admin for a new invite.</div>
-  <div class="auth-note"><a href="/login">Back to sign in</a></div>
+  <div class="auth-err">{{ t("This invite link is invalid or has already been used. Ask an admin for a new invite.") }}</div>
+  <div class="auth-note"><a href="/login">{{ t("Back to sign in") }}</a></div>
 {% endif %}
 {% endblock %}
