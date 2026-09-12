@@ -29,7 +29,7 @@ def live(monkeypatch, admin):
     monkeypatch.setattr(signals, "_webhook_executors", lambda wh: list(box["execs"]))
     sent: list = []
 
-    async def fake_trade_executed(*args):
+    async def fake_trade_executed(*args, **kw):
         sent.append(args)
 
     monkeypatch.setattr(signals.alerts, "trade_executed", fake_trade_executed)

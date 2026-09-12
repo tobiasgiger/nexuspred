@@ -9,6 +9,7 @@ import copy
 import json
 import logging
 import os
+import pickle
 import secrets
 import threading
 from pathlib import Path
@@ -199,6 +200,7 @@ LEGACY_SETTINGS_FILE = DATA_DIR / "settings.json"
 # Per-area settings cache. Reentrant lock: save_settings() calls load_settings().
 _lock = threading.RLock()
 _cache: dict[int, dict[str, Any]] = {}
+_snapshots: dict[int, bytes] = {}    # pickled copy of _cache[aid]: unpickling is ~6x faster than copy.deepcopy (see docs/PERFORMANCE.md)
 _degraded: set[int] = set()          # areas whose last database read failed: reads fall back to defaults, writes are refused
 _webhooks_generation = 0             # bumped only when an area's webhook list changes (find_webhook's index key)
 
@@ -213,6 +215,25 @@ _webhook_index: tuple[tuple[int, int], dict[str, tuple[int, dict[str, Any]]]] | 
 
 
 _version: str | None = None
+
+
+def _set_cache(aid: int, settings: dict[str, Any]) -> None:
+    """Store an area's settings in the cache (lock held by caller). The pickled
+    snapshot is built lazily by :func:`_copy_of` so writes stay cheap."""
+    _cache[aid] = settings
+    _snapshots.pop(aid, None)
+
+
+def _copy_of(aid: int) -> dict[str, Any]:
+    """A private deep copy of the cached settings (lock held by caller).
+
+    Settings are plain JSON data, so a pickle round trip is an exact deep copy
+    and runs in C; ``copy.deepcopy`` walks the tree in Python and dominated the
+    per-signal cost (3–4 reads per webhook signal)."""
+    blob = _snapshots.get(aid)
+    if blob is None:
+        blob = _snapshots[aid] = pickle.dumps(_cache[aid], protocol=pickle.HIGHEST_PROTOCOL)
+    return pickle.loads(blob)  # noqa: S301 - our own bytes, never external input
 
 
 def get_version(force: bool = False) -> str:
@@ -321,7 +342,7 @@ def load_settings(area_id: int | None = None, force: bool = False) -> dict[str, 
     aid = _resolve_area(area_id)
     with _lock:
         if not force and aid in _cache:
-            return copy.deepcopy(_cache[aid])
+            return _copy_of(aid)
         merged = copy.deepcopy(DEFAULT_SETTINGS)
         try:
             merged.update(db.get_area_settings(aid) or {})
@@ -338,8 +359,8 @@ def load_settings(area_id: int | None = None, force: bool = False) -> dict[str, 
                 _persist(aid, merged)       # self-healing: ids and indices stay consistent
         except Exception as exc:  # noqa: BLE001 - never let the migration break a read
             log.error("settings migration for area %s failed: %s", aid, exc)
-        _cache[aid] = merged
-        return copy.deepcopy(merged)
+        _set_cache(aid, merged)
+        return _copy_of(aid)
 
 
 def _load_for_write(aid: int) -> dict[str, Any]:
@@ -348,7 +369,7 @@ def _load_for_write(aid: int) -> dict[str, Any]:
     held by caller. Raises :class:`SettingsUnavailable` instead of handing out
     defaults that a save would write over the real configuration."""
     if aid in _cache and aid not in _degraded:
-        return copy.deepcopy(_cache[aid])
+        return _copy_of(aid)
     current = load_settings(area_id=aid, force=True)
     if aid in _degraded:
         raise SettingsUnavailable(f"settings of area {aid} could not be read — nothing saved")
@@ -371,7 +392,7 @@ def _persist(aid: int, current: dict[str, Any]) -> None:
     before = _cache.get(aid)
     if before is None or before.get("webhooks") != current.get("webhooks"):
         _webhooks_generation += 1       # the token index is rebuilt only when a webhook list changed
-    _cache[aid] = current
+    _set_cache(aid, current)
     _generation += 1
 
 
@@ -407,8 +428,10 @@ def invalidate(area_id: int | None = None) -> None:
     with _lock:
         if area_id is None:
             _cache.clear()
+            _snapshots.clear()
         else:
             _cache.pop(area_id, None)
+            _snapshots.pop(area_id, None)
         _generation += 1
         _webhooks_generation += 1
 

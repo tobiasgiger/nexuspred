@@ -275,7 +275,7 @@ async def process(
         )
         return {"status": "skipped", "reason": "trading_disabled", "action": action}
     if not simulate and action in ("buy", "sell"):
-        lock = news.active_lock()
+        lock = news.active_lock(settings=s)
         if lock:
             state.log_event("warn", f"News lock ({lock['title']}) — entry '{action}' for {root} not executed; closes and stop moves still run")
             return {"status": "skipped", "reason": "news_lock", "action": action, "event": lock["title"]}
@@ -294,8 +294,8 @@ async def process(
     async def run() -> dict[str, Any]:
         if action in ("buy", "sell"):
             if strategy == "simple":
-                return await simple.handle_entry(payload, action, root, target, executors, active_map, tag, webhook)
-            return await bracket.handle_entry(payload, action, root, target, executors, active_map, tag, webhook)
+                return await simple.handle_entry(payload, action, root, target, executors, active_map, tag, webhook, settings=s)
+            return await bracket.handle_entry(payload, action, root, target, executors, active_map, tag, webhook, settings=s)
         if action == "close_all":
             return await manage.handle_close_all(root, target, executors, active_map, tag, webhook)
         if action == "set_sl_tp":
@@ -352,7 +352,7 @@ async def _process_ts_hunter(payload, webhook, active_map, simulate):
         )
         return {"status": "skipped", "reason": "trading_disabled"}
     if not simulate and event == "signal":
-        lock = news.active_lock()
+        lock = news.active_lock(settings=s)
         if lock:
             state.log_event("warn", f"News lock ({lock['title']}) — TS-Hunter entry for {root} (trade {trade_id}) not executed")
             return {"status": "skipped", "reason": "news_lock", "event": lock["title"]}
@@ -370,7 +370,7 @@ async def _process_ts_hunter(payload, webhook, active_map, simulate):
     async def run() -> dict[str, Any]:
         if event == "signal":
             return await ts_hunter.handle_entry(
-                payload, side, root, target, trade_id, executors, active_map, tag, webhook
+                payload, side, root, target, trade_id, executors, active_map, tag, webhook, settings=s
             )
         if event == "management":
             if mgmt_action == "partial_close_percent":

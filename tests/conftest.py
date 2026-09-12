@@ -55,7 +55,7 @@ def _reset_runtime() -> None:
     config._version = None
     config.DEFAULT_SETTINGS.clear()
     config.DEFAULT_SETTINGS.update(copy.deepcopy(_PRISTINE_DEFAULTS))
-    config._cache.clear()
+    config._cache.clear(); config._snapshots.clear()
     config._webhook_index = None
     http.reset()
     state._areas.clear()

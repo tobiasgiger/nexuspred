@@ -84,9 +84,12 @@ def normalize(raw: Any) -> dict[str, Any]:
     return out
 
 
-def settings_for(area_id: int) -> dict[str, Any]:
+def settings_for(area_id: int, settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    """The area's normalized news-lock settings; ``settings`` is an already
+    loaded area settings dict (the signal path passes its snapshot)."""
     try:
-        return normalize(config.load_settings(area_id=area_id).get("news_lock"))
+        s = settings if settings is not None else config.load_settings(area_id=area_id)
+        return normalize(s.get("news_lock"))
     except ValueError:
         return dict(DEFAULTS)
 
@@ -273,10 +276,12 @@ def feed_currencies() -> list[str]:
     return sorted({e["currency"] for e in _events if e["currency"]})
 
 
-def active_lock(area_id: Optional[int] = None, *, now: Optional[datetime] = None) -> Optional[dict[str, Any]]:
-    """The event locking new entries right now for this workspace, else None."""
+def active_lock(area_id: Optional[int] = None, *, now: Optional[datetime] = None,
+                settings: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
+    """The event locking new entries right now for this workspace, else None.
+    ``settings`` is the caller's already loaded area settings dict."""
     aid = area_id if area_id is not None else context.get_area()
-    s = settings_for(aid)
+    s = settings_for(aid, settings)
     if not s["enabled"]:
         return None
     for w in windows(aid, hours=6, now=now, settings=s):

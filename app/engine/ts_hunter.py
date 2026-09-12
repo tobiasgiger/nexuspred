@@ -19,8 +19,8 @@ from .common import _close_contract, _place_stop_with_retry, SignalError, _cance
 from ..sizing import account_qty
 
 
-async def handle_entry(payload, side, root, target, trade_id, executors, active_map, tag, webhook):
-    s = config.load_settings()
+async def handle_entry(payload, side, root, target, trade_id, executors, active_map, tag, webhook, *, settings=None):
+    s = settings if settings is not None else config.load_settings()
     risk = payload.get("risk") or {}
     try:
         base_qty = float(risk.get("value"))
@@ -93,7 +93,7 @@ async def handle_entry(payload, side, root, target, trade_id, executors, active_
         f"(trade {trade_id}) on {len(acct_state)}/{len(executors)} account(s): {', '.join(acct_state)}"
     )
     if acct_state and not tag:
-        _fire(alerts.trade_executed(webhook.get("name", "?"), side, contract, list(acct_state)))   # never wait for SMTP
+        _fire(alerts.trade_executed(webhook.get("name", "?"), side, contract, list(acct_state), settings=s))   # never wait for SMTP
     return {"status": "ok", "action": "signal", "contract": contract, "trade_id": trade_id,
             "accounts": summary, "orders": orders, "simulated": tag != ""}
 

@@ -13,8 +13,8 @@ from .common import _place_stop_with_retry, SignalError, _lock, _opposite, _tp_i
 from ..sizing import account_qty
 
 
-async def handle_entry(payload, action, root, target, executors, active_map, tag, webhook):
-    s = config.load_settings()
+async def handle_entry(payload, action, root, target, executors, active_map, tag, webhook, *, settings=None):
+    s = settings if settings is not None else config.load_settings()
     # Honour the signal's contract count (payload 'qty'/'contracts'); fall back to
     # the webhook default only when the signal doesn't specify one.
     default_qty = int(webhook.get("default_qty", 3))
@@ -112,7 +112,7 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
         f"placed on {len(acct_state)}/{len(executors)} account(s): {', '.join(acct_state)}"
     )
     if acct_state and not tag:
-        _fire(alerts.trade_executed(webhook.get("name", "?"), action, contract, list(acct_state)))   # never wait for SMTP
+        _fire(alerts.trade_executed(webhook.get("name", "?"), action, contract, list(acct_state), settings=s))   # never wait for SMTP
     return {"status": "ok", "action": action, "contract": contract,
             "accounts": summary, "orders": orders, "simulated": tag != ""}
 

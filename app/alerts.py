@@ -37,9 +37,9 @@ def alert_accounts(accounts: list[str], settings: dict[str, Any] | None = None) 
     return [a for a in accounts if account_alerts_on(a, s)]
 
 
-async def _send_push(title: str, message: str, *, url: str = "/") -> None:
+async def _send_push(title: str, message: str, *, url: str = "/", settings: dict[str, Any] | None = None) -> None:
     """Web Push to the area's installed apps (see :mod:`app.push`)."""
-    s = config.load_settings()
+    s = settings if settings is not None else config.load_settings()
     if not s.get("alert_push_enabled", True) or not push.available():
         return
     try:
@@ -48,8 +48,8 @@ async def _send_push(title: str, message: str, *, url: str = "/") -> None:
         state.log_event("warn", f"Push alert failed: {exc}")
 
 
-async def _send_discord(message: str) -> None:
-    s = config.load_settings()
+async def _send_discord(message: str, *, settings: dict[str, Any] | None = None) -> None:
+    s = settings if settings is not None else config.load_settings()
     if not s.get("alert_discord_enabled") or not s.get("alert_discord_webhook_url"):
         return
     content = f"@everyone {message}" if s.get("alert_discord_mention_everyone") else message
@@ -150,9 +150,12 @@ async def connection_restored(account: str, environment: str) -> None:
 
 
 async def trade_executed(
-    webhook_name: str, action: str, contract: str, accounts: list[str]
+    webhook_name: str, action: str, contract: str, accounts: list[str], *,
+    settings: dict[str, Any] | None = None,
 ) -> None:
-    s = config.load_settings()
+    """``settings`` is the executing signal's settings snapshot (saves three
+    settings reads per fill; the alert preferences rarely change mid-signal)."""
+    s = settings if settings is not None else config.load_settings()
     if not s.get("alert_on_trade_executed", True):
         return
     accounts = alert_accounts(accounts, s)
@@ -163,8 +166,8 @@ async def trade_executed(
         f"⚡ **Trade executed** — strategy `{webhook_name}`: {action.upper()} "
         f"{contract} on {accts}"
     )
-    await asyncio.gather(_send_discord(message),
-                         _send_push(f"Trade executed: {action.upper()} {contract}", message, url="/#/orders"))
+    await asyncio.gather(_send_discord(message, settings=s),
+                         _send_push(f"Trade executed: {action.upper()} {contract}", message, url="/#/orders", settings=s))
 
 
 def _money(v: Any) -> str:
