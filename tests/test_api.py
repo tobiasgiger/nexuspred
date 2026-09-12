@@ -203,7 +203,7 @@ async def test_settings_masking_and_secret_preservation(client, admin):
 
 async def test_status_shape(client):
     s = (await client.get("/api/status")).json()
-    assert set(s) == {"version", "connection", "sessions", "trade_accounts", "active_trades", "trading_enabled", "public_url", "rollover", "pnl"}
+    assert set(s) == {"version", "connection", "sessions", "trade_accounts", "active_trades", "trading_enabled", "public_url", "rollover", "pnl", "news_lock"}
     assert s["connection"] == {"connected": False, "accounts_total": 0, "accounts_connected": 0}
     assert s["trading_enabled"] is False and s["active_trades"] == {}
 

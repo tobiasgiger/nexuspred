@@ -432,7 +432,7 @@ async def test_stream_carries_order_session_and_discord_kinds(area):
 # ---------------------------------------------------------------- lifespan
 async def test_lifespan_starts_and_stops_background_loops(admin):
     async with main._lifespan(main.app):
-        assert [t.get_name() for t in main._loop_tasks] == ["health-loop", "discord-health-loop", "history-prune-loop", "journal-import-loop", "pnl-loop", "copy-loop"]
+        assert [t.get_name() for t in main._loop_tasks] == ["health-loop", "discord-health-loop", "history-prune-loop", "journal-import-loop", "pnl-loop", "copy-loop", "news-loop"]
         await settle()
         assert all(not t.done() for t in main._loop_tasks)
         with context.use_area(1):

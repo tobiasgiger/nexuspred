@@ -13,6 +13,7 @@ import accounts from "./accounts.js";
 import discordSettings from "./discordSettings.js";
 import users from "./users.js";
 import agents from "./agents.js";
+import news from "./news.js";
 import { general, security, updates, alerts, symbols, account } from "./settings.js";
 
 export const ROUTES = [
@@ -35,6 +36,7 @@ export const ROUTES = [
   { path: "/settings/account", page: account },
   { path: "/settings/users", page: users },
   { path: "/settings/agents", page: agents },
+  { path: "/settings/news", page: news },
   { path: "/settings/updates", page: updates },
   { path: "/tools", page: tools },
   { path: "/simulator", page: simulator },

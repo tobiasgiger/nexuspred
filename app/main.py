@@ -13,7 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, config, context, copy, crypto, db, drawdown, health, history, http, journal, pnl, push, security, state
+from . import auth, config, context, copy, crypto, db, drawdown, health, history, http, journal, news, pnl, push, security, state
 from .discord_signals.routes import router as discord_router
 from .routers import ROUTERS
 from .web import BASE_DIR, is_auth_exempt, wants_html
@@ -72,7 +72,8 @@ async def _startup() -> None:
                       asyncio.create_task(_history_prune_loop(), name="history-prune-loop"),
                       asyncio.create_task(journal.scheduler_loop(), name="journal-import-loop"),
                       asyncio.create_task(pnl.pnl_loop(), name="pnl-loop"),
-                      asyncio.create_task(copy.copy_loop(), name="copy-loop")]
+                      asyncio.create_task(copy.copy_loop(), name="copy-loop"),
+                      asyncio.create_task(news.news_loop(), name="news-loop")]
     health.start_discord_listeners()     # the health loop keeps them alive from here on
 
 

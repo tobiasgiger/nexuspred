@@ -1,7 +1,7 @@
 """HTTP surface, one module per concern. ``ROUTERS`` is what ``app.main`` mounts."""
 from __future__ import annotations
 
-from . import accounts, agent, auth, copy, core, extension, journal, marketplace, push, simulator, updater, users, webhooks
+from . import accounts, agent, auth, copy, core, extension, journal, marketplace, news, push, simulator, updater, users, webhooks
 
 ROUTERS = [
     auth.router,
@@ -12,6 +12,7 @@ ROUTERS = [
     marketplace.router,
     copy.router,
     journal.router,
+    news.router,
     agent.router,
     push.router,
     simulator.router,
@@ -19,4 +20,4 @@ ROUTERS = [
     extension.router,
 ]
 
-__all__ = ["ROUTERS", "accounts", "agent", "auth", "copy", "core", "extension", "journal", "marketplace", "push", "simulator", "updater", "users", "webhooks"]
+__all__ = ["ROUTERS", "accounts", "agent", "auth", "copy", "core", "extension", "journal", "marketplace", "news", "push", "simulator", "updater", "users", "webhooks"]

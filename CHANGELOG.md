@@ -4,6 +4,17 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.55
+- **Economic calendar and news lock.** New **Settings → News & Calendar**: the weekly
+  ForexFactory calendar (no key needed, refreshed every six hours) with the events that
+  matter for the workspace (currencies, impact levels) and their lock windows. With the
+  lock enabled, no new entry is executed from X minutes before to Y minutes after a
+  release — webhooks, Discord signals and marketplace subscriptions alike; closes, stop
+  moves and the copy mirror always run. Optional *flatten*: every position of the
+  workspace is closed when the window opens (same as the SOS button). Manual events
+  (speeches, earnings) share the window. A window that opens is alerted (Discord, push),
+  and the top bar shows a red *News lock* pill while it is active.
+
 ## 5.0.0-alpha.54
 - **Execution agent for Linux / macOS in one line.** **Settings → Execution Agents →
   Linux one-liner** shows a ready-made command with a fresh pairing code;

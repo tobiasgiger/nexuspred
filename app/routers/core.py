@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 
-from .. import alerts, config, context, db, pnl, rollover, security, signals, state, tradovate
+from .. import alerts, config, context, db, news, pnl, rollover, security, signals, state, tradovate
 from ..tradovate import TradovateError
 from ..web import BASE_DIR, render
 from .accounts import trade_accounts_overview
@@ -59,6 +59,7 @@ async def api_status() -> dict[str, Any]:
         "public_url": config.PUBLIC_URL,
         "rollover": state.rollover_warnings(),
         "pnl": state.pnl(),
+        "news_lock": news.status(),
     }
 
 

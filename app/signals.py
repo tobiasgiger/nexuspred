@@ -40,7 +40,7 @@ import threading
 import time
 from typing import Any
 
-from . import alerts, config, context, state
+from . import alerts, config, context, news, state
 from .engine import bracket, manage, simple, ts_hunter
 from .engine.common import (  # noqa: F401 - re-exported for callers/tests
     SignalError,
@@ -274,6 +274,11 @@ async def process(
             "warn", f"Trading disabled — signal '{action}' for {root} not executed"
         )
         return {"status": "skipped", "reason": "trading_disabled", "action": action}
+    if not simulate and action in ("buy", "sell"):
+        lock = news.active_lock()
+        if lock:
+            state.log_event("warn", f"News lock ({lock['title']}) — entry '{action}' for {root} not executed; closes and stop moves still run")
+            return {"status": "skipped", "reason": "news_lock", "action": action, "event": lock["title"]}
 
     executors = [sim_client] if simulate else _webhook_executors(webhook)
     if not executors:
@@ -346,6 +351,11 @@ async def _process_ts_hunter(payload, webhook, active_map, simulate):
             "warn", f"Trading disabled — TS-Hunter signal for {root} (trade {trade_id}) not executed"
         )
         return {"status": "skipped", "reason": "trading_disabled"}
+    if not simulate and event == "signal":
+        lock = news.active_lock()
+        if lock:
+            state.log_event("warn", f"News lock ({lock['title']}) — TS-Hunter entry for {root} (trade {trade_id}) not executed")
+            return {"status": "skipped", "reason": "news_lock", "event": lock["title"]}
 
     executors = [sim_client] if simulate else _webhook_executors(webhook)
     if not executors:

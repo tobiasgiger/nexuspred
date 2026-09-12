@@ -136,6 +136,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "alert_on_risk": True,
     # Risk-guard locks per trade account (spec → {day, kind, reason, pnl, at}); app.risk.
     "risk_state": {},
+    # Economic-calendar lock (app.news): no new entries around high-impact releases.
+    "news_lock": {"enabled": False, "currencies": ["USD"], "impacts": ["High"], "before": 5, "after": 5,
+                  "action": "block", "manual": [], "alert": True},
     # Copy-trading groups (leader → followers); managed by /api/copy.
     "copy_groups": [],
     # One summary per day (local time in journal_timezone) with realised P&L.
@@ -515,7 +518,7 @@ SETTINGS_PROTECTED_KEYS = frozenset({
     "token_accounts", "webhooks", "webhooks_migrated", "webhook_secret",
     "discord_enabled", "discord_user_token", "discord_dry_run", "discord_channels",
     "rollover_notified", "journal_last_import", "journal_report_cursor", "journal_report_window",
-    "dd_state", "copy_groups", "risk_state",
+    "dd_state", "copy_groups", "risk_state", "news_lock",
 })
 
 # Fields that must never be returned to the browser in plain text.

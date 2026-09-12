@@ -36,6 +36,10 @@ export function renderTopbar(root, { navigate, onHamburger, onPrivacy }) {
     try { await actions.setTrading(!cur); } catch (e) { toast(e.message, "error"); }
   });
 
+  // News lock (economic calendar): shown only while a window is active
+  const newsPill = h("button", { type: "button", class: "pill clickable off hidden", title: "News lock active — no new entries; open Settings → News & Calendar", onClick: () => navigate("/settings/news") },
+    icon("alert", "ic"), h("span", { class: "pill-text" }, "News lock"));
+
   // SOS
   const sosBtn = h("button", { type: "button", class: "btn btn-sos btn-sm", title: "Flatten ALL accounts now" }, "🆘", h("span", { class: "pill-text" }, "Flatten all"));
   sosBtn.addEventListener("click", async () => {
@@ -104,7 +108,7 @@ export function renderTopbar(root, { navigate, onHamburger, onPrivacy }) {
   root.append(
     h("button", { type: "button", class: "btn btn-ghost btn-icon hamburger", title: "Menu", onClick: onHamburger }, icon("menu")),
     title, h("span", { class: "spacer" }),
-    h("div", { class: "right" }, updateBtn, streamPill, connPill, tradingPill, sosBtn, privacyBtn, themeBtn, userMenu));
+    h("div", { class: "right" }, updateBtn, streamPill, connPill, tradingPill, newsPill, sosBtn, privacyBtn, themeBtn, userMenu));
 
   const unsubs = [
     store.subscribe("route", (r) => { title.textContent = r ? r.title : "Fluxbridge"; }, { immediate: true }),
@@ -118,6 +122,9 @@ export function renderTopbar(root, { navigate, onHamburger, onPrivacy }) {
       connDot.className = "dot" + (c.connected ? " on" : total ? "" : " off");
       connText.textContent = total ? `${con}/${total} connected` : "No logins";
       connPill.className = "pill clickable " + (c.connected ? "on" : total ? "off" : "");
+      const nl = s && s.news_lock;
+      newsPill.classList.toggle("hidden", !(nl && nl.active));
+      if (nl && nl.active) newsPill.title = `News lock: ${nl.active.title} — no new entries until ${new Date(nl.active.lock_until).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
     }, { immediate: true }),
     store.subscribe("settings", (st) => {
       const on = !!(st && st.trading_enabled);

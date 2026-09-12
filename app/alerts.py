@@ -267,6 +267,15 @@ async def execution_problem(title: str, message: str) -> None:
                          _send_push(title, message, url="/#/"))
 
 
+async def news_lock(title: str, currency: str, until: str, *, flatten: bool = False) -> None:
+    """A news-lock window opened: no new entries until ``until`` (and, with
+    ``flatten``, open positions are being closed)."""
+    what = f"{title}{' (' + currency + ')' if currency else ''}"
+    message = f"{what}: no new entries until {until}" + (" — open positions are being flattened" if flatten else "")
+    body = f"📰 **News lock** — {message}"
+    await asyncio.gather(_send_discord(body), _send_push("News lock", message, url="/#/settings/news"))
+
+
 async def copy_alert(title: str, message: str, *, email: bool = False) -> None:
     """Copy trading: a follower order was rejected or a group paused itself."""
     s = config.load_settings()
