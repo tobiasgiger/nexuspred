@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
-from .. import context, copy, db, marketplace, state
+from .. import context, copy, db, marketplace, state, track_record
 
 router = APIRouter(prefix="/api", tags=["marketplace"])
 
@@ -48,7 +48,70 @@ async def api_marketplace(request: Request) -> list[dict[str, Any]]:
         key = it["webhook_id"] if it["kind"] == "webhook" else f"copy:{it['group_id']}"
         it["subscriber_count"] = counts[pa].get(key, 0)
         it["subscription"] = mine.get((pa, key))
+        it["record"] = _record(pa, it)
     return items
+
+
+def _record(publisher_area_id: int, item: dict[str, Any], *, detail: bool = False) -> dict[str, Any] | None:
+    """The compact (or full) track record of a listed item; never raises."""
+    try:
+        if item.get("kind") == "copy":
+            g, _sh = copy.find_published(publisher_area_id, item["group_id"])
+            return track_record.copy_record(publisher_area_id, g, detail=detail) if g else None
+        wh, _sh = marketplace.find_published(publisher_area_id, item["webhook_id"])
+        return track_record.webhook_record(publisher_area_id, wh, detail=detail) if wh else None
+    except Exception as exc:  # noqa: BLE001 - a record must never break the listing
+        state.log_event("warn", f"track record for {item.get('webhook_id') or item.get('group_id')} failed: {exc}")
+        return None
+
+
+@router.get("/marketplace/{publisher_area_id}/copy/{group_id}/record")
+async def api_copy_record(request: Request, publisher_area_id: int, group_id: str) -> dict[str, Any]:
+    """Full track record of a published copy group (visible items only)."""
+    g, sh = copy.find_published(publisher_area_id, group_id)
+    if g is None or not marketplace.visible_to(sh, request.state.user["id"]):
+        raise HTTPException(status_code=404, detail="That copy group isn't published")
+    return {"kind": "copy", "title": sh.get("title") or g.get("name"), **track_record.copy_record(publisher_area_id, g, detail=True)}
+
+
+@router.get("/marketplace/{publisher_area_id}/{webhook_id}/record")
+async def api_webhook_record(request: Request, publisher_area_id: int, webhook_id: str) -> dict[str, Any]:
+    """Full track record of a published webhook (visible items only)."""
+    wh, sh = marketplace.find_published(publisher_area_id, webhook_id)
+    if wh is None or not marketplace.visible_to(sh, request.state.user["id"]):
+        raise HTTPException(status_code=404, detail="That signal isn't published")
+    return {"kind": "webhook", "title": sh.get("title") or wh.get("name"), **track_record.webhook_record(publisher_area_id, wh, detail=True)}
+
+
+@router.get("/webhooks/{webhook_id}/record")
+async def api_own_webhook_record(webhook_id: str) -> dict[str, Any]:
+    """The publisher's own view of a webhook's record (published or not)."""
+    from .. import config
+    area = context.get_area()
+    wh = next((w for w in (config.load_settings().get("webhooks") or []) if w.get("id") == webhook_id), None)
+    if wh is None:
+        raise HTTPException(status_code=404, detail="Webhook not found")
+    return {"kind": "webhook", "title": wh.get("name"), **track_record.webhook_record(area, wh, detail=True)}
+
+
+@router.get("/copy/groups/{group_id}/record")
+async def api_own_copy_record(group_id: str) -> dict[str, Any]:
+    area = context.get_area()
+    g = next((x for x in copy.load_groups(area) if x.get("id") == group_id), None)
+    if g is None:
+        raise HTTPException(status_code=404, detail="Copy group not found")
+    return {"kind": "copy", "title": g.get("name"), **track_record.copy_record(area, g, detail=True)}
+
+
+@router.get("/subscriptions/{sub_id}/journal")
+async def api_subscription_journal(sub_id: int) -> dict[str, Any]:
+    """The subscriber's journal of one subscription: signals received and their
+    outcomes (or copy events), and the P&L on the routed accounts since subscribing."""
+    area = context.get_area()
+    sub = db.get_subscription(sub_id, area)
+    if not sub:
+        raise HTTPException(status_code=404, detail="Subscription not found")
+    return {**track_record.subscription_journal(area, sub), "subscription": _enrich(sub)}
 
 
 @router.post("/marketplace/{publisher_area_id}/copy/{group_id}/subscribe")

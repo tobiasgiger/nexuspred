@@ -16,6 +16,7 @@ export const NAV = [
     { path: "/webhooks", label: t("Webhooks"), icon: "webhook" },
     { path: "/marketplace", label: t("Marketplace"), icon: "store" },
     { path: "/copy", label: t("Copy Trading"), icon: "share" },
+    { path: "/subscriptions", label: t("Subscription journal"), icon: "activity" },
   ] },
   { group: t("Configuration"), items: [
     { path: "/settings", label: t("Settings"), icon: "settings", children: [

@@ -176,10 +176,10 @@ def accept(payload: dict[str, Any], webhook: dict[str, Any], *, forward: bool = 
     merely knows the URL trade on every subscriber's accounts."""
     name = webhook.get("name", "")
     s = config.load_settings()                       # one settings copy per signal, handed all the way down
-    state.log_signal(payload, result="received", webhook=name)
+    state.log_signal(payload, result="received", webhook=name, webhook_id=str(webhook.get("id") or ""))
     if not passphrase_ok(payload, s):
         state.log_event("error", "Signal rejected: invalid passphrase", payload=payload)
-        state.log_signal(payload, result="error: Invalid passphrase", webhook=name)
+        state.log_signal(payload, result="error: Invalid passphrase", webhook=name, webhook_id=str(webhook.get("id") or ""))
         events.emit("signal.failed", webhook=name or "?", reason="Invalid passphrase", settings=s)
         return
     _spawn(process_background(payload, webhook, settings=s))
@@ -203,7 +203,7 @@ def forward_to_subscribers(payload: dict[str, Any], webhook: dict[str, Any],
     for sub in subs:
         view = marketplace.subscription_view(webhook, sub, aid)
         with context.use_area(sub["area_id"]):
-            state.log_signal(dict(shared), result="received", webhook=view.get("name", ""))
+            state.log_signal(dict(shared), result="received", webhook=view.get("name", ""), webhook_id=str(view.get("id") or ""))
             _spawn(process_background(dict(shared), view, trusted=True))
     if subs:
         state.log_event("info", f"[{webhook.get('name', '?')}] forwarded to {len(subs)} subscriber(s)")
@@ -215,20 +215,21 @@ async def process_background(payload: dict[str, Any], webhook: dict[str, Any], *
     """Run the pipeline for an already-accepted signal: log the outcome, alert on
     failure, never raise (a background task must not die silently)."""
     name = webhook.get("name", "?")
+    wid = str(webhook.get("id") or "")
     started = time.perf_counter()
     try:
         result = await process(payload, webhook, trusted=trusted, settings=settings)
-        state.log_signal(payload, result=result.get("status", "ok"), webhook=name)
+        state.log_signal(payload, result=result.get("status", "ok"), webhook=name, webhook_id=wid)
         events.emit("signal.done", webhook=name, status=result.get("status", "ok"), reason=result.get("reason", ""), action=result.get("action", ""),
                     seconds=time.perf_counter() - started)
     except (SignalError, TradovateError) as exc:
         state.log_event("error", f"Signal error: {exc}", payload=payload)
-        state.log_signal(payload, result=f"error: {exc}", webhook=name)
+        state.log_signal(payload, result=f"error: {exc}", webhook=name, webhook_id=wid)
         events.emit("signal.done", webhook=name, status="error", reason=str(exc)[:200], action="", seconds=time.perf_counter() - started)
         await events.emit_async("signal.failed", webhook=name, reason=str(exc), settings=settings)
     except Exception as exc:  # noqa: BLE001
         state.log_event("error", f"Signal failed: {exc}", payload=payload)
-        state.log_signal(payload, result=f"error: {exc}", webhook=name)
+        state.log_signal(payload, result=f"error: {exc}", webhook=name, webhook_id=wid)
         events.emit("signal.done", webhook=name, status="error", reason=str(exc)[:200], action="", seconds=time.perf_counter() - started)
         await events.emit_async("signal.failed", webhook=name, reason=str(exc), settings=settings)
 

@@ -408,7 +408,12 @@ def init() -> None:
                     created_at TEXT NOT NULL
                 )""")
             c.execute("CREATE INDEX IF NOT EXISTS idx_mfa_codes_user ON mfa_backup_codes(user_id)")
+            sig_cols = {r["name"] for r in c.execute("PRAGMA table_info(signal_log)").fetchall()}
+            if "webhook_id" not in sig_cols:
+                # alpha.77: per-webhook signal statistics (track record, subscription journal)
+                c.execute("ALTER TABLE signal_log ADD COLUMN webhook_id TEXT NOT NULL DEFAULT ''")
             for stmt in ("CREATE INDEX IF NOT EXISTS ix_journal_imports_area ON journal_imports(area_id, id)",
+                         "CREATE INDEX IF NOT EXISTS ix_signal_log_wh ON signal_log(area_id, webhook_id, id)",
                          "CREATE INDEX IF NOT EXISTS ix_copy_events_ts ON copy_events(ts)",
                          "CREATE INDEX IF NOT EXISTS ix_audit_action ON audit_log(action, id)",
                          "CREATE INDEX IF NOT EXISTS ix_push_subs_area ON push_subscriptions(area_id)",

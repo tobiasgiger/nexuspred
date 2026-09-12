@@ -166,3 +166,14 @@
 .mfa-steps li { margin-bottom: 4px; }
 .mfa-codes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 10px 0 14px; padding: 0; list-style: none; }
 .mfa-codes li { font-family: var(--mono, ui-monospace, monospace); font-size: 14px; letter-spacing: 1px; background: var(--bg-inset); border: 1px solid var(--border); border-radius: 8px; padding: 8px; text-align: center; user-select: all; }
+
+/* track record (marketplace cards, subscription journal) */
+.tr-strip { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 12px; }
+.tr-strip .tr-kv { display: inline-flex; gap: 5px; align-items: baseline; }
+.tr-strip .tr-kv .k { color: var(--text-faint); text-transform: uppercase; font-size: 10.5px; letter-spacing: .4px; }
+.tr-strip .tr-kv .v { font-weight: 600; }
+.mk-card .mk-record { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding-top: 4px; border-top: 1px solid var(--border); }
+.tr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin: 12px 0; }
+.tr-cell { background: var(--bg-inset); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; }
+.tr-cell .k { color: var(--text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
+.tr-cell .v { font-size: 15px; font-weight: 650; margin-top: 2px; }

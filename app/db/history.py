@@ -17,9 +17,9 @@ def insert_signal(area_id: int, entry: dict[str, Any]) -> int:
     init()
     with _connect() as c:
         cur = c.execute(
-            "INSERT INTO signal_log(area_id,ts,result,webhook,payload) VALUES(?,?,?,?,?)",
+            "INSERT INTO signal_log(area_id,ts,result,webhook,payload,webhook_id) VALUES(?,?,?,?,?,?)",
             (area_id, entry.get("ts") or _now(), str(entry.get("result") or "")[:200],
-             str(entry.get("webhook") or "")[:200], _json(entry.get("payload"))))
+             str(entry.get("webhook") or "")[:200], _json(entry.get("payload")), str(entry.get("webhook_id") or "")[:80]))
         return int(cur.lastrowid or 0)
 
 
@@ -40,7 +40,7 @@ def _signal_row(r: sqlite3.Row) -> dict[str, Any]:
         payload = json.loads(r["payload"])
     except (TypeError, ValueError):
         payload = {"raw": r["payload"]}
-    return {"id": r["id"], "ts": r["ts"], "result": r["result"], "webhook": r["webhook"], "payload": payload}
+    return {"id": r["id"], "ts": r["ts"], "result": r["result"], "webhook": r["webhook"], "webhook_id": r["webhook_id"], "payload": payload}
 
 
 def _order_row(r: sqlite3.Row) -> dict[str, Any]:
@@ -53,7 +53,7 @@ def _order_row(r: sqlite3.Row) -> dict[str, Any]:
 
 
 def list_signals(area_id: int, *, limit: int = 100, before: Optional[int] = None,
-                 result: str = "", q: str = "") -> dict[str, Any]:
+                 result: str = "", q: str = "", webhook_id: str = "", since_ts: str = "") -> dict[str, Any]:
     """Newest-first page of an area's signals. ``before`` = id cursor from the
     previous page's ``next_before``; ``result`` = prefix filter (``ok``,
     ``error``…); ``q`` = substring of the payload / webhook name."""
@@ -67,6 +67,10 @@ def list_signals(area_id: int, *, limit: int = 100, before: Optional[int] = None
         where.append("result LIKE ?"); params.append(f"{result}%")
     if q:
         where.append("(payload LIKE ? OR webhook LIKE ?)"); params += [f"%{q}%", f"%{q}%"]
+    if webhook_id:
+        where.append("webhook_id=?"); params.append(webhook_id)
+    if since_ts:
+        where.append("ts>=?"); params.append(since_ts)
     with _connect() as c:
         rows = c.execute(f"SELECT * FROM signal_log WHERE {' AND '.join(where)} ORDER BY id DESC LIMIT ?",
                          (*params, limit + 1)).fetchall()
@@ -91,6 +95,28 @@ def list_orders(area_id: int, *, limit: int = 100, before: Optional[int] = None,
                          (*params, limit + 1)).fetchall()
     items = [_order_row(r) for r in rows[:limit]]
     return {"items": items, "next_before": items[-1]["id"] if len(rows) > limit else None}
+
+
+_EXECUTED_SQL = ("SUM(CASE WHEN result NOT IN ('received','skipped','test','simulated') "
+                 "AND result NOT LIKE 'error%' THEN 1 ELSE 0 END)")
+
+
+def signal_stats(area_id: int, webhook_id: str, since_ts: str = "") -> dict[str, Any]:
+    """Outcome counts of one webhook's signals (``received`` rows are the ingress
+    echo of an executed / skipped / errored row and are reported separately)."""
+    init()
+    where, params = "area_id=? AND webhook_id=?", [area_id, webhook_id]
+    if since_ts:
+        where += " AND ts>=?"; params.append(since_ts)
+    with _connect() as c:
+        r = c.execute(
+            "SELECT SUM(CASE WHEN result='received' THEN 1 ELSE 0 END) received, "
+            "SUM(CASE WHEN result LIKE 'error%' THEN 1 ELSE 0 END) errors, "
+            "SUM(CASE WHEN result='skipped' THEN 1 ELSE 0 END) skipped, "
+            f"{_EXECUTED_SQL} executed, MIN(ts) first_ts, MAX(ts) last_ts "
+            f"FROM signal_log WHERE {where}", params).fetchone()
+    return {"received": int(r["received"] or 0), "executed": int(r["executed"] or 0), "skipped": int(r["skipped"] or 0),
+            "errors": int(r["errors"] or 0), "first_at": r["first_ts"], "last_at": r["last_ts"]}
 
 
 def history_stats(area_id: int, since_ts: str) -> dict[str, Any]:

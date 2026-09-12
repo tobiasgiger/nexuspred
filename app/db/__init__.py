@@ -112,6 +112,7 @@ from .history import (  # noqa: F401
     list_signals,
     list_orders,
     history_stats,
+    signal_stats,
     prune_history,
 )
 from .copytrade import (  # noqa: F401

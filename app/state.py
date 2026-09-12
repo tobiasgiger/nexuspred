@@ -214,9 +214,9 @@ def redact_payload(payload: Any) -> Any:
     return out
 
 
-def log_signal(payload: dict[str, Any], result: str = "received", webhook: str = "") -> dict[str, Any]:
+def log_signal(payload: dict[str, Any], result: str = "received", webhook: str = "", webhook_id: str = "") -> dict[str, Any]:
     from . import history
-    entry = {"ts": _now(), "payload": redact_payload(payload), "result": result, "webhook": webhook or ""}
+    entry = {"ts": _now(), "payload": redact_payload(payload), "result": result, "webhook": webhook or "", "webhook_id": webhook_id or ""}
     aid = context.get_area()
     st = _st_for(aid)
     with _lock:

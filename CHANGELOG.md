@@ -4,6 +4,20 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.77
+Marketplace 1 + 4 (623 tests, 8 new):
+- **Verified track record** on every marketplace card and in a detail drawer (equity curve,
+  by month, by symbol, streaks, signal counts). Built from the publisher's trading journal —
+  broker fills the bridge imported itself, never a typed-in figure: a webhook's record is
+  the journal of the accounts it routes to, a copy group's the leader account. CSV-uploaded
+  trades lower the *verified share* (amber badge). Account names never leave the
+  publisher; visibility rules apply; two-minute cache. Publishers see their own record.
+- **Subscription journal** (Routing → Subscription journal): per subscription the signals it
+  delivered and their outcomes (or the copy events for your accounts) and your P&L on the
+  routed accounts since subscribing. `GET /api/subscriptions/{id}/journal`.
+- `signal_log.webhook_id` (migration): per-webhook signal statistics; subscription
+  executions are logged under the subscription's id.
+
 ## 5.0.0-alpha.76
 New features (615 tests, 19 new); the signal path is unchanged.
 - **Automations** (Settings → Automations): "when <event> [matching …] then <action>" rules

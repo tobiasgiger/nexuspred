@@ -16,6 +16,7 @@ import agents from "./agents.js";
 import news from "./news.js";
 import calendar from "./calendar.js";
 import automations from "./automations.js";
+import subscriptions from "./subscriptions.js";
 import { general, security, updates, alerts, symbols, account } from "./settings.js";
 
 export const ROUTES = [
@@ -29,6 +30,7 @@ export const ROUTES = [
   { path: "/marketplace", page: marketplace },
   { path: "/copy", page: copyTrading },
   { path: "/copy/:id", page: copyTrading },
+  { path: "/subscriptions", page: subscriptions },
   { path: "/settings", redirect: "/settings/general" },
   { path: "/settings/general", page: general },
   { path: "/settings/accounts", page: accounts },

@@ -162,7 +162,7 @@ def _trade_row(r: sqlite3.Row) -> dict[str, Any]:
 
 def list_journal_trades(area_id: int, *, frm: str = "", to: str = "", account: str = "",
                         symbol: str = "", side: str = "", limit: int = 0,
-                        before: Optional[int] = None) -> list[dict[str, Any]]:
+                        before: Optional[int] = None, accounts: Optional[list[str]] = None) -> list[dict[str, Any]]:
     """Trades closed in [frm, to) (ISO-UTC; empty = open-ended), newest first
     when ``limit`` is set, else chronological (for aggregation)."""
     init()
@@ -174,6 +174,11 @@ def list_journal_trades(area_id: int, *, frm: str = "", to: str = "", account: s
         where.append("exit_ts<?"); params.append(to)
     if account:
         where.append("(account_spec=? OR account_name=? OR CAST(account_id AS TEXT)=?)"); params += [account, account, account]
+    if accounts is not None:
+        if not accounts:
+            return []
+        marks = ",".join("?" * len(accounts))
+        where.append(f"(account_spec IN ({marks}) OR account_name IN ({marks}))"); params += [*accounts, *accounts]
     if symbol:
         where.append("(root=? OR symbol=?)"); params += [symbol, symbol]
     if side:

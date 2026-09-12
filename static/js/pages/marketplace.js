@@ -10,6 +10,8 @@ import { openDrawer, closeDrawer } from "../components/drawer.js";
 import { accountKey, routedAccountsTable } from "../components/accounts.js";
 import { STRATEGY_LABEL } from "../templates.js";
 import { sizingOf } from "../sizing.js";
+import { lineChart, fmtSigned } from "../charts.js";
+import { recordStrip } from "./subscriptions.js";
 import { t } from "../i18n.js";
 
 
@@ -129,6 +131,60 @@ export function openCopySubscriptionDrawer(item, onDone) {
   });
 }
 
+/** Full track record drawer: figures, monthly table, equity curve. */
+export async function openRecordDrawer(item) {
+  const isCopy = item.kind === "copy";
+  let rec;
+  try {
+    rec = await api.get(isCopy ? `/api/marketplace/${item.publisher_area_id}/copy/${item.group_id}/record` : `/api/marketplace/${item.publisher_area_id}/${item.webhook_id}/record`);
+  } catch (e) { toast(e.message, "error"); return; }
+  const kv = (k, v) => h("div", { class: "tr-cell" }, h("div", { class: "k" }, k), h("div", { class: "v" }, v));
+  const money = (v) => h("span", { class: `pnl ${Number(v) > 0 ? "pos" : Number(v) < 0 ? "neg" : ""}` }, fmtSigned(v, 2));
+  const pct = (v) => `${Math.round((v || 0) * 100)}%`;
+  const months = dataTable({ compact: true, empty: t("No closed trades yet."), columns: [
+    { label: t("Month"), render: (m) => m.bucket },
+    { label: t("Trades"), className: "num", render: (m) => String(m.trades) },
+    { label: t("Win rate"), className: "num", render: (m) => pct(m.win_rate) },
+    { label: t("Net"), className: "num", render: (m) => money(m.net_pnl) },
+    { label: t("Cumulative"), className: "num", render: (m) => money(m.cumulative) },
+  ] });
+  months.update(rec.monthly || []);
+  const symbols = dataTable({ compact: true, empty: t("—"), columns: [
+    { label: t("Symbol"), render: (b) => b.root },
+    { label: t("Trades"), className: "num", render: (b) => String(b.trades) },
+    { label: t("Win rate"), className: "num", render: (b) => pct(b.win_rate) },
+    { label: t("Net"), className: "num", render: (b) => money(b.net_pnl) },
+  ] });
+  symbols.update(rec.by_symbol || []);
+  const chart = h("div", { class: "chart-box" });
+  if ((rec.equity || []).length > 1) chart.append(lineChart(rec.equity.map((p) => ({ label: p.ts.slice(0, 10), value: p.equity })), { height: 180 }));
+  const sig = rec.signals;
+  openDrawer({
+    title: t("Track record — {title}", { title: rec.title || item.title }),
+    width: "720px",
+    body: [
+      h("div", { class: "callout" },
+        rec.basis === "none" ? t("This item routes to no account yet, so there is nothing to verify.")
+          : rec.verified ? [icon("shield"), " ", t("Every trade below was paired from broker fills the bridge imported itself — nothing here was typed in by the publisher.")]
+          : t("{p} of the trades come from broker fills the bridge imported; the rest were uploaded as CSV by the publisher.", { p: pct(rec.verified_share) }),
+        " ", isCopy ? t("Basis: the leader account's journal.") : t("Basis: the publisher's journal on the {n} account(s) this signal routes to — it includes anything else those accounts traded.", { n: rec.accounts_n })),
+      h("div", { class: "tr-grid" },
+        kv(t("Trades"), String(rec.trades)), kv(t("Win rate"), pct(rec.win_rate)), kv(t("Profit factor"), rec.profit_factor == null ? "∞" : String(rec.profit_factor)),
+        kv(t("Net P&L"), money(rec.net_pnl)), kv(t("Last 30 days"), money(rec.net_30d)), kv(t("Last 90 days"), money(rec.net_90d)),
+        kv(t("Max drawdown"), money(rec.max_drawdown)), kv(t("Expectancy / trade"), money(rec.expectancy)), kv(t("Trading days"), String(rec.trading_days)),
+        kv(t("Avg win / loss"), `${fmtSigned(rec.avg_win, 0)} / ${fmtSigned(rec.avg_loss, 0)}`), kv(t("Largest win / loss"), `${fmtSigned(rec.largest_win, 0)} / ${fmtSigned(rec.largest_loss, 0)}`),
+        kv(t("Streaks (W / L)"), `${rec.longest_win_streak} / ${rec.longest_loss_streak}`),
+        sig ? kv(t("Signals (all / 30 d)"), `${sig.executed} / ${(rec.signals_30d || {}).executed || 0}`) : null,
+        kv(t("First / last trade"), `${rec.first_trade_at ? rec.first_trade_at.slice(0, 10) : "—"} → ${rec.last_trade_at ? rec.last_trade_at.slice(0, 10) : "—"}`)),
+      h("h3", null, t("Equity curve")), chart,
+      h("h3", null, t("By month")), months.el,
+      h("h3", null, t("By symbol")), symbols.el,
+      h("p", { class: "hint" }, t("Past results are no promise of future ones. Sizing, fees and slippage differ per account.")),
+    ],
+    foot: [h("button", { type: "button", class: "btn btn-ghost", onClick: () => closeDrawer() }, t("Close"))],
+  });
+}
+
 export default {
   title: t("Marketplace"),
   render(root, { navigate }) {
@@ -157,6 +213,8 @@ export default {
             h("div", { class: "mk-meta" }, icon("user"), it.publisher_email || "—", "·", icon("users"), `${it.subscriber_count} ${isCopy ? "follower" : "subscriber"}${it.subscriber_count === 1 ? "" : "s"}`,
               live ? ["·", live] : null,
               it.visibility === "selected" ? ["·", tag("invite-only", "accent")] : null),
+            h("div", { class: "mk-record" }, recordStrip(it.record, { compact: true }),
+              h("button", { type: "button", class: "btn btn-ghost btn-sm", onClick: () => openRecordDrawer(it) }, icon("activity"), t("Track record"))),
             h("div", { class: "mk-foot" }, state,
               h("div", { class: "inline-actions" },
                 sub ? h("input", { type: "checkbox", class: "switch", checked: !!sub.enabled, title: t("Enable / disable"), onChange: async (e) => {
@@ -173,7 +231,7 @@ export default {
     root.append(
       pageHead(t("Marketplace"), t("Signals and copy-trading leaders other users have published. Subscribe to run a signal on your own trade accounts, or follow a leader whose positions are mirrored onto your accounts live — with your own sizing, your own Trading switch and your own logs and alerts. Publishers never see your accounts."), [
         h("button", { class: "btn", onClick: load }, icon("refresh"), t("Refresh")),
-        h("button", { class: "btn btn-ghost", onClick: () => navigate("/webhooks") }, t("My subscriptions"), icon("chevron")),
+        h("button", { class: "btn btn-ghost", onClick: () => navigate("/subscriptions") }, t("Subscription journal"), icon("chevron")),
       ]),
       status, grid,
     );

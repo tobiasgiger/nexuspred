@@ -673,6 +673,29 @@ Subscriptions are stored in the `subscriptions` table; the sharing config lives 
 webhook itself (`sharing` key), so v4 data stays compatible.
 
 ---
+### Verified track record
+
+Every published signal and copy group carries a **track record** on its marketplace card
+(trades, win rate, profit factor, net P&L, last 30 days, max drawdown) and a detail drawer
+(equity curve, by month, by symbol, streaks, signal counts). It is built from the
+publisher's own **trading journal** — round trips paired from broker fills the bridge
+imported itself, never a figure the publisher typed in. A webhook's record covers the
+trade accounts it routes to (so it includes anything else those accounts traded); a copy
+group's record is the leader account. Trades that came from a CSV upload count towards a
+lower *verified share* and the badge turns amber. Subscribers never see the publisher's
+account names. Records are cached for two minutes. `GET /api/marketplace/{area}/{webhook_id}/record`,
+`…/copy/{group_id}/record`; publishers see their own under `GET /api/webhooks/{id}/record`
+and `GET /api/copy/groups/{id}/record`.
+
+### Subscription journal
+
+Routing → Subscription journal: one card per subscription / copy follow with the signals it
+delivered and how they ended (executed / skipped / error, last signal), or the mirrored copy
+events for your accounts, and your own P&L on the routed accounts since you subscribed.
+`GET /api/subscriptions/{id}/journal`. Signal rows now carry the webhook id
+(`signal_log.webhook_id`), so a subscription's signals are counted exactly even when the
+publisher renames the signal.
+
 ## Rollover with confirmation
 
 Dated contracts in the symbol map (`MNQU6`) expire. The daily check flags every mapped
@@ -991,6 +1014,8 @@ the dashboard **Update** button works.
 | `GET`  | `/api/marketplace` | Published webhooks visible to me (with my subscription, if any) |
 | `POST` | `/api/marketplace/{area}/{webhook_id}/subscribe` | Subscribe (routed accounts + enabled) |
 | `GET/PUT/DELETE` | `/api/subscriptions[/{id}]` | My subscriptions: list / update / unsubscribe |
+| `GET`  | `/api/marketplace/{area}/{webhook_id}/record` | Full track record of a published signal · `…/copy/{group_id}/record` for a copy group · own: `GET /api/webhooks/{id}/record`, `GET /api/copy/groups/{id}/record` |
+| `GET`  | `/api/subscriptions/{id}/journal` | The subscriber's journal of one subscription: signals + outcomes (or copy events) and P&L since subscribing |
 | `GET`  | `/api/scenarios` | List built-in simulator scenarios |
 | `POST` | `/api/simulate` | Run a signal in simulation (no broker) |
 | `GET`  | `/api/simulate/state` | Simulated positions & working orders |

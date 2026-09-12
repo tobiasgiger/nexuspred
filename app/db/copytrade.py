@@ -1,7 +1,7 @@
 """Copy-trading events, twins and mirrored state."""
 from __future__ import annotations
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Optional
 from .core import _connect, _now, init
 
 
@@ -18,11 +18,18 @@ def insert_copy_event(area_id: int, rec: dict[str, Any]) -> int:
         return int(cur.lastrowid or 0)
 
 
-def list_copy_events(area_id: int, group_id: str = "", limit: int = 100) -> list[dict[str, Any]]:
+def list_copy_events(area_id: int, group_id: str = "", limit: int = 100,
+                     followers: Optional[list[str]] = None) -> list[dict[str, Any]]:
     init()
     limit = max(1, min(int(limit), 1000))
     with _connect() as c:
-        if group_id:
+        if followers is not None:
+            if not followers:
+                return []
+            marks = ",".join("?" * len(followers))
+            rows = c.execute(f"SELECT * FROM copy_events WHERE area_id=? AND group_id=? AND follower IN ({marks}) ORDER BY id DESC LIMIT ?",
+                             (area_id, group_id, *followers, limit)).fetchall()
+        elif group_id:
             rows = c.execute("SELECT * FROM copy_events WHERE area_id=? AND group_id=? ORDER BY id DESC LIMIT ?",
                              (area_id, group_id, limit)).fetchall()
         else:
