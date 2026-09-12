@@ -102,7 +102,7 @@ export default {
 
     // ---- live P&L (today's realised + open, per account) -----------------
     const pnlHero = h("div", { class: "journal-hero" }, "—");
-    const pnlSub = h("div", { class: "muted", style: "font-size:12.5px" }, "Waiting for the first snapshot from Tradovate…");
+    const pnlSub = h("div", { class: "muted", style: "font-size:12.5px" }, "Waiting for the first snapshot from the broker…");
     const pnlRows = h("div", { class: "pnl-rows" });
     const pnlStamp = h("span", { class: "muted", style: "font-size:11px" }, "");
     const pnlTone = (v) => (Number(v) > 0 ? "pos" : Number(v) < 0 ? "neg" : "");
@@ -124,7 +124,7 @@ export default {
     };
     async function pinThreshold(a) {
       const cur = a.dd_level != null ? String(Math.round(a.dd_level)) : "";
-      const v = window.prompt(`Trailing threshold for ${a.spec} as shown by your prop firm / Tradovate (e.g. 48100).\nThe bridge trails it forward from there. Leave empty to reset the tracker.`, cur);
+      const v = window.prompt(`Trailing threshold for ${a.spec} as shown by your prop firm / broker (e.g. 48100).\nThe bridge trails it forward from there. Leave empty to reset the tracker.`, cur);
       if (v === null) return;
       try {
         const r = await api.post("/api/pnl/drawdown", { account_id: a.account_id, level: v.trim() === "" ? null : Number(v.replace(/[^0-9.\-]/g, "")) });

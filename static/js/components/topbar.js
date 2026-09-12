@@ -45,7 +45,7 @@ export function renderTopbar(root, { navigate, onHamburger, onPrivacy }) {
   sosBtn.addEventListener("click", async () => {
     const ok = await confirmDialog({
       title: "🆘 Flatten ALL accounts",
-      body: "Cancel every working order and close every open position on ALL of your Tradovate accounts, right now — even if trading is paused.\n\nThis cannot be undone.",
+      body: "Cancel every working order and close every open position on ALL of your trade accounts (every broker), right now — even if trading is paused.\n\nThis cannot be undone.",
       confirmText: "Flatten everything", danger: true,
     });
     if (!ok) return;

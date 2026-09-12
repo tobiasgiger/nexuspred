@@ -4,6 +4,15 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.64
+- **Broker-neutral wording.** Texts that applied to every broker but said "Tradovate"
+  are generic now: the logins card (per-broker instructions for Tradovate, Rithmic,
+  ProjectX), Overview P&L placeholder, symbol mapping ("Broker contract", Tradovate form
+  with translation for the other brokers), Simulator, Flatten-all confirmation, sidebar
+  tagline, copy-group feed-loss hint, connection alerts (name the login's broker), copy /
+  risk-guard messages ("no broker account id"). Features that really are Tradovate-only
+  say so: journal import (other brokers via CSV), execution agents, the token extractor.
+
 ## 5.0.0-alpha.63
 - **Broker Accounts.** The menu entry, page and every hint now say *Broker Accounts*
   instead of *Tradovate Accounts* — the page manages Tradovate, Rithmic and ProjectX logins.

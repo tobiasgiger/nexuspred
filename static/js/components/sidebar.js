@@ -60,7 +60,7 @@ export function renderSidebar(root, { me, path, collapsed, onToggleCollapse, nav
   clear(root);
   root.append(h("div", { class: "brand" },
     h("span", { class: "logo", "aria-hidden": "true" }, "◈"),
-    h("div", { class: "brand-text" }, h("strong", null, "Fluxbridge"), h("span", null, "TradingView → Tradovate"))));
+    h("div", { class: "brand-text" }, h("strong", null, "Fluxbridge"), h("span", null, "TradingView → your broker"))));
 
   const nav = h("nav", { class: "nav" });
   for (const g of NAV) {

@@ -90,7 +90,7 @@ export default {
     }
 
     root.append(
-      pageHead("Execution Agents", "Run a small helper on a VPS and route a login's Tradovate calls through it, so each account trades from its own IP. The agent pairs with a one-time code and never sees your dashboard login.", [
+      pageHead("Execution Agents", "Run a small helper on a VPS and route a Tradovate login's calls through it, so each account trades from its own IP (Tradovate logins only — Rithmic and ProjectX connect from the bridge). The agent pairs with a one-time code and never sees your dashboard login.", [
         h("a", { class: "btn btn-ghost", href: "/api/agents/download.zip", title: "Plain agent files without token (pair with a code)" }, icon("download"), "Plain agent (no token)"),
       ]),
       card({ title: "Add an agent", hint: "Windows VPS: name it and download the preconfigured agent — the zip already contains the bridge URL, this agent's token and the .exe. Linux / macOS VPS: name it and press Linux one-liner — one command installs, pairs and starts the agent as a service. Then assign logins under Broker Accounts → Execute via. Alternative: a pairing code, typed into the plain agent on first start." },

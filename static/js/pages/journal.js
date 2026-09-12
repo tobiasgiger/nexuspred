@@ -304,7 +304,7 @@ export default {
     }
 
     root.append(
-      pageHead("Journal", "Executed trades imported from Tradovate with realised P&L, fees and notes. Reporting per day, week and month; every chart has a table view.", [
+      pageHead("Journal", "Executed trades imported from Tradovate logins (other brokers: CSV import) with realised P&L, fees and notes. Reporting per day, week and month; every chart has a table view.", [
         exportLink, dedupeBtn, csvBtn, importBtn,
       ]),
       h("div", { class: "journal-toolbar" }, rangeSel, periodSel, accountSel, symbolSel, sideSel, h("span", { class: "spacer" }), importInfo),

@@ -128,22 +128,25 @@ async def send_email_to(to_addr: str, subject: str, body: str) -> bool:
         return False
 
 
-async def connection_lost(account: str, environment: str, error: str) -> None:
+BROKER_LABELS = {"tradovate": "Tradovate", "rithmic": "Rithmic", "projectx": "ProjectX"}
+
+
+async def connection_lost(account: str, environment: str, error: str, broker: str = "tradovate") -> None:
     s = config.load_settings()
     if not s.get("alert_on_connection_lost", True):
         return
     detail = f" — {error}" if error else ""
-    message = f"🔴 **Connection lost** — account `{account}` ({environment}, Tradovate){detail}"
+    message = f"🔴 **Connection lost** — login `{account}` ({environment}, {BROKER_LABELS.get(broker, broker)}){detail}"
     await asyncio.gather(_send_discord(message),
                          _send_email(f"Fluxbridge: connection lost ({account})", message),
                          _send_push(f"Connection lost: {account}", message, url="/#/accounts"))
 
 
-async def connection_restored(account: str, environment: str) -> None:
+async def connection_restored(account: str, environment: str, broker: str = "tradovate") -> None:
     s = config.load_settings()
     if not s.get("alert_on_connection_restored", True):
         return
-    message = f"🟢 **Connection restored** — account `{account}` ({environment}, Tradovate)"
+    message = f"🟢 **Connection restored** — login `{account}` ({environment}, {BROKER_LABELS.get(broker, broker)})"
     await asyncio.gather(_send_discord(message),
                          _send_email(f"Fluxbridge: connection restored ({account})", message),
                          _send_push(f"Connection restored: {account}", message, url="/#/accounts"))

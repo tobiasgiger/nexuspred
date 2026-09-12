@@ -235,9 +235,9 @@ class ProjectXSession:
         was = state.session_status(self.name).get("connected") if had_prior else None
         state.set_session_status(self.name, connected=connected, agent_id=0, broker="projectx", **fields)
         if had_prior and was and not connected:
-            _fire(alerts.connection_lost(self.name, self.environment, fields.get("last_error", "")))
+            _fire(alerts.connection_lost(self.name, self.environment, fields.get("last_error", ""), broker=getattr(self, "kind", "tradovate")))
         elif had_prior and not was and connected:
-            _fire(alerts.connection_restored(self.name, self.environment))
+            _fire(alerts.connection_restored(self.name, self.environment, broker=getattr(self, "kind", "tradovate")))
 
     async def account_list(self) -> list[dict[str, Any]]:
         data = await self._post("/api/Account/search", {"onlyActiveAccounts": True})

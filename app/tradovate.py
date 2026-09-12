@@ -461,9 +461,9 @@ class TradovateSession:
         was_connected = state.session_status(self.name).get("connected") if had_prior else None
         state.set_session_status(self.name, connected=connected, agent_id=self.agent_id, **fields)
         if had_prior and was_connected and not connected:
-            _fire(alerts.connection_lost(self.name, self.environment, fields.get("last_error", "")))
+            _fire(alerts.connection_lost(self.name, self.environment, fields.get("last_error", ""), broker=getattr(self, "kind", "tradovate")))
         elif had_prior and not was_connected and connected:
-            _fire(alerts.connection_restored(self.name, self.environment))
+            _fire(alerts.connection_restored(self.name, self.environment, broker=getattr(self, "kind", "tradovate")))
 
     async def connect(self) -> dict[str, Any]:
         try:

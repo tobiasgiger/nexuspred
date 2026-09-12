@@ -262,7 +262,7 @@ async def check_area(area_id: int, sessions: list[Any], snapshots: list[dict[str
                 by_id[int(a["id"])] = (sess, a)
             elif active(a.get("risk")) and (area_id, a.get("spec") or "") not in _warned_no_id:
                 _warned_no_id.add((area_id, a.get("spec") or ""))
-                state.log_event("error", f"Risk guard: {a.get('spec')} has rules but no Tradovate account id — "
+                state.log_event("error", f"Risk guard: {a.get('spec')} has rules but no broker account id — "
                                          "it is NOT guarded; run Connect & Verify on its login")
     fired: list[dict[str, Any]] = []
     for snap in snapshots:

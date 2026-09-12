@@ -32,9 +32,9 @@ export const general = {
         ] },
         { title: "Connection", hint: "Fluxbridge connects to each broker login separately — Tradovate with an access token (no username/password), Rithmic and ProjectX with credentials. Add logins under Broker Accounts, then Connect & Verify.", fields: [
           { name: "health_check_interval", type: "number", label: "Health check / token refresh interval (seconds)", min: 0, placeholder: "60 (0 = off)", hint: "How often sessions are verified and tokens renewed ahead of expiry." },
-          { name: "pnl_poll_seconds", type: "number", label: "Live P&L refresh (seconds)", min: 0, placeholder: "5 (0 = off)", width: "160px", hint: "How often the Overview's Today's P&L card asks Tradovate for realised / open P&L while a dashboard is open (idle: once a minute)." },
+          { name: "pnl_poll_seconds", type: "number", label: "Live P&L refresh (seconds)", min: 0, placeholder: "5 (0 = off)", width: "160px", hint: "How often the Overview's Today's P&L card asks the broker for realised / open P&L while a dashboard is open (idle: once a minute)." },
         ], after: h("div", { class: "form-actions" }, connectBtn) },
-        { title: "Trading journal", hint: "Executed trades are imported from every enabled Tradovate login once a day (after the CME close) into the Journal page.", fields: [
+        { title: "Trading journal", hint: "Executed trades are imported from every enabled Tradovate login once a day (after the CME close) into the Journal page. Rithmic and ProjectX logins are not imported yet — use the CSV import on the Journal page.", fields: [
           { name: "journal_auto_import", type: "switch", label: "Automatic daily import" },
           { name: "journal_import_time", type: "text", label: "Import time (local)", placeholder: "23:30", width: "140px", hint: "HH:MM in the journal timezone. Tradovate's lists cover the current session, so run it after the daily close (23:00 CET)." },
           { name: "journal_timezone", type: "text", label: "Journal timezone", placeholder: "Europe/Zurich", hint: "IANA name; used for the schedule and for day / week / month buckets." },
@@ -393,12 +393,12 @@ export const symbols = {
     }
 
     root.append(
-      pageHead("Symbol Mapping", "Maps each TradingView symbol to the exact Tradovate contract used for orders. When a contract nears its roll date the bridge proposes the next one here — you confirm.", [
+      pageHead("Symbol Mapping", "Maps each TradingView symbol to the exact broker contract used for orders (Tradovate form, e.g. MNQU6; Rithmic and ProjectX logins translate it). When a contract nears its roll date the bridge proposes the next one here — you confirm.", [
         h("button", { type: "button", class: "btn", onClick: () => tbody.append(row()) }, icon("plus"), "Add row"),
       ]),
       rollCard,
-      card({ title: "Current mapping", hint: "Use a dated contract (e.g. MNQU6); a bare root (e.g. MNQ) also works and auto-picks the front month. Unmapped symbols are only accepted when their root is in Allowed symbols (General & Trading)." },
-        h("div", { class: "table-scroll" }, h("table", { class: "data-table" }, h("thead", null, h("tr", null, h("th", null, "TradingView symbol"), h("th", null, "Tradovate contract"), h("th"))), tbody)),
+      card({ title: "Current mapping", hint: "Use a dated contract in the Tradovate form (e.g. MNQU6); a bare root (e.g. MNQ) also works and auto-picks the front month. Unmapped symbols are only accepted when their root is in Allowed symbols (General & Trading)." },
+        h("div", { class: "table-scroll" }, h("table", { class: "data-table" }, h("thead", null, h("tr", null, h("th", null, "TradingView symbol"), h("th", null, "Broker contract"), h("th"))), tbody)),
         h("div", { class: "form-actions", style: "margin-top:12px" }, saveBtn)),
     );
     paint((store.get("settings") || {}).symbol_map);

@@ -106,7 +106,7 @@ export default {
     sel.addEventListener("change", async () => { try { await api.post("/api/simulate/reset"); } catch (e) { /* ignore */ } paintScenario(); });
 
     root.append(
-      pageHead("Simulator", "Rehearse a complete trade lifecycle through the real signal logic — entries, brackets, stop moves, partial closes — without sending anything to Tradovate. No credentials needed."),
+      pageHead("Simulator", "Rehearse a complete trade lifecycle through the real signal logic — entries, brackets, stop moves, partial closes — without sending anything to a broker. No credentials needed."),
       card({ title: "Scenario" },
         h("div", { class: "sim-controls" }, h("div", { class: "field" }, h("label", null, "Scenario"), sel), h("div", { class: "sim-buttons" }, runAll, stepBtn, resetBtn)),
         desc),

@@ -44,7 +44,7 @@ export default {
         h("td", null, h("select", { class: "ta-env input-sm", style: "min-width:90px" }, h("option", { value: "demo", selected: a.environment !== "live" }, "Demo"), h("option", { value: "live", selected: a.environment === "live" }, "Live"))),
         h("td", { colspan: 2 }, tvCells, rCells, pCells),
         h("td", null, h("input", { type: "number", class: "ta-mult input-sm", min: 0.1, step: 0.1, value: a.qty_multiplier ?? 1, style: "width:70px" })),
-        h("td", null, h("select", { class: "ta-agent input-sm", style: "min-width:120px", title: "Execute this login's Tradovate calls through a paired agent (own IP) or directly from the bridge" },
+        h("td", null, h("select", { class: "ta-agent input-sm", style: "min-width:120px", title: "Execute this login's broker calls through a paired agent (own IP) or directly from the bridge — Tradovate logins only" },
           h("option", { value: "0", selected: !a.agent_id }, "Bridge (direct)"),
           agents.map((g) => h("option", { value: String(g.id), selected: Number(a.agent_id) === g.id }, `${g.name}${g.online ? "" : " (offline)"}`)),
           a.agent_id && !agents.some((g) => g.id === Number(a.agent_id)) ? h("option", { value: String(a.agent_id), selected: true }, `Agent #${a.agent_id} (revoked)`) : null)),
@@ -165,7 +165,7 @@ export default {
       pageHead("Broker Accounts", "One row per broker login — Tradovate (access token, auto-renewed), Rithmic or ProjectX (credentials). Every signal fans out to the accounts a webhook routes to, in parallel.", [
         h("button", { type: "button", class: "btn", onClick: () => { tbody.append(row()); markDirty(); } }, icon("plus"), "Add login"),
       ]),
-      card({ title: "Token logins", hint: "Paste the access token (and optionally the check token) from the Tradovate web trader — see Tools for the extractor. Masked tokens keep their stored value when you save." },
+      card({ title: "Logins", hint: "Pick the broker per row. Tradovate: paste the access token (and optionally the check token) from the web trader — see Tools for the extractor. Rithmic: user, password, system name and gateway. ProjectX: user name, API key and firm. Masked secrets keep their stored value when you save." },
         h("div", { class: "table-scroll" }, h("table", { class: "data-table" },
           h("thead", null, h("tr", null, h("th", null, "On"), h("th", null, "Name"), h("th", null, "Broker"), h("th", null, "Env"), h("th", { colspan: 2 }, "Credentials"), h("th", null, "Qty ×"), h("th", null, "Execute via"), h("th", null, "Token expires"), h("th"))), tbody),
           h("datalist", { id: "rithmic-systems" }, ["Rithmic Paper Trading", "Rithmic Test", "Rithmic 01", "Apex", "TopstepTrader", "MyFundedFutures", "Bulenox", "Earn2Trade", "TradeFundrr"].map((x) => h("option", { value: x }))),

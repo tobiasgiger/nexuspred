@@ -589,7 +589,7 @@ class GroupRunner:
             ids.pop(0, None)
             for f in fs:
                 if self._follower_id(s, f) == 0:
-                    self.follower_err[f["spec"]] = "no Tradovate account id — run Connect & Verify on the login"
+                    self.follower_err[f["spec"]] = "no broker account id — run Connect & Verify on the login"
             try:
                 raw = await s.positions_snapshot()
             except Exception as exc:  # noqa: BLE001
@@ -682,7 +682,7 @@ class GroupRunner:
             account_id = await self._leader_account_id(session)
             self.leader_account_id = account_id
             if not account_id:
-                self.error = f"leader account {self.group['leader']['spec']} has no Tradovate id — run Connect & Verify on the login"
+                self.error = f"leader account {self.group['leader']['spec']} has no broker account id — run Connect & Verify on the login"
                 self._mark_feed(False)
                 await asyncio.sleep(10)
                 continue
@@ -736,7 +736,7 @@ class GroupRunner:
                 self.poll_interval = min(POLL_MAX_INTERVAL_S, self.poll_interval * 2)
                 self.throttled_until = time.monotonic() + exc.retry_after
                 self.diag["last_429"] = f"{exc.path}: {exc.text[:160]}" if exc.text else f"{exc.path}: (empty body)"
-                self.error = f"rate limited by Tradovate on {exc.path} — waiting {exc.retry_after:.0f} s, poll now every {self.poll_interval:.0f} s"
+                self.error = f"rate limited by the broker on {exc.path} — waiting {exc.retry_after:.0f} s, poll now every {self.poll_interval:.0f} s"
                 self.last_frame = time.monotonic()        # the broker is reachable, just throttling
                 if not self.feed_ok:
                     self._mark_feed(True)
