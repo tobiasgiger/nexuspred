@@ -6,12 +6,8 @@ publisher's accounts) and can **subscribe**: they pick which of *their own*
 trade accounts (with a qty multiplier) the signal should trade and can switch
 the subscription on/off. When a TradingView alert hits the published webhook it
 is executed in the publisher's area as usual **and** forwarded to every enabled
-subscription, each in the subscriber's own area (their trading switch, symbol
-map, alerts and logs) — see :func:`app.signals.forward_to_subscribers`.
-
-Sharing config lives on the webhook dict itself (``webhook["sharing"]``), so
-the settings schema is untouched; subscriptions live in the ``subscriptions``
-table (:mod:`app.db`).
+subscription, each in the subscriber's own area (their accounts, trading switch,
+symbol map, alerts and logs).
 """
 from __future__ import annotations
 
@@ -23,7 +19,6 @@ VISIBILITIES = ("all", "selected")
 
 
 def sharing_of(webhook: dict[str, Any]) -> dict[str, Any]:
-    """The normalised sharing config of a webhook (defaults: not shared)."""
     s = webhook.get("sharing") or {}
     allowed: list[int] = []
     for x in s.get("allowed_user_ids") or []:
@@ -41,7 +36,6 @@ def sharing_of(webhook: dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_sharing(body: dict[str, Any], current: Optional[dict[str, Any]] = None) -> dict[str, Any]:
-    """Merge a sharing update (from the API) over the current config, coercing types."""
     merged = dict(current or {})
     for key in ("enabled", "title", "description", "visibility", "allowed_user_ids"):
         if key in body:
@@ -60,9 +54,17 @@ def visible_to(sharing: dict[str, Any], user_id: int) -> bool:
     return True
 
 
+def subscription_allowed(webhook: dict[str, Any], sub: dict[str, Any]) -> bool:
+    """Re-check a persisted subscription against the publisher's current ACL."""
+    try:
+        owner = db.area_owner(int(sub.get("area_id") or 0))
+    except (TypeError, ValueError):
+        owner = None
+    return bool(owner and visible_to(sharing_of(webhook), int(owner)))
+
+
 def public_view(webhook: dict[str, Any], publisher_area_id: int,
                 publisher_email: Optional[str] = None) -> dict[str, Any]:
-    """What a subscriber may see of a published webhook (no token, no accounts)."""
     sh = sharing_of(webhook)
     return {
         "publisher_area_id": publisher_area_id,
@@ -80,8 +82,6 @@ def public_view(webhook: dict[str, Any], publisher_area_id: int,
 
 def published_webhooks(*, user_id: Optional[int] = None,
                        exclude_area: Optional[int] = None) -> list[dict[str, Any]]:
-    """Every published webhook (optionally only those visible to ``user_id``),
-    across all areas except ``exclude_area`` (a user can't subscribe to their own)."""
     out: list[dict[str, Any]] = []
     for aid in db.all_area_ids():
         if exclude_area is not None and aid == exclude_area:
@@ -100,7 +100,6 @@ def published_webhooks(*, user_id: Optional[int] = None,
 
 
 def find_published(publisher_area_id: int, webhook_id: str) -> tuple[Optional[dict[str, Any]], dict[str, Any]]:
-    """(webhook, sharing) for a published webhook, or (None, {}) if it isn't published."""
     for wh in config.load_settings(area_id=publisher_area_id).get("webhooks") or []:
         if wh.get("id") == webhook_id:
             sh = sharing_of(wh)
@@ -109,7 +108,6 @@ def find_published(publisher_area_id: int, webhook_id: str) -> tuple[Optional[di
 
 
 def clean_accounts(raw: Any) -> list[dict[str, Any]]:
-    """Coerce a subscriber's routed-accounts list (same shape as a webhook's)."""
     out: list[dict[str, Any]] = []
     for a in raw or []:
         if not isinstance(a, dict) or not a.get("spec") or a.get("token_idx") is None:
@@ -136,11 +134,19 @@ def clean_accounts(raw: Any) -> list[dict[str, Any]]:
     return out
 
 
+def _execution_window(webhook: dict[str, Any], publisher_area_id: int) -> Any:
+    """Freeze the publisher's fallback timezone before moving execution areas."""
+    raw = webhook.get("trade_window")
+    if not isinstance(raw, dict):
+        return raw
+    out = dict(raw)
+    if out.get("enabled") and not str(out.get("tz") or "").strip():
+        s = config.load_settings(area_id=publisher_area_id)
+        out["tz"] = str(s.get("journal_timezone") or "Europe/Zurich")
+    return out
+
+
 def subscription_view(webhook: dict[str, Any], sub: dict[str, Any], publisher_area_id: int) -> dict[str, Any]:
-    """The webhook as seen by the signal engine when executing a subscription:
-    the publisher's strategy/qty settings with the subscriber's accounts. Its id
-    is unique per publisher webhook so tracked trades never collide with the
-    subscriber's own webhooks."""
     sh = sharing_of(webhook)
     return {
         "id": f"sub{publisher_area_id}_{webhook.get('id', '')}",
@@ -150,6 +156,7 @@ def subscription_view(webhook: dict[str, Any], sub: dict[str, Any], publisher_ar
         "strategy": webhook.get("strategy", "simple"),
         "default_qty": webhook.get("default_qty", 1),
         "tp_qty": webhook.get("tp_qty", 1),
+        "trade_window": _execution_window(webhook, publisher_area_id),
         "accounts": sub.get("accounts") or [],
         "subscription": {"id": sub.get("id"), "publisher_area_id": publisher_area_id,
                          "webhook_id": webhook.get("id", "")},
