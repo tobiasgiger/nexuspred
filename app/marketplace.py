@@ -60,6 +60,20 @@ def visible_to(sharing: dict[str, Any], user_id: int) -> bool:
     return True
 
 
+def subscription_allowed(webhook: dict[str, Any], sub: dict[str, Any]) -> bool:
+    """Re-check a subscription against the publisher's *current* ACL.
+
+    Subscription creation is not an authorization lease: removing a user from a
+    selected publication must stop future executions immediately, without waiting
+    for the subscriber to edit or delete the persisted subscription row.
+    """
+    try:
+        owner = db.area_owner(int(sub.get("area_id") or 0))
+    except (TypeError, ValueError):
+        owner = None
+    return bool(owner and visible_to(sharing_of(webhook), int(owner)))
+
+
 def public_view(webhook: dict[str, Any], publisher_area_id: int,
                 publisher_email: Optional[str] = None) -> dict[str, Any]:
     """What a subscriber may see of a published webhook (no token, no accounts)."""
@@ -136,11 +150,29 @@ def clean_accounts(raw: Any) -> list[dict[str, Any]]:
     return out
 
 
+def _execution_window(webhook: dict[str, Any], publisher_area_id: int) -> Any:
+    """Publisher window for subscriber execution, with its fallback timezone frozen.
+
+    An empty window timezone means "publisher journal timezone". Once execution
+    moves into the subscriber workspace that fallback would otherwise become the
+    subscriber's timezone and could widen/narrow the entry window by hours.
+    """
+    raw = webhook.get("trade_window")
+    if not isinstance(raw, dict):
+        return raw
+    out = dict(raw)
+    if out.get("enabled") and not str(out.get("tz") or "").strip():
+        s = config.load_settings(area_id=publisher_area_id)
+        out["tz"] = str(s.get("journal_timezone") or "Europe/Zurich")
+    return out
+
+
 def subscription_view(webhook: dict[str, Any], sub: dict[str, Any], publisher_area_id: int) -> dict[str, Any]:
     """The webhook as seen by the signal engine when executing a subscription:
-    the publisher's strategy/qty settings with the subscriber's accounts. Its id
-    is unique per publisher webhook so tracked trades never collide with the
-    subscriber's own webhooks."""
+    the publisher's strategy/qty/window settings with the subscriber's accounts.
+    Its id is unique per publisher webhook so tracked trades never collide with
+    the subscriber's own webhooks.
+    """
     sh = sharing_of(webhook)
     return {
         "id": f"sub{publisher_area_id}_{webhook.get('id', '')}",
@@ -150,6 +182,7 @@ def subscription_view(webhook: dict[str, Any], sub: dict[str, Any], publisher_ar
         "strategy": webhook.get("strategy", "simple"),
         "default_qty": webhook.get("default_qty", 1),
         "tp_qty": webhook.get("tp_qty", 1),
+        "trade_window": _execution_window(webhook, publisher_area_id),
         "accounts": sub.get("accounts") or [],
         "subscription": {"id": sub.get("id"), "publisher_area_id": publisher_area_id,
                          "webhook_id": webhook.get("id", "")},
