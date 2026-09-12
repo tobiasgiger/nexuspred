@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
-from .. import context, copy, db, marketplace, state
+from .. import context, copy, db, marketplace, marketplace_safety, state
 
 router = APIRouter(prefix="/api", tags=["marketplace"])
 
@@ -16,8 +16,6 @@ def _is_copy(sub: dict[str, Any]) -> bool:
 
 
 def _enrich(sub: dict[str, Any]) -> dict[str, Any]:
-    """A subscription plus the public view of the webhook / copy group it follows
-    (or a 'missing' marker when the publisher unpublished/deleted it)."""
     if _is_copy(sub):
         g, sh = copy.find_published(sub["publisher_area_id"], sub["webhook_id"][5:])
         if g is None:
@@ -33,8 +31,6 @@ def _enrich(sub: dict[str, Any]) -> dict[str, Any]:
 
 @router.get("/marketplace")
 async def api_marketplace(request: Request) -> list[dict[str, Any]]:
-    """Published webhooks visible to the signed-in user (never their own area),
-    each with the user's subscription (if any) and the subscriber count."""
     user = request.state.user
     area = context.get_area()
     mine = {(s["publisher_area_id"], s["webhook_id"]): s for s in db.list_subscriptions(area)}
@@ -53,8 +49,6 @@ async def api_marketplace(request: Request) -> list[dict[str, Any]]:
 
 @router.post("/marketplace/{publisher_area_id}/copy/{group_id}/subscribe")
 async def api_subscribe_copy(request: Request, publisher_area_id: int, group_id: str) -> dict[str, Any]:
-    """Follow a published copy group with your own accounts (your logins, your
-    trading switch, your risk locks). The mirror runs in the publisher's workspace."""
     user = request.state.user
     area = context.get_area()
     if publisher_area_id == area:
@@ -67,6 +61,7 @@ async def api_subscribe_copy(request: Request, publisher_area_id: int, group_id:
     body = await request.json()
     try:
         accounts = copy.clean_subscriber_accounts(body.get("accounts"), area, broker_kind=copy.leader_broker(publisher_area_id, group_id))
+        marketplace_safety.validate_copy_accounts(publisher_area_id, group_id, accounts)
     except (TypeError, ValueError, KeyError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     enabled = bool(body.get("enabled", True))
@@ -117,9 +112,12 @@ async def api_update_subscription(request: Request, sub_id: int) -> dict[str, An
     if "accounts" in body:
         if _is_copy(current):
             try:
-                kwargs["accounts"] = copy.clean_subscriber_accounts(
+                accounts = copy.clean_subscriber_accounts(
                     body["accounts"], context.get_area(), exclude_sub_id=sub_id,
                     broker_kind=copy.leader_broker(current["publisher_area_id"], current["webhook_id"][5:]))
+                marketplace_safety.validate_copy_accounts(
+                    current["publisher_area_id"], current["webhook_id"][5:], accounts, exclude_sub_id=sub_id)
+                kwargs["accounts"] = accounts
             except (TypeError, ValueError, KeyError) as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
         else:
