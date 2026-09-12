@@ -68,6 +68,17 @@ access control, and a built-in GitHub auto-updater.
 
 ## Quick start
 
+### Own Linux server (one line, HTTPS included)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tobiasgiger/nexuspred/main/deploy/install-server.sh | sudo bash -s -- --domain bridge.example.com
+```
+
+Installs Caddy (automatic Let's Encrypt certificate), a systemd service, daily backups and
+the `fluxbridge` helper command; then open `https://bridge.example.com/setup`. Moving from
+Render: **Settings → Updates → Download backup**, then `sudo fluxbridge restore FILE`.
+Details: [docs/SELF-HOSTING.md](docs/SELF-HOSTING.md).
+
 ### One-click installers (recommended)
 
 The installers create an isolated virtual environment, install dependencies and

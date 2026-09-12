@@ -4,6 +4,17 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.53
+- **Self-hosting in one line.** `deploy/install-server.sh` turns a Debian / Ubuntu server
+  into a running bridge: Caddy with automatic HTTPS (TradingView needs a valid certificate),
+  a sandboxed systemd service that restarts on crash and reboot, secrets generated once into
+  `/etc/fluxbridge/env`, a daily backup timer (14 days kept) and the `fluxbridge` command
+  (`status`, `logs`, `update`, `backup`, `restore`, `domain`, `uninstall`). Re-running the
+  line upgrades. **Settings → Updates → Download backup** exports the whole database as one
+  SQLite file for the move (restore with `fluxbridge restore FILE`). Under systemd the
+  one-click updater shuts down cleanly and lets the service restart it. Guide:
+  `docs/SELF-HOSTING.md`, including the step-by-step move from Render.
+
 ## 5.0.0-alpha.52
 - **Journal calendar: weekly totals.** A *Week* column on the right of the calendar sums
   each week's net P&L and trade count (Monday–Sunday within the shown month), coloured like

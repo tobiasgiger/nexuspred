@@ -1,0 +1,10 @@
+[Unit]
+Description=Fluxbridge daily database backup (03:15 local time, kept 14 days)
+
+[Timer]
+OnCalendar=*-*-* 03:15:00
+RandomizedDelaySec=10m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

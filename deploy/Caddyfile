@@ -1,0 +1,9 @@
+# Fluxbridge — written by install-server.sh. Caddy fetches and renews the
+# Let's Encrypt certificate itself; TradingView requires HTTPS on port 443.
+@DOMAIN@ {
+	encode gzip
+	reverse_proxy 127.0.0.1:@PORT@ {
+		# the dashboard's live stream is server-sent events: never buffer it
+		flush_interval -1
+	}
+}

@@ -154,5 +154,11 @@ async def apply_update() -> dict[str, Any]:
 
 
 def _restart() -> None:
-    """Re-exec the current process so it runs the freshly pulled code."""
+    """Restart so the freshly pulled code runs. Under systemd (deploy/install-server.sh,
+    ``Restart=always``) a clean shutdown is enough — the unit brings the service back
+    with the environment file re-read; elsewhere the process re-execs itself."""
+    if os.environ.get("INVOCATION_ID") or os.environ.get("NEXUSPRED_SUPERVISED"):
+        import signal
+        os.kill(os.getpid(), signal.SIGTERM)      # graceful: loops stop, state is flushed
+        return
     os.execv(sys.executable, [sys.executable, *sys.argv])

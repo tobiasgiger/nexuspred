@@ -82,12 +82,16 @@ export const updates = {
       } catch (e) { toast("Update failed: " + e.message, "error"); applyBtn.disabled = false; }
     } }, "Update & restart");
     const checkBtn = h("button", { type: "button", class: "btn btn-secondary", onClick: () => actions.checkUpdate() }, icon("refresh"), "Check now");
+    const backupLink = h("a", { class: "btn btn-ghost", href: "/api/update/backup", download: "", title: "The whole database as one SQLite file — restore it on another server with: fluxbridge restore FILE" }, icon("download"), "Download backup");
+    const hosting = h("p", { class: "hint", style: "margin-top:10px" }, "Moving to your own Linux server? One line installs everything (HTTPS, service, daily backups): ",
+      h("code", null, "curl -fsSL https://raw.githubusercontent.com/tobiasgiger/nexuspred/main/deploy/install-server.sh | sudo bash -s -- --domain YOUR.DOMAIN"),
+      " — see docs/SELF-HOSTING.md. Download the backup here first and restore it there.");
     const form = settingsForm({
       values: store.get("settings"),
       onSave: (v) => actions.saveSettings(v),
       sections: [{ title: "Self-updater", fields: [
         { name: "auto_check_updates", type: "switch", label: "Auto-check for updates" },
-      ], after: h("div", null, status, h("div", { class: "form-actions" }, checkBtn, applyBtn)) }],
+      ], after: h("div", null, status, h("div", { class: "form-actions" }, checkBtn, applyBtn, backupLink), hosting) }],
     });
     root.append(pageHead("Updates", "Version status of this bridge and the one-click updater (self-hosted installs)."), form.el);
     const unsubs = [

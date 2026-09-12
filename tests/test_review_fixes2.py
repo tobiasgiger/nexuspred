@@ -169,3 +169,33 @@ def test_drawdown_state_writes_are_batched(admin, monkeypatch):
     assert len(calls) == 2 and calls[-1]["dd_state"] == {"11": {"peak": 2.0}}
     drawdown._save(1, {}, force=True)
     assert len(calls) == 3
+
+
+# ------------------------------------------------------------ self-hosting
+async def test_backup_download_is_a_consistent_sqlite_copy(client, admin):
+    import sqlite3, tempfile, os
+    r = await client.get("/api/update/backup")
+    assert r.status_code == 200 and r.headers["content-disposition"].startswith("attachment") and "fluxbridge-backup-" in r.headers["content-disposition"]
+    fd, path = tempfile.mkstemp(suffix=".db"); os.write(fd, r.content); os.close(fd)
+    try:
+        c = sqlite3.connect(path)
+        assert c.execute("SELECT email FROM users").fetchone()[0] == "admin@example.com"
+        assert c.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    finally:
+        os.unlink(path)
+
+
+async def test_backup_download_is_admin_only(anon_client, admin):
+    r = await anon_client.get("/api/update/backup")
+    assert r.status_code in (401, 302, 303, 403)
+
+
+def test_restart_under_systemd_is_a_clean_shutdown(monkeypatch):
+    from app import updater
+    import os, signal
+    sent: list = []
+    monkeypatch.setenv("INVOCATION_ID", "abc")
+    monkeypatch.setattr(os, "kill", lambda pid, sig: sent.append((pid, sig)))
+    monkeypatch.setattr(os, "execv", lambda *a: sent.append("execv"))
+    updater._restart()
+    assert sent == [(os.getpid(), signal.SIGTERM)]

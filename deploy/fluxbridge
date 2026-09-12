@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# fluxbridge — service helper installed by deploy/install-server.sh
+#   fluxbridge status | logs [-f] | restart | update | backup | restore FILE | domain NAME | uninstall
+set -euo pipefail
+APP_DIR="${FLUXBRIDGE_APP_DIR:-/opt/fluxbridge}"
+ENV_FILE="${FLUXBRIDGE_ENV_FILE:-/etc/fluxbridge/env}"
+BACKUP_DIR="${FLUXBRIDGE_BACKUP_DIR:-/var/backups/fluxbridge}"
+KEEP_DAYS="${FLUXBRIDGE_KEEP_DAYS:-14}"
+[[ -f "$ENV_FILE" ]] && set -a && source "$ENV_FILE" && set +a
+DATA_DIR="${NEXUSPRED_DATA_DIR:-/var/lib/fluxbridge}"
+DB="$DATA_DIR/fluxbridge.db"
+PY="$APP_DIR/.venv/bin/python"; [[ -x "$PY" ]] || PY=python3
+
+need_root() { [[ $EUID -eq 0 ]] || { echo "run as root (sudo fluxbridge $1)"; exit 1; }; }
+
+cmd_backup() {
+  # a consistent copy through SQLite's online backup API — safe while the bridge runs
+  mkdir -p "$BACKUP_DIR"
+  local out="$BACKUP_DIR/fluxbridge-$(date +%Y%m%d-%H%M%S).db"
+  [[ -f "$DB" ]] || { echo "no database at $DB yet"; exit 1; }
+  "$PY" - "$DB" "$out" <<'PYEOF'
+import sqlite3, sys
+src = sqlite3.connect(sys.argv[1]); dst = sqlite3.connect(sys.argv[2])
+with dst: src.backup(dst)
+dst.close(); src.close()
+PYEOF
+  chmod 600 "$out"
+  find "$BACKUP_DIR" -name 'fluxbridge-*.db' -mtime "+$KEEP_DAYS" -delete
+  echo "backup written: $out ($(du -h "$out" | cut -f1)); keeping $KEEP_DAYS days in $BACKUP_DIR"
+}
+
+cmd_restore() {
+  local src="${1:-}"
+  [[ -f "$src" ]] || { echo "usage: fluxbridge restore /path/to/backup.db"; exit 1; }
+  "$PY" - "$src" 2>/dev/null <<'PYEOF' || { echo "not a Fluxbridge database: $src"; exit 1; }
+import sqlite3, sys
+c = sqlite3.connect(sys.argv[1])
+assert c.execute("SELECT COUNT(*) FROM sqlite_master WHERE name='users'").fetchone()[0] == 1
+PYEOF
+  local stop=0
+  if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet fluxbridge 2>/dev/null; then need_root restore; systemctl stop fluxbridge; stop=1; fi
+  mkdir -p "$DATA_DIR"
+  if [[ -f "$DB" ]]; then
+    local keep="$DATA_DIR/fluxbridge.db.before-restore-$(date +%Y%m%d-%H%M%S)"
+    mv "$DB" "$keep"; rm -f "$DB-wal" "$DB-shm"
+    echo "previous database kept as $keep"
+  fi
+  cp "$src" "$DB"; chmod 600 "$DB"
+  if id -u fluxbridge >/dev/null 2>&1 && [[ $EUID -eq 0 ]]; then chown fluxbridge:fluxbridge "$DB"; fi
+  [[ "$stop" == "1" ]] && systemctl start fluxbridge
+  echo "restored $src → $DB"
+  echo "note: the SESSION_SECRET in $ENV_FILE must be the one the backup was made under, or the stored broker tokens are unreadable (re-enter them in the dashboard otherwise)."
+}
+
+cmd_update() {
+  need_root update
+  git -C "$APP_DIR" fetch --quiet --all --tags --prune
+  git -C "$APP_DIR" reset --quiet --hard "origin/${NEXUSPRED_BRANCH:-main}"
+  chown -R fluxbridge:fluxbridge "$APP_DIR"
+  sudo -u fluxbridge -H "$APP_DIR/.venv/bin/python" -m pip install --quiet -r "$APP_DIR/requirements.txt"
+  install -m 755 "$APP_DIR/deploy/fluxbridge" /usr/local/bin/fluxbridge
+  systemctl restart fluxbridge
+  echo "updated to v$(cat "$APP_DIR/VERSION") and restarted"
+}
+
+cmd_domain() {
+  need_root domain
+  local d="${1:-}"; [[ "$d" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "usage: fluxbridge domain bridge.example.com"; exit 1; }
+  sed -i "s#^NEXUSPRED_PUBLIC_URL=.*#NEXUSPRED_PUBLIC_URL=https://$d#" "$ENV_FILE"
+  sed -e "s#@DOMAIN@#$d#g" -e "s#@PORT@#${PORT:-9000}#g" "$APP_DIR/deploy/Caddyfile" > /etc/caddy/Caddyfile
+  caddy validate --config /etc/caddy/Caddyfile >/dev/null && systemctl restart caddy
+  systemctl restart fluxbridge
+  echo "domain set: https://$d (DNS must point here; the certificate is fetched on the first request)"
+}
+
+cmd_uninstall() {
+  need_root uninstall
+  read -r -p "Remove the service, the checkout and Caddy config? The data dir $DATA_DIR and backups are KEPT. [y/N] " a
+  [[ "$a" == "y" || "$a" == "Y" ]] || exit 0
+  systemctl disable --now fluxbridge fluxbridge-backup.timer 2>/dev/null || true
+  rm -f /etc/systemd/system/fluxbridge.service /etc/systemd/system/fluxbridge-backup.service /etc/systemd/system/fluxbridge-backup.timer
+  systemctl daemon-reload
+  rm -rf "$APP_DIR"; rm -f /usr/local/bin/fluxbridge
+  echo "removed. Data: $DATA_DIR, backups: $BACKUP_DIR, secrets: $ENV_FILE (delete by hand if you are sure)."
+}
+
+case "${1:-}" in
+  status)   systemctl status fluxbridge --no-pager; echo; curl -fsS "http://127.0.0.1:${PORT:-9000}/healthz" || true; echo ;;
+  logs)     shift; journalctl -u fluxbridge --no-pager -n 200 "$@" ;;
+  restart)  need_root restart; systemctl restart fluxbridge; echo restarted ;;
+  update)   cmd_update ;;
+  backup)   cmd_backup ;;
+  restore)  cmd_restore "${2:-}" ;;
+  domain)   cmd_domain "${2:-}" ;;
+  uninstall) cmd_uninstall ;;
+  *) sed -n '2,3p' "$0"; exit 1 ;;
+esac

@@ -1,0 +1,9 @@
+[Unit]
+Description=Fluxbridge daily database backup
+
+[Service]
+Type=oneshot
+User=@USER@
+Group=@USER@
+EnvironmentFile=@ENV_FILE@
+ExecStart=/usr/local/bin/fluxbridge backup
