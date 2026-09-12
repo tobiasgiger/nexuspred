@@ -244,7 +244,12 @@ async def register_submit(request: Request):
     if db.get_user_by_email(email):
         return RedirectResponse(back + "exists", status_code=302)
     user = await db.create_user_async(email, pw, is_admin=invite.get("is_admin", False), totp_required=True)
-    db.consume_invite(code, user["id"])
+    if not db.consume_invite(code, user["id"]):
+        # Another registration won the single-use invite after our initial read.
+        # Do not leave behind a fully-created user/workspace that never actually
+        # acquired the invite.
+        await asyncio.to_thread(db.delete_user, user["id"])
+        return RedirectResponse(back + "invite", status_code=302)
     area = db.user_primary_area(user["id"])
     config.migrate_legacy_webhook(area_id=area)  # give the new area a Default webhook
     state.log_event("info", f"Account registered: {email}")
