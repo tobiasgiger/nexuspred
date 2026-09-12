@@ -41,6 +41,15 @@ def reset() -> None:
     _feeds.clear()
 
 
+def drop(area_id: int, session: Any) -> None:
+    """Forget snapshots for a login whose broker session is being replaced.
+
+    Stable login ids deliberately survive credential/account edits, but data
+    fetched from the old session must not survive into the replacement session.
+    """
+    _feeds.pop(key_of(area_id, session), None)
+
+
 def stats(area_id: int, session: Any) -> dict[str, int]:
     f = _feeds.get(key_of(area_id, session))
     return {"hits": f.hits, "fetches": f.fetches} if f else {"hits": 0, "fetches": 0}
