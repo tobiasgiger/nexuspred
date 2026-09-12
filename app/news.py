@@ -33,6 +33,14 @@ from . import alerts, config, context, db, http, state
 log = logging.getLogger(__name__)
 
 FEED_URLS = ("https://nfs.faireconomy.media/ff_calendar_thisweek.json",)   # the only public weekly file
+# The weekly file stops at Sunday; the following weeks come from TradingView's
+# public calendar endpoint (the one its widget uses) until the weekly file
+# delivers them — then its rows replace the preview (titles differ slightly).
+TV_URL = "https://economic-calendar.tradingview.com/events"
+TV_COUNTRIES = "US,EU,GB,JP,CA,AU,NZ,CH,CN"
+TV_CURRENCY = {"US": "USD", "EU": "EUR", "GB": "GBP", "JP": "JPY", "CA": "CAD", "AU": "AUD", "NZ": "NZD", "CH": "CHF", "CN": "CNY"}
+TV_IMPACT = {1: "High", 0: "Medium", -1: "Low"}
+PREVIEW_DAYS = 15
 REFRESH_S = 6 * 3600
 KEEP_DAYS = 90               # the feed carries the current week only: past weeks are kept locally
 LOOP_TICK_S = 30.0
@@ -149,6 +157,48 @@ async def refresh(force: bool = False) -> dict[str, Any]:
         return await _refresh_now()
 
 
+def _normalize_tv(raw: Any) -> list[dict[str, Any]]:
+    """TradingView calendar rows in the feed's shape."""
+    out: list[dict[str, Any]] = []
+    rows = raw.get("result") if isinstance(raw, dict) else raw
+    for e in rows if isinstance(rows, list) else []:
+        if not isinstance(e, dict):
+            continue
+        at = _parse_ts(e.get("date"))
+        title = str(e.get("title") or e.get("indicator") or "").strip()
+        if at is None or not title:
+            continue
+        cur = str(e.get("currency") or TV_CURRENCY.get(str(e.get("country") or ""), "") or "").strip().upper()
+        try:
+            imp = TV_IMPACT.get(int(e.get("importance")), "Low")
+        except (TypeError, ValueError):
+            imp = "Low"
+        fmt = lambda v: "" if v in (None, "") else (f"{v:g}" if isinstance(v, (int, float)) else str(v))[:20]  # noqa: E731
+        out.append({"title": title[:120], "currency": cur[:8], "impact": imp, "at": at.isoformat(),
+                    "forecast": fmt(e.get("forecast")), "previous": fmt(e.get("previous")), "source": "tv"})
+    out.sort(key=lambda x: x["at"])
+    return out
+
+
+async def _fetch_preview(client: Any, after: Optional[str], errors: list[str]) -> list[dict[str, Any]]:
+    """Events after the weekly file's last entry (or from now) for the next
+    PREVIEW_DAYS days, from TradingView."""
+    now = datetime.now(timezone.utc)
+    lo = max(_parse_ts(after) or now, now - timedelta(days=1)) if after else now - timedelta(days=1)
+    hi = now + timedelta(days=PREVIEW_DAYS)
+    try:
+        r = await client.get(TV_URL, params={"from": lo.strftime("%Y-%m-%dT%H:%M:%S.000Z"), "to": hi.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                                             "countries": TV_COUNTRIES},
+                             headers={"User-Agent": "Fluxbridge/1.0", "Origin": "https://www.tradingview.com", "Referer": "https://www.tradingview.com/"},
+                             timeout=15.0)
+        r.raise_for_status()
+        rows = _normalize_tv(r.json())
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"preview: {type(exc).__name__}: {exc}"[:160])
+        return []
+    return [e for e in rows if not after or e["at"] > after]
+
+
 async def _refresh_now() -> dict[str, Any]:
     global _events, _fetched_at, _feed_error
     raw: list[Any] = []
@@ -163,6 +213,8 @@ async def _refresh_now() -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001
             errors.append(f"{url.rsplit('/', 1)[-1]}: {type(exc).__name__}: {exc}"[:160])
     events = _normalize_feed(raw)
+    weekly_to = events[-1]["at"] if events else None
+    events = events + await _fetch_preview(client, weekly_to, errors)
     if events:
         if not _events:
             _load_cached()
@@ -185,7 +237,8 @@ def _merge(old: list[dict[str, Any]], new: list[dict[str, Any]]) -> list[dict[st
     old ones, older weeks stay (up to KEEP_DAYS) so the calendar keeps a history."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=KEEP_DAYS)).isoformat()
     by_key = {_key(e): e for e in old if e["at"] >= cutoff}
-    # a week the feed re-delivers replaces its whole span (events get rescheduled / removed)
+    # a span the sources re-deliver replaces its whole span (events get rescheduled /
+    # removed); the weekly rows win over a preview of the same days
     if new:
         lo, hi = new[0]["at"][:10], new[-1]["at"][:10]
         by_key = {k: e for k, e in by_key.items() if not (lo <= e["at"][:10] <= hi)}
@@ -230,7 +283,7 @@ def windows(area_id: int, *, hours: float = 72.0, now: Optional[datetime] = None
     lo, hi = now - timedelta(hours=6), now + timedelta(hours=hours)
     before, after = timedelta(minutes=s["before"]), timedelta(minutes=s["after"])
     out = []
-    candidates = [dict(e, source="feed") for e in _events
+    candidates = [dict(e, source=e.get("source") or "feed") for e in _events
                   if e["currency"] in s["currencies"] and e["impact"] in s["impacts"]]
     candidates += [{"title": m["title"], "currency": "", "impact": "Manual", "at": m["at"], "source": "manual"} for m in s["manual"]]
     for e in candidates:
@@ -258,7 +311,7 @@ def calendar(area_id: int, *, start: datetime, end: datetime, currencies: Option
     before, after = timedelta(minutes=s["before"]), timedelta(minutes=s["after"])
     q = query.strip().lower()
     out = []
-    rows = [dict(e, source="feed") for e in _events]
+    rows = [dict(e, source=e.get("source") or "feed") for e in _events]
     rows += [{"title": m["title"], "currency": "", "impact": "Manual", "at": m["at"], "forecast": "", "previous": "", "source": "manual"} for m in s["manual"]]
     for e in rows:
         at = _parse_ts(e["at"])
@@ -338,6 +391,8 @@ def status(area_id: Optional[int] = None) -> dict[str, Any]:
     return {"enabled": s["enabled"], "action": s["action"], "active": lock, "next": nxt,
             "feed_events": len(_events), "feed_error": _feed_error,
             "feed_from": _events[0]["at"] if _events else None, "feed_to": _events[-1]["at"] if _events else None,
+            "weekly_to": next((e["at"] for e in reversed(_events) if e.get("source") != "tv"), None),
+            "preview_events": sum(1 for e in _events if e.get("source") == "tv"),
             "feed_age_s": int(time.monotonic() - _fetched_at) if _fetched_at else None}
 
 

@@ -152,3 +152,57 @@ def test_feed_weeks_accumulate_and_a_redelivered_week_replaces_itself():
     again = news._normalize_feed([_feed(now, in_min=90, title="CPI")])
     merged2 = news._merge(merged, again)
     assert [e["title"] for e in merged2] == ["Last week NFP", "CPI"] and merged2[1]["at"] == (now + timedelta(minutes=90)).isoformat()
+
+
+# ------------------------------------------------------------ preview source
+async def test_refresh_adds_a_preview_of_the_coming_weeks(admin, monkeypatch):
+    import httpx
+    from app import http
+    now = datetime.now(timezone.utc)
+    weekly = [_feed(now, in_min=60, title="CPI m/m"), _feed(now, in_min=120, title="Retail Sales")]
+    weekly_to = weekly[-1]["date"]
+    tv = {"status": "ok", "result": [
+        {"title": "Fed Interest Rate Decision", "country": "US", "currency": "USD", "importance": 1, "date": (now + timedelta(days=5)).isoformat(), "forecast": 4.25, "previous": 4.5},
+        {"title": "Inflation Rate YoY", "country": "GB", "currency": "GBP", "importance": 0, "date": (now + timedelta(days=6)).isoformat()},
+        {"title": "already covered", "country": "US", "currency": "USD", "importance": 1, "date": (now + timedelta(minutes=90)).isoformat()},   # inside the weekly span
+        {"title": "noise", "country": "US", "currency": "USD", "importance": -1, "date": (now + timedelta(days=7)).isoformat()},
+    ]}
+
+    def handler(req):
+        if "faireconomy" in req.url.host:
+            return httpx.Response(200, json=weekly)
+        assert req.url.host == "economic-calendar.tradingview.com" and req.headers["origin"] == "https://www.tradingview.com"
+        return httpx.Response(200, json=tv)
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(http, "client", lambda name: client)
+    r = await news.refresh(force=True)
+    assert r["error"] == "" and r["events"] == 5
+    titles = [(e["title"], e.get("source")) for e in news._events]
+    assert ("CPI m/m", None) in titles and ("Fed Interest Rate Decision", "tv") in titles and ("noise", "tv") in titles
+    assert not any(t == "already covered" for t, _ in titles)                 # the weekly file owns its own span
+    fed = next(e for e in news._events if e["title"] == "Fed Interest Rate Decision")
+    assert fed["impact"] == "High" and fed["currency"] == "USD" and fed["forecast"] == "4.25"
+    st = news.status(1)
+    assert st["preview_events"] == 3 and st["weekly_to"] == news._parse_ts(weekly_to).isoformat()
+    rows = news.calendar(1, start=now, end=now + timedelta(days=10))
+    assert [r["source"] for r in rows if r["title"] == "Fed Interest Rate Decision"] == ["tv"]
+    # the weekly file catching up replaces the preview rows of that span
+    weekly[:] = [_feed(now + timedelta(days=5), in_min=0, title="FOMC Statement")]
+    r = await news.refresh(force=True)
+    assert not any(e["title"] == "Fed Interest Rate Decision" for e in news._events)
+    assert any(e["title"] == "FOMC Statement" for e in news._events) and any(e["title"] == "CPI m/m" for e in news._events)
+
+
+async def test_preview_failure_keeps_the_weekly_rows(admin, monkeypatch):
+    import httpx
+    from app import http
+    now = datetime.now(timezone.utc)
+
+    def handler(req):
+        if "faireconomy" in req.url.host:
+            return httpx.Response(200, json=[_feed(now, in_min=60)])
+        return httpx.Response(503, text="down")
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(http, "client", lambda name: client)
+    r = await news.refresh(force=True)
+    assert r["events"] == 1 and "preview" in r["error"]

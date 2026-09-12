@@ -4,6 +4,14 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.65
+- **Calendar shows this and next week.** The weekly file stops at Sunday, so the coming
+  weeks (15 days) are previewed from TradingView's public calendar endpoint and marked
+  *preview* until the weekly file delivers them on Sunday evening — then its rows replace
+  the preview. The default range is *This & next week* (Monday to the following Sunday);
+  the news lock also sees preview events. Filters are compact toggle chips on one row
+  each instead of checkbox boxes.
+
 ## 5.0.0-alpha.64
 - **Broker-neutral wording.** Texts that applied to every broker but said "Tradovate"
   are generic now: the logins card (per-broker instructions for Tradovate, Rithmic,
