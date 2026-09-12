@@ -229,7 +229,6 @@ def clean_subscriber_accounts(raw: Any, area_id: int, *, exclude_sub_id: Optiona
     from ..routers.accounts import trade_accounts_overview
     with context.use_area(area_id):
         known = trade_accounts_overview()
-        s = config.load_settings()
     by_key = {(str(a.get("lid") or ""), str(a["spec"])): a for a in known}
     by_spec = {str(a["spec"]): a for a in known}
     out: list[dict[str, Any]] = []

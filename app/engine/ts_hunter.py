@@ -13,8 +13,8 @@ import time
 import asyncio
 from typing import Any
 
-from .. import alerts, config, state
-from ..tradovate import TradovateError, _fire
+from .. import config, events, state
+from ..tradovate import TradovateError
 from .common import _close_contract, _collect_entries, _lock, _opposite, OrdersLeftWorking, _place_stop_with_retry, _price, _resize_stop, _signal_qty, SignalError, _untrack_after_close
 from ..sizing import account_qty
 
@@ -89,7 +89,7 @@ async def handle_entry(payload, side, root, target, trade_id, executors, active_
         f"(trade {trade_id}) on {len(acct_state)}/{len(executors)} account(s): {', '.join(acct_state)}"
     )
     if acct_state and not tag:
-        _fire(alerts.trade_executed(webhook.get("name", "?"), side, contract, list(acct_state), settings=s))   # never wait for SMTP
+        events.emit("trade.executed", webhook=webhook.get("name", "?"), action=side, contract=contract, accounts=list(acct_state), settings=s)
     return {"status": "ok", "action": "signal", "contract": contract, "trade_id": trade_id,
             "accounts": summary, "orders": orders, "simulated": tag != ""}
 
@@ -226,8 +226,8 @@ async def handle_full_close(payload, trade_id, target, executors, active_map, ta
         if errors:
             detail = "; ".join(errors)
             state.log_event("error", f"{tag}{ex.name}: the trade's stop on {contract} could not be cancelled after the close: {detail} — cancel it by hand")
-            _fire(alerts.execution_problem(f"Orders left working on {ex.name}",
-                                           f"{contract}: trade {trade_id} was closed but its stop could not be cancelled: {detail[:300]}"))
+            events.emit("execution.problem", title=f"Orders left working on {ex.name}",
+                        message=f"{contract}: trade {trade_id} was closed but its stop could not be cancelled: {detail[:300]}")
             raise OrdersLeftWorking(f"stop remains after closing trade {trade_id} on {contract}: {detail}")
         return cancelled
 
@@ -274,6 +274,6 @@ async def _report_untracked(executors, tracked_names, tag, target, trade_id) -> 
     if holding:
         state.log_event("warn", f"{tag}{', '.join(holding)} hold(s) {target} without a record of trade {trade_id} "
                                 "(lost entry answer, manual position or another trade) — left open by the isolated full_close")
-        _fire(alerts.execution_problem("Untracked position left open",
-                                       f"{target}: full_close of trade {trade_id} closed only its own quantity; {', '.join(holding)} still hold(s) a position. Close it by hand if it belongs to this trade."))
+        events.emit("execution.problem", title="Untracked position left open",
+                    message=f"{target}: full_close of trade {trade_id} closed only its own quantity; {', '.join(holding)} still hold(s) a position. Close it by hand if it belongs to this trade.")
     return holding

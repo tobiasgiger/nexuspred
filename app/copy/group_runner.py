@@ -5,7 +5,7 @@ import json
 import time
 from datetime import datetime, timezone
 from typing import Any, Optional
-from .. import alerts, config, context, db, history, news, risk, tradovate
+from .. import config, context, db, events, history, news, risk, tradovate
 from . import feed as leader_feed
 from .orders import OrderMirror
 from ..engine.common import _base_root
@@ -193,7 +193,7 @@ class GroupRunner:
         async def run() -> None:
             try:
                 with context.use_area(area_id if area_id is not None else self.area_id):
-                    await alerts.copy_alert(title, message, email=email)
+                    await events.emit_async("copy.alert", title=title, message=message, email=email)
             except Exception:  # noqa: BLE001
                 pass
         tradovate._fire(run())

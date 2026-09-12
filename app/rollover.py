@@ -36,7 +36,7 @@ import calendar
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
-from . import alerts, config, context, state
+from . import config, context, events, state
 
 MONTH_CODES = {"F": 1, "G": 2, "H": 3, "J": 4, "K": 5, "M": 6,
                "N": 7, "Q": 8, "U": 9, "V": 10, "X": 11, "Z": 12}
@@ -330,7 +330,7 @@ async def check_area(area_id: int, *, force: bool = False, today: Optional[date]
                                 f"suggested {w['next']}")
             if s.get("alert_on_rollover", True):
                 try:
-                    await alerts.contract_rollover(_message(fresh))
+                    await events.emit_async("rollover.due", message=_message(fresh))
                 except Exception as exc:  # noqa: BLE001
                     state.log_event("warn", f"rollover alert failed: {exc}")
             for w in fresh:

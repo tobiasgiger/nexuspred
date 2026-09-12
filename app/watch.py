@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from . import alerts, config, context, db, relay, state
-from .tradovate import _fire
+from . import events as bus
 
 # area → (account_id, contract_id) → {"qty", "price", "symbol", "account", "opened_at"}
 _positions: dict[int, dict[tuple[int, int], dict[str, Any]]] = {}
@@ -173,20 +173,20 @@ async def observe_area(area_id: int, sessions: list[Any], snapshots: list[dict[s
             if not alerts.account_alerts_on(ev["account"], s):
                 continue  # tracked, but this account is not on the alert list
             if ev["kind"] == "opened" and want_open:
-                _fire(alerts.trade_opened(ev["account"], ev["symbol"], _direction(ev["qty"]), abs(ev["qty"]), ev.get("price")))
+                bus.emit("position.opened", account=ev["account"], symbol=ev["symbol"], direction=_direction(ev["qty"]), qty=abs(ev["qty"]), price=ev.get("price"))
             elif ev["kind"] == "added" and want_open:
-                _fire(alerts.position_added(ev["account"], ev["symbol"], _direction(ev["qty"]), ev["added"], abs(ev["qty"])))
+                bus.emit("position.added", account=ev["account"], symbol=ev["symbol"], direction=_direction(ev["qty"]), added=ev["added"], total=abs(ev["qty"]))
             elif ev["kind"] == "reduced" and want_close:
-                _fire(alerts.trade_closed(ev["account"], ev["symbol"], _direction(ev["qty"]), abs(ev["qty"]) - ev["remaining"],
-                                          ev.get("pnl"), ev.get("duration", ""), remaining=ev["remaining"]))
+                bus.emit("position.closed", account=ev["account"], symbol=ev["symbol"], direction=_direction(ev["qty"]), qty=abs(ev["qty"]) - ev["remaining"],
+                            pnl=ev.get("pnl"), duration=ev.get("duration", ""), remaining=ev["remaining"])
             elif ev["kind"] == "closed":
                 closes = _closed_today.setdefault(area_id, [])
                 closes.append({"account": ev["account"], "symbol": ev["symbol"], "pnl": ev.get("pnl")})
                 if len(closes) > CLOSES_KEPT:
                     del closes[:-CLOSES_KEPT]           # no daily summary configured: never grow without bound
                 if want_close:
-                    _fire(alerts.trade_closed(ev["account"], ev["symbol"], _direction(ev["qty"]), abs(ev["qty"]),
-                                              ev.get("pnl"), ev.get("duration", "")))
+                    bus.emit("position.closed", account=ev["account"], symbol=ev["symbol"], direction=_direction(ev["qty"]), qty=abs(ev["qty"]),
+                                pnl=ev.get("pnl"), duration=ev.get("duration", ""), remaining=0)
     return events
 
 
@@ -223,9 +223,9 @@ async def observe_agents(area_id: int, settings: Optional[dict[str, Any]] = None
                 continue
             known[aid] = online
             if online and s.get("alert_on_agent_restored", True):
-                await alerts.agent_restored(agent["name"])
+                await bus.emit_async("agent.restored", name=agent["name"])
             elif not online and s.get("alert_on_agent_lost", True):
-                await alerts.agent_lost(agent["name"], agent.get("last_ip") or "")
+                await bus.emit_async("agent.lost", name=agent["name"], last_ip=agent.get("last_ip") or "")
     for aid in [a for a in known if a not in seen]:
         known.pop(aid, None)
 
@@ -263,7 +263,7 @@ async def maybe_daily_summary(area_id: int, settings: Optional[dict[str, Any]] =
     summary = state.pnl(area_id)
     closes = _closed_today.pop(area_id, [])
     with context.use_area(area_id):
-        await alerts.daily_summary(summary, closes, today)
+        await bus.emit_async("daily.summary", pnl=summary, closes=closes, day=today)
     return True
 
 

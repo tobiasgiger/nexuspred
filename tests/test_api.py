@@ -318,7 +318,7 @@ async def test_webhook_ingress_routes_to_owning_area(admin, anon_client):
 async def test_webhook_failure_logs_error_and_alerts(admin, anon_client, monkeypatch):
     called = []
 
-    async def fake_failed(name, reason):
+    async def fake_failed(name, reason, **kw):
         called.append((name, reason))
 
     monkeypatch.setattr("app.alerts.webhook_failed", fake_failed)

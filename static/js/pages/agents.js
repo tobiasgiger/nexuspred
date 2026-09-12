@@ -81,7 +81,7 @@ export default {
         } }, icon("edit")),
         h("button", { type: "button", class: "btn btn-ghost btn-sm", title: t("Revoke"), onClick: async () => {
           if (!(await confirmDialog({ title: t("Revoke agent \"{name}\"?", { name: a.name }), body: t("Its token stops working immediately. Logins assigned to it will fail until you re-assign them."), confirmText: t("Revoke"), danger: true }))) return;
-          try { await api.del(`/api/agents/${a.id}`); toast("Agent revoked", "success"); load(); } catch (e) { toast(e.message, "error"); }
+          try { await api.del(`/api/agents/${a.id}`); toast(t("Agent revoked"), "success"); load(); } catch (e) { toast(e.message, "error"); }
         } }, icon("trash"))) },
     ] });
 

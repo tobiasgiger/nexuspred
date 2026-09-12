@@ -15,7 +15,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from .. import config, context, db, marketplace, news, sizing, state, trade_window
+from .. import config, context, db, marketplace, news, settings_schema, sizing, state, trade_window
 from .core import validate_settings
 
 router = APIRouter(prefix="/api/settings", tags=["settings-io"])
@@ -24,20 +24,8 @@ FORMAT = 1
 MAX_WEBHOOKS = 200
 # keys that travel; everything else (token_accounts, secrets, runtime state,
 # copy groups bound to this bridge's login ids) stays behind
-EXPORT_KEYS = (
-    "default_qty", "tp_qty", "entry_order_type", "tp_order_type", "sl_order_type", "breakeven_to_entry",
-    "allowed_symbols", "symbol_map", "webhooks",
-    "health_check_interval", "pnl_poll_seconds",
-    "journal_auto_import", "journal_import_time", "journal_timezone", "journal_history_days", "journal_fee_per_side",
-    "alert_discord_enabled", "alert_discord_mention_everyone", "alert_email_enabled", "alert_email_to",
-    "alert_smtp_host", "alert_smtp_port", "alert_smtp_username", "alert_push_enabled", "alert_accounts",
-    "alert_on_connection_lost", "alert_on_connection_restored", "alert_on_trade_executed", "alert_on_trade_opened",
-    "alert_on_trade_closed", "alert_on_agent_lost", "alert_on_agent_restored", "alert_on_risk", "alert_on_copy",
-    "alert_daily_summary", "daily_summary_time", "alert_on_webhook_failed", "alert_on_discord_lost",
-    "alert_on_discord_restored", "alert_on_rollover", "rollover_warn_days", "discord_health_grace",
-    "news_lock", "ui_language", "heartbeat_interval", "auto_check_updates",
-)
-# never exported even if listed above by mistake: a ping URL is a capability
+# what travels: every key the schema marks portable and not secret (see app/settings_schema.py)
+EXPORT_KEYS = settings_schema.PORTABLE_KEYS
 SECRET_KEYS = set(config.SECRET_FIELDS) | {"webhook_secret", "discord_user_token", "heartbeat_url"}
 _PORTABLE_KEYS = tuple(k for k in EXPORT_KEYS if k in config.DEFAULT_SETTINGS and k not in SECRET_KEYS)
 
@@ -118,18 +106,10 @@ async def _validate(doc: Any, area_id: int) -> dict[str, Any]:
             raise HTTPException(status_code=400, detail="symbol_map must map symbol names to contracts")
     if "allowed_symbols" in incoming and not isinstance(incoming["allowed_symbols"], (list, str)):
         raise HTTPException(status_code=400, detail="allowed_symbols must be a list")
-    for k in ("default_qty", "tp_qty", "health_check_interval", "pnl_poll_seconds", "journal_history_days",
-              "rollover_warn_days", "discord_health_grace", "heartbeat_interval", "alert_smtp_port"):
-        if k in incoming:
-            try:
-                incoming[k] = int(incoming[k])
-            except (TypeError, ValueError) as exc:
-                raise HTTPException(status_code=400, detail=f"{k} must be a number") from exc
-    for k in _PORTABLE_KEYS:
-        if k in incoming and isinstance(config.DEFAULT_SETTINGS[k], bool):
-            incoming[k] = bool(incoming[k])
-        elif k in incoming and isinstance(config.DEFAULT_SETTINGS[k], str) and not isinstance(incoming[k], str):
-            raise HTTPException(status_code=400, detail=f"{k} must be text")
+    try:                                                  # the schema types and bounds every key (webhooks / news_lock were normalised above)
+        incoming.update(settings_schema.coerce({k: v for k, v in incoming.items() if k not in ("webhooks", "news_lock")}, allow_protected=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     await validate_settings(incoming)                     # the same checks the settings form runs
     return incoming
 

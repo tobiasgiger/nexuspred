@@ -1,6 +1,7 @@
 /* Settings → Discord Listener: self-bot token, dry-run, channels and their targets. */
 import { h, card, toast, confirmDialog, pageHead, clear } from "../ui.js";
 import { icon } from "../icons.js";
+import { passwordInput } from "../components/form.js";
 import { api } from "../api.js";
 import { store } from "../store.js";
 import { actions } from "../actions.js";
@@ -12,8 +13,8 @@ export default {
   render(root, { navigate }) {
     const enabled = h("input", { type: "checkbox", class: "switch" });
     const dryRun = h("input", { type: "checkbox", class: "switch" });
-    const token = h("input", { type: "password", placeholder: t("your personal Discord user token"), autocomplete: "off" });
-    const tokenEye = h("button", { type: "button", class: "btn btn-ghost btn-icon", title: t("Show / hide"), onClick: () => { const show = token.type === "password"; token.type = show ? "text" : "password"; tokenEye.replaceChildren(icon(show ? "eyeOff" : "eye")); } }, icon("eye"));
+    const tokenField = passwordInput({ placeholder: t("your personal Discord user token") });
+    const token = tokenField.input;
     const channels = h("div");
     let dirty = false;
     const markDirty = () => { dirty = true; hint.textContent = t("Unsaved changes"); hint.className = "save-hint"; };
@@ -93,7 +94,7 @@ export default {
         const cfg = await api.post("/api/discord/config", { discord_enabled: enabled.checked, discord_dry_run: dryRun.checked, discord_user_token: token.value, discord_channels: collect() });
         store.set("discordConfig", cfg);
         paint(cfg);
-        toast("Discord settings saved", "success");
+        toast(t("Discord settings saved"), "success");
         actions.refreshDiscordStatus();
       } catch (e) { hint.textContent = e.message; hint.className = "save-hint err"; toast(e.message, "error"); }
     } }, icon("check"), t("Save Discord settings"));
@@ -105,7 +106,7 @@ export default {
       card({ title: t("Listener") },
         h("label", { class: "switch-row" }, h("span", null, t("Enable listener"), h("small", null, t("Connects to the Discord Gateway with the token below."))), enabled),
         h("label", { class: "switch-row" }, h("span", null, t("Global dry-run"), h("small", null, t("Parse and display only — send to no webhook."))), dryRun),
-        h("div", { class: "field", style: "margin-top:14px" }, h("label", null, t("Discord user token (self-bot)")), h("div", { style: "display:flex;gap:6px;align-items:center" }, token, tokenEye),
+        h("div", { class: "field", style: "margin-top:14px" }, h("label", null, t("Discord user token (self-bot)")), h("div", { style: "display:flex;gap:6px;align-items:center" }, tokenField.el),
           h("div", { class: "field-hint" }, t("Logs in as a normal client using your personal token. Leave the masked value to keep the stored token. Get it with the extractor under Tools.")))),
       h("div", { class: "page-head", style: "margin-top:4px" }, h("div", null, h("h1", { style: "font-size:15px" }, t("Channels")), h("p", { class: "lead" }, t("Each channel = a Discord channel ID with one or more targets. Every enabled target receives each signal in parallel; bridge webhooks are dispatched in-process, custom URLs get the secret as X-Webhook-Secret."))),
         h("div", { class: "actions" }, h("button", { type: "button", class: "btn", onClick: () => { const emptyEl = channels.querySelector(".empty-state"); if (emptyEl) emptyEl.remove(); channels.append(channelCard({ enabled: true, targets: [] })); markDirty(); } }, icon("plus"), t("Add channel")))),

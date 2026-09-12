@@ -125,15 +125,14 @@ class BrokerSessionBase:
     fingerprint_of: Any = staticmethod(lambda entry: "")
 
     async def _set_connected(self, connected: bool, **fields: Any) -> None:
-        from . import alerts, state
-        from .tradovate import _fire
+        from . import events, state
         had_prior = state.has_session(self.name)
         was = state.session_status(self.name).get("connected") if had_prior else None
         state.set_session_status(self.name, connected=connected, agent_id=0, broker=self.kind, **fields)
         if had_prior and was and not connected:
-            _fire(alerts.connection_lost(self.name, self.environment, fields.get("last_error", ""), broker=self.kind))
+            events.emit("connection.lost", account=self.name, environment=self.environment, error=fields.get("last_error", ""), broker=self.kind)
         elif had_prior and not was and connected:
-            _fire(alerts.connection_restored(self.name, self.environment, broker=self.kind))
+            events.emit("connection.restored", account=self.name, environment=self.environment, broker=self.kind)
 
     def _refresh_fingerprint(self) -> None:
         from . import config

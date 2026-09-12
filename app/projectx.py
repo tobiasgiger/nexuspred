@@ -30,15 +30,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-import zlib
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
 import httpx
 
-from . import alerts, broker, config, context, http, risk, state
-from .tradovate import OrderOutcomeUnknown, RateLimited, TradovateError, _fire
+from . import broker, config, events, http, state
+from .tradovate import OrderOutcomeUnknown, RateLimited, TradovateError
 
 SNAPSHOT_TTL_S = 3.0              # one Position/searchOpen and Account/search per login per P&L tick, not per account
 
@@ -577,7 +576,7 @@ class ProjectXSession(broker.BrokerSessionBase):
                              "order_type": order_type, "price": sent_price, "stop_price": sent_stop, "order_id": None,
                              "status": "unknown", "raw": {"errorText": "timeout"}})
             state.log_event("error", unknown)
-            _fire(alerts.execution_problem(f"Order outcome unknown on {name}", unknown))
+            events.emit("execution.problem", title=f"Order outcome unknown on {name}", message=unknown)
             raise OrderOutcomeUnknown(unknown) from None
         result = {"action": action, "symbol": str(symbol).upper(), "account": name, "account_id": aid, "qty": qty, "order_type": order_type,
                   "price": sent_price, "stop_price": sent_stop, "order_id": int(data["orderId"]) if not failure else None,

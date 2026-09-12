@@ -40,7 +40,7 @@ import threading
 import time
 from typing import Any
 
-from . import alerts, config, context, news, state, trade_window
+from . import config, context, events, news, state, trade_window
 from .engine import bracket, manage, simple, ts_hunter
 from .engine.common import (  # noqa: F401 - re-exported for callers/tests
     SignalError,
@@ -180,7 +180,7 @@ def accept(payload: dict[str, Any], webhook: dict[str, Any], *, forward: bool = 
     if not passphrase_ok(payload, s):
         state.log_event("error", "Signal rejected: invalid passphrase", payload=payload)
         state.log_signal(payload, result="error: Invalid passphrase", webhook=name)
-        _spawn(alerts.webhook_failed(name or "?", "Invalid passphrase", settings=s))
+        events.emit("signal.failed", webhook=name or "?", reason="Invalid passphrase", settings=s)
         return
     _spawn(process_background(payload, webhook, settings=s))
     if forward:
@@ -218,14 +218,17 @@ async def process_background(payload: dict[str, Any], webhook: dict[str, Any], *
     try:
         result = await process(payload, webhook, trusted=trusted, settings=settings)
         state.log_signal(payload, result=result.get("status", "ok"), webhook=name)
+        events.emit("signal.done", webhook=name, status=result.get("status", "ok"), reason=result.get("reason", ""), action=result.get("action", ""))
     except (SignalError, TradovateError) as exc:
         state.log_event("error", f"Signal error: {exc}", payload=payload)
         state.log_signal(payload, result=f"error: {exc}", webhook=name)
-        await alerts.webhook_failed(name, str(exc))
+        events.emit("signal.done", webhook=name, status="error", reason=str(exc)[:200], action="")
+        await events.emit_async("signal.failed", webhook=name, reason=str(exc), settings=settings)
     except Exception as exc:  # noqa: BLE001
         state.log_event("error", f"Signal failed: {exc}", payload=payload)
         state.log_signal(payload, result=f"error: {exc}", webhook=name)
-        await alerts.webhook_failed(name, str(exc))
+        events.emit("signal.done", webhook=name, status="error", reason=str(exc)[:200], action="")
+        await events.emit_async("signal.failed", webhook=name, reason=str(exc), settings=settings)
 
 
 # ------------------------------------------------------------ entry point

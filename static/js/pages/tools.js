@@ -45,14 +45,14 @@ export default {
     const testResult = h("pre", { class: "result-box hidden" });
     const sendBtn = h("button", { type: "button", class: "btn btn-primary", onClick: async () => {
       const w = selected();
-      if (!w) return toast("Create a webhook first", "error");
+      if (!w) return toast(t("Create a webhook first"), "error");
       let payload;
-      try { payload = JSON.parse(payloadTa.value); } catch { return toast("Payload is not valid JSON", "error"); }
+      try { payload = JSON.parse(payloadTa.value); } catch { return toast(t("Payload is not valid JSON"), "error"); }
       sendBtn.disabled = true;
       try {
         const r = await api.post(`/api/webhooks/${w.id}/test`, payload);
         testResult.textContent = JSON.stringify(r, null, 2); testResult.classList.remove("hidden");
-        toast("Signal processed", "success");
+        toast(t("Signal processed"), "success");
         actions.refreshOrders(); actions.refreshLogs(); actions.refreshStatus();
       } catch (e) {
         testResult.textContent = t("Error: ") + e.message; testResult.classList.remove("hidden");
@@ -70,13 +70,13 @@ export default {
       const dsResult = h("pre", { class: "result-box" }, "—");
       const dsSend = h("button", { type: "button", class: "btn btn-primary", onClick: async () => {
         let embed;
-        try { embed = JSON.parse(embedTa.value); } catch { return toast("Embed is not valid JSON", "error"); }
+        try { embed = JSON.parse(embedTa.value); } catch { return toast(t("Embed is not valid JSON"), "error"); }
         const channel_id = chanInp.value.trim();
-        if (!channel_id) return toast("Enter a channel ID", "error");
+        if (!channel_id) return toast(t("Enter a channel ID"), "error");
         try {
           const r = await api.post("/api/discord/test", { channel_id, embed, force: true });
           dsResult.textContent = JSON.stringify(r, null, 2);
-          toast("Test embed processed", "success");
+          toast(t("Test embed processed"), "success");
           actions.loadDiscordFeed();
         } catch (e) { dsResult.textContent = t("Error: ") + e.message; toast(e.message, "error"); }
       } }, icon("send"), t("Send test embed"));
@@ -90,7 +90,7 @@ export default {
 
     // ---- Bookmarklets
     const bm = (key, label) => h("div", { class: "bm-row" },
-      h("a", { class: "btn btn-secondary bm-link", href: BOOKMARKLETS[key], draggable: "true", onClick: (e) => { e.preventDefault(); toast("Drag this button to your bookmarks bar, then click it on the site."); } }, "◈ " + label),
+      h("a", { class: "btn btn-secondary bm-link", href: BOOKMARKLETS[key], draggable: "true", onClick: (e) => { e.preventDefault(); toast(t("Drag this button to your bookmarks bar, then click it on the site.")); } }, "◈ " + label),
       copyButton(() => decodeURIComponent(BOOKMARKLETS[key]), "Copy code"));
 
     root.append(

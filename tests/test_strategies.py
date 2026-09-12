@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app import config, context, signals, state
+from app import alerts, config, context, signals, state
 from app.signals import SignalError
 from tests.helpers import FakeExecutor, settle
 
@@ -32,7 +32,7 @@ def live(monkeypatch, admin):
     async def fake_trade_executed(*args, **kw):
         sent.append(args)
 
-    monkeypatch.setattr(signals.alerts, "trade_executed", fake_trade_executed)
+    monkeypatch.setattr(alerts, "trade_executed", fake_trade_executed)
 
     def use(*fakes):
         box["execs"] = list(fakes)

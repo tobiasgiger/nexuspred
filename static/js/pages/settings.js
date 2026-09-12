@@ -81,12 +81,12 @@ export const updates = {
       if (!(await confirmDialog({ title: t("Update now?"), body: t("Pull the latest version from GitHub and restart the bridge. Open positions are not affected; the dashboard reloads in a few seconds."), confirmText: t("Update & restart") }))) return;
       if (applyBtn.disabled) return;
       applyBtn.disabled = true;
-      toast("Updating…");
+      toast(t("Updating…"));
       try {
         const r = await api.post("/api/update/apply");
         toast(r.message, "success");
         setTimeout(() => window.location.reload(), 5000);
-      } catch (e) { toast("Update failed: " + e.message, "error"); applyBtn.disabled = false; }
+      } catch (e) { toast(t("Update failed: {error}", { error: e.message }), "error"); applyBtn.disabled = false; }
     } }, t("Update & restart"));
     const checkBtn = h("button", { type: "button", class: "btn btn-secondary", onClick: () => actions.checkUpdate() }, icon("refresh"), t("Check now"));
     const backupLink = h("a", { class: "btn btn-ghost", href: "/api/update/backup", download: "", title: t("The whole database as one SQLite file — restore it on another server with: fluxbridge restore FILE") }, icon("download"), t("Download backup"));
@@ -157,7 +157,7 @@ function alertAccountsPanel() {
     try {
       await actions.saveSettings({ alert_accounts: allMode() ? [] : [...selected] });
       hint.textContent = allMode() ? t("Saved — alerts for every account.") : t("Saved — alerts for {n} account(s).", { n: selected.size });
-      hint.className = "save-hint ok"; toast("Alert accounts saved", "success");
+      hint.className = "save-hint ok"; toast(t("Alert accounts saved"), "success");
     } catch (e) { hint.textContent = e.message; hint.className = "save-hint err"; toast(e.message, "error"); }
   } }, t("Save accounts"));
   const el = h("div", null,
@@ -250,7 +250,7 @@ function pushPanel() {
       } }, icon("send")),
       h("button", { type: "button", class: "btn btn-ghost btn-sm", title: t("Remove"), onClick: async () => {
         if (!(await confirmDialog({ title: t("Remove \"{device}\"?", { device: d.device || t("this device") }), body: t("The device stops receiving push notifications until it is enabled again."), confirmText: t("Remove"), danger: true }))) return;
-        try { await api.del("/api/push/subscribe", { id: d.id }); toast("Device removed", "success"); load(); refreshThisDevice(); } catch (e) { toast(e.message, "error"); }
+        try { await api.del("/api/push/subscribe", { id: d.id }); toast(t("Device removed"), "success"); load(); refreshThisDevice(); } catch (e) { toast(e.message, "error"); }
       } }, icon("trash"))) },
   ] });
 
@@ -292,18 +292,18 @@ function pushPanel() {
   }
   enableBtn.addEventListener("click", async () => {
     enableBtn.disabled = true; status.textContent = t("Asking for permission…");
-    try { await enablePush(); toast("Push enabled on this device", "success"); }
+    try { await enablePush(); toast(t("Push enabled on this device"), "success"); }
     catch (e) { toast(e.message, "error"); status.textContent = e.message; status.className = "hint err"; enableBtn.disabled = false; return; }
     await load(); await refreshThisDevice();
   });
   disableBtn.addEventListener("click", async () => {
     disableBtn.disabled = true;
-    try { await disablePush(); toast("Push disabled on this device", "success"); } catch (e) { toast(e.message, "error"); }
+    try { await disablePush(); toast(t("Push disabled on this device"), "success"); } catch (e) { toast(e.message, "error"); }
     disableBtn.disabled = false;
     await load(); await refreshThisDevice();
   });
   testAllBtn.addEventListener("click", async () => {
-    try { const r = await api.post("/api/push/test"); toast(`Test push: ${r.sent} sent, ${r.failed} failed, ${r.gone} removed`, r.sent ? "success" : "error"); load(); }
+    try { const r = await api.post("/api/push/test"); toast(t("Test push: {sent} sent, {failed} failed, {gone} removed", { sent: r.sent, failed: r.failed, gone: r.gone }), r.sent ? "success" : "error"); load(); }
     catch (e) { toast(e.message, "error"); }
   });
   const diagOut = h("pre", { hidden: true, style: "white-space:pre-wrap;word-break:break-word;font-size:.78em;background:rgba(127,127,127,.14);color:inherit;padding:10px 12px;border-radius:8px;margin-top:10px;max-height:50vh;overflow:auto" });
@@ -334,8 +334,8 @@ export const alerts = {
       try {
         const r = await api.post("/api/alerts/test");
         const on = Object.entries(r.channels || {}).filter(([, v]) => v).map(([k]) => k);
-        if (r.status === "none") { testHint.textContent = t("No channel enabled — turn on Discord, email or push, save, then test."); testHint.className = "save-hint err"; toast("No alert channel is enabled", "error"); }
-        else { testHint.textContent = t("Sent to: {channels}. Check that it arrived.", { channels: on.join(", ") }); testHint.className = "save-hint ok"; toast("Test alert sent", "success"); }
+        if (r.status === "none") { testHint.textContent = t("No channel enabled — turn on Discord, email or push, save, then test."); testHint.className = "save-hint err"; toast(t("No alert channel is enabled"), "error"); }
+        else { testHint.textContent = t("Sent to: {channels}. Check that it arrived.", { channels: on.join(", ") }); testHint.className = "save-hint ok"; toast(t("Test alert sent"), "success"); }
       } catch (e) { testHint.textContent = e.message; testHint.className = "save-hint err"; toast(e.message, "error"); }
     } }, icon("bell"), t("Send test alert"));
     const accountsPanel = alertAccountsPanel();
@@ -417,7 +417,7 @@ export const symbols = {
       return map;
     };
     const saveBtn = h("button", { type: "button", class: "btn btn-primary", onClick: async () => {
-      try { await actions.saveSettings({ symbol_map: collect() }); toast("Symbol mapping saved", "success"); loadRollover(true); }
+      try { await actions.saveSettings({ symbol_map: collect() }); toast(t("Symbol mapping saved"), "success"); loadRollover(true); }
       catch (e) { toast(e.message, "error"); }
     } }, icon("check"), t("Save mapping"));
 
@@ -447,7 +447,7 @@ export const symbols = {
     }
     async function applyRollover() {
       const items = [...rollBody.querySelectorAll(".ro-on:checked")].map((cb) => ({ tv_symbol: cb.dataset.tv, contract: (rollBody.querySelector(`.ro-next[data-tv="${CSS.escape(cb.dataset.tv)}"]`).value || "").trim().toUpperCase() })).filter((it) => it.contract);
-      if (!items.length) return toast("Nothing selected", "warn");
+      if (!items.length) return toast(t("Nothing selected"), "warn");
       const ok = await confirmDialog({ title: t("Apply the rollover?"), body: h("div", null, t("The symbol map changes as follows; new signals trade the new contracts immediately. Open positions and working orders on the old contracts are not touched."),
         h("ul", { style: "margin:8px 0 0 18px" }, items.map((it) => { const w = rollItems.find((x) => x.tv_symbol === it.tv_symbol) || {}; return h("li", null, h("code", null, it.tv_symbol), ": ", h("code", null, w.contract || "?"), " → ", h("code", null, it.contract)); }))), confirmText: t("Apply rollover") });
       if (!ok) return;
@@ -491,7 +491,7 @@ export const account = {
       hint.textContent = t("Saving…"); hint.className = "save-hint";
       try {
         await api.post("/api/account/password", { current: cur.value, new: nw.value });
-        form.reset(); hint.textContent = t("Password changed."); hint.className = "save-hint ok"; toast("Password changed", "success");
+        form.reset(); hint.textContent = t("Password changed."); hint.className = "save-hint ok"; toast(t("Password changed"), "success");
       } catch (err) { hint.textContent = err.message; hint.className = "save-hint err"; toast(err.message, "error"); }
     } },
       h("div", { class: "grid grid-2" },
@@ -576,7 +576,7 @@ export const account = {
             } }, icon("logout"), t("Sign out")),
             h("button", { type: "button", class: "btn btn-ghost", title: t("Every other browser and phone signed in to this account is logged out; this one stays."), onClick: async () => {
               if (!(await confirmDialog({ title: t("Sign out other devices?"), body: t("Every other browser or phone signed in to your account is logged out immediately. This device stays signed in."), confirmText: t("Sign out others") }))) return;
-              try { await api.post("/api/account/sessions/revoke"); toast("Other devices signed out", "success"); } catch (err) { toast(err.message, "error"); }
+              try { await api.post("/api/account/sessions/revoke"); toast(t("Other devices signed out"), "success"); } catch (err) { toast(err.message, "error"); }
             } }, t("Sign out other devices")))),
         card({ title: t("Change password") }, form)),
     );

@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app import config, context, db, http, main, signals, state, tradovate
+from app import alerts, config, context, db, http, main, signals, state, tradovate
 from app.discord_signals import dispatcher, hub, pipeline
 from tests.helpers import FakeExecutor, settle
 
@@ -302,7 +302,7 @@ def executing(area, monkeypatch):
 
     async def no_alert(*a, **k):
         pass
-    monkeypatch.setattr(signals.alerts, "trade_executed", no_alert)
+    monkeypatch.setattr(alerts, "trade_executed", no_alert)
     return fake
 
 

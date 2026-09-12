@@ -3,7 +3,7 @@ import { api } from "./api.js";
 import { store, can } from "./store.js";
 import { toast, mergeLive } from "./ui.js";
 import { setPublicOrigin } from "./templates.js";
-import { adopt as adoptLanguage, lang as currentLanguage } from "./i18n.js";
+import { t, adopt as adoptLanguage, lang as currentLanguage } from "./i18n.js";
 
 const quiet = async (fn) => { try { return await fn(); } catch (e) { return undefined; } };
 
@@ -55,26 +55,26 @@ export const actions = {
   loadTradeAccounts: () => quiet(async () => { const a = await api.get("/api/trade-accounts"); store.set("tradeAccounts", a); return a; }),
   loadTokenAccounts: () => quiet(async () => { const a = await api.get("/api/token-accounts"); store.set("tokenAccounts", a); return a; }),
   async connectAll() {
-    toast("Connecting…");
+    toast(t("Connecting…"));
     try {
       const r = await api.post("/api/connect");
       const sessions = r.sessions || [];
       const ok = sessions.filter((x) => x.connected).length;
-      toast(`Connected ${ok}/${sessions.length} account(s)`, ok ? "success" : "error");
+      toast(t("Connected {ok}/{total} account(s)", { ok, total: sessions.length }), ok ? "success" : "error");
       await Promise.all([actions.loadTradeAccounts(), actions.loadTokenAccounts(), actions.refreshStatus()]);
       return r;
     } catch (e) {
-      toast("Connect failed: " + e.message, "error");
+      toast(t("Connect failed: {error}", { error: e.message }), "error");
       return null;
     }
   },
   async healthCheck() {
-    toast("Checking connections…");
+    toast(t("Checking connections…"));
     try {
       const r = await api.get("/api/health");
       const sessions = r.sessions || [];
       const ok = sessions.filter((x) => x.connected).length;
-      toast(`${ok}/${sessions.length} account(s) healthy`, ok ? "success" : "error");
+      toast(t("{ok}/{total} account(s) healthy", { ok, total: sessions.length }), ok ? "success" : "error");
       actions.refreshStatus();
     } catch (e) { toast(e.message, "error"); }
   },

@@ -7,8 +7,8 @@ import time
 import asyncio
 from typing import Any
 
-from .. import alerts, config, state
-from ..tradovate import TradovateError, _fire
+from .. import config, events, state
+from ..tradovate import TradovateError
 from .common import _collect_entries, _lock, _opposite, _place_stop_with_retry, _price, _resize_stop, _signal_qty, SignalError, _tp_index_from_event, _trade_key
 from ..sizing import account_qty
 
@@ -102,7 +102,7 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
         f"placed on {len(acct_state)}/{len(executors)} account(s): {', '.join(acct_state)}"
     )
     if acct_state and not tag:
-        _fire(alerts.trade_executed(webhook.get("name", "?"), action, contract, list(acct_state), settings=s))   # never wait for SMTP
+        events.emit("trade.executed", webhook=webhook.get("name", "?"), action=action, contract=contract, accounts=list(acct_state), settings=s)
     return {"status": "ok", "action": action, "contract": contract,
             "accounts": summary, "orders": orders, "simulated": tag != ""}
 

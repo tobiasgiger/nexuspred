@@ -26,11 +26,10 @@ import asyncio
 import logging
 import os
 import secrets
-import zlib
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from . import alerts, broker, config, context, risk, state
+from . import broker, config, events, state
 from .tradovate import OrderOutcomeUnknown, TradovateError, _fire
 
 log = logging.getLogger(__name__)
@@ -549,7 +548,7 @@ class RithmicSession(broker.BrokerSessionBase):
                              "price": sent_price, "stop_price": sent_stop, "order_id": None, "user_tag": tag, "status": "unknown",
                              "raw": {"errorText": "timeout"}})
             state.log_event("error", unknown)
-            _fire(alerts.execution_problem(f"Order outcome unknown on {name}", unknown))
+            events.emit("execution.problem", title=f"Order outcome unknown on {name}", message=unknown)
             raise OrderOutcomeUnknown(unknown) from None
         except Exception as exc:  # noqa: BLE001
             failure, basket = f"{type(exc).__name__}: {exc}"[:200], ""

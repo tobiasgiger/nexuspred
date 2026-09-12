@@ -7,11 +7,11 @@ import { store } from "../store.js";
 import { actions } from "../actions.js";
 import { dataTable } from "../components/table.js";
 import { openDrawer, closeDrawer } from "../components/drawer.js";
+import { accountKey, routedAccountsTable } from "../components/accounts.js";
 import { STRATEGY_LABEL } from "../templates.js";
 import { sizingOf } from "../sizing.js";
 import { t } from "../i18n.js";
 
-const accountKey = (idx, spec) => `${idx}::${spec}`;
 
 /**
  * Subscribe / edit-subscription drawer.
@@ -23,29 +23,8 @@ export function openSubscriptionDrawer(item, onDone) {
   const known = store.get("tradeAccounts") || [];
   const selected = new Map(((sub && sub.accounts) || []).map((a) => [accountKey(a.token_idx, a.spec), a]));
   const enabledSw = h("input", { type: "checkbox", class: "switch", checked: sub ? !!sub.enabled : true });
-  const accTable = dataTable({
-    empty: t("No trade accounts discovered yet — add a login under Settings → Broker Accounts and Connect & Verify."),
-    columns: [
-      { label: t("Route"), render: (a) => h("input", { type: "checkbox", class: "switch acc-on", checked: !!(selected.get(accountKey(a.token_idx, a.spec)) || {}).enabled, dataset: { key: accountKey(a.token_idx, a.spec) } }) },
-      { label: t("Login"), render: (a) => a.token_name || "—" },
-      { label: t("Account"), render: (a) => h("code", null, maskAccount(a.spec) || "—") },
-      { label: t("Env"), render: (a) => tag((a.environment || "—").toUpperCase(), a.environment === "live" ? "live" : "demo") },
-      { label: t("Sizing"), render: (a) => { const sz = sizingOf(selected.get(accountKey(a.token_idx, a.spec))); return h("select", { class: "acc-mode input-sm", dataset: { key: accountKey(a.token_idx, a.spec) } },
-        h("option", { value: "same", selected: sz.mode === "same" }, t("Same (1:1)")), h("option", { value: "multiplier", selected: sz.mode === "multiplier" }, t("Multiplier")), h("option", { value: "fixed", selected: sz.mode === "fixed" }, t("Fixed"))); } },
-      { label: "×", render: (a) => h("input", { type: "number", class: "acc-mult input-sm", min: 0.01, step: 0.01, style: "width:70px", value: sizingOf(selected.get(accountKey(a.token_idx, a.spec))).multiplier, dataset: { key: accountKey(a.token_idx, a.spec) } }) },
-      { label: t("Fixed"), render: (a) => h("input", { type: "number", class: "acc-fixed input-sm", min: 1, step: 1, style: "width:64px", value: sizingOf(selected.get(accountKey(a.token_idx, a.spec))).fixed, dataset: { key: accountKey(a.token_idx, a.spec) } }) },
-      { label: t("Max"), render: (a) => h("input", { type: "number", class: "acc-max input-sm", min: 0, step: 1, style: "width:64px", title: t("0 = no cap"), value: sizingOf(selected.get(accountKey(a.token_idx, a.spec))).max_contracts, dataset: { key: accountKey(a.token_idx, a.spec) } }) },
-    ],
-  });
-  accTable.update(known);
-  const collect = () => known.map((a) => {
-    const key = accountKey(a.token_idx, a.spec);
-    const q = (cls) => accTable.tbody.querySelector(`.${cls}[data-key="${CSS.escape(key)}"]`);
-    const on = q("acc-on");
-    const sizing = { mode: q("acc-mode") ? q("acc-mode").value : "same", multiplier: Number(q("acc-mult") && q("acc-mult").value) || 1,
-      fixed: Number(q("acc-fixed") && q("acc-fixed").value) || 1, max_contracts: Number(q("acc-max") && q("acc-max").value) || 0 };
-    return { token_idx: a.token_idx, lid: a.lid || "", spec: a.spec, enabled: !!(on && on.checked), qty_multiplier: sizing.mode === "multiplier" ? sizing.multiplier : 1, sizing };
-  }).filter((a) => a.enabled);
+  const accTable = routedAccountsTable({ known, selected });
+  const collect = accTable.collect;
 
   const saveBtn = h("button", { type: "button", class: "btn btn-primary", onClick: async () => {
     const body = { enabled: enabledSw.checked, accounts: collect() };
@@ -63,7 +42,7 @@ export function openSubscriptionDrawer(item, onDone) {
   } }, icon("check"), sub ? t("Save") : t("Subscribe"));
   const unsubBtn = sub ? h("button", { type: "button", class: "btn btn-danger", onClick: async () => {
     if (!(await confirmDialog({ title: t("Unsubscribe from \"{title}\"?", { title: item.title }), body: t("Future signals from this publisher won't reach your accounts. Open positions are not touched."), confirmText: t("Unsubscribe"), danger: true }))) return;
-    try { await api.del(`/api/subscriptions/${sub.id}`); toast("Unsubscribed", "success"); closeDrawer(); if (onDone) onDone(); }
+    try { await api.del(`/api/subscriptions/${sub.id}`); toast(t("Unsubscribed"), "success"); closeDrawer(); if (onDone) onDone(); }
     catch (e) { toast(e.message, "error"); }
   } }, icon("trash"), t("Unsubscribe")) : null;
 
@@ -117,7 +96,7 @@ export function openCopySubscriptionDrawer(item, onDone) {
   }).filter(Boolean);
   const saveBtn = h("button", { type: "button", class: "btn btn-primary", onClick: async () => {
     const body = { enabled: enabledSw.checked, accounts: collect() };
-    if (!body.accounts.length) return toast("Switch on at least one account", "error");
+    if (!body.accounts.length) return toast(t("Switch on at least one account"), "error");
     saveBtn.disabled = true;
     try {
       if (sub) await api.put(`/api/subscriptions/${sub.id}`, body);
@@ -129,7 +108,7 @@ export function openCopySubscriptionDrawer(item, onDone) {
   } }, icon("check"), sub ? t("Save") : t("Follow"));
   const unsubBtn = sub ? h("button", { type: "button", class: "btn btn-danger", onClick: async () => {
     if (!(await confirmDialog({ title: t("Stop following \"{title}\"?", { title: item.title }), body: t("Your accounts leave the mirror. Positions they hold are NOT closed — flatten them yourself if you want to be flat."), confirmText: t("Stop following"), danger: true }))) return;
-    try { await api.del(`/api/subscriptions/${sub.id}`); toast("Stopped following", "success"); closeDrawer(); if (onDone) onDone(); }
+    try { await api.del(`/api/subscriptions/${sub.id}`); toast(t("Stopped following"), "success"); closeDrawer(); if (onDone) onDone(); }
     catch (e) { toast(e.message, "error"); }
   } }, icon("trash"), t("Stop following")) : null;
   openDrawer({

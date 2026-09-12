@@ -50,7 +50,7 @@ export default {
     const csvBtn = h("button", { type: "button", class: "btn", onClick: () => openCsvImport() }, icon("inbox"), t("Import CSV"));
     const dedupeBtn = h("button", { type: "button", class: "btn btn-ghost", title: t("Remove trades stored twice by different imports"), onClick: async () => {
       if (!(await confirmDialog({ title: t("Remove duplicate trades?"), body: t("Trades with the same account, symbol, side, size, prices and exit time that were imported by more than one source are collapsed into one. Notes and tags are kept."), confirmText: t("Remove duplicates") }))) return;
-      try { const r = await api.post("/api/journal/dedupe"); toast(r.removed ? `Removed ${r.removed} duplicate trade(s)` : "No duplicates found", "success"); await load(); }
+      try { const r = await api.post("/api/journal/dedupe"); toast(r.removed ? t("Removed {n} duplicate trade(s)", { n: r.removed }) : t("No duplicates found"), "success"); await load(); }
       catch (e) { toast(e.message, "error"); }
     } }, icon("trash"), t("Remove duplicates"));
     const importInfo = h("span", { class: "muted", style: "font-size:12px" }, "");
@@ -235,7 +235,7 @@ export default {
           r.error ? h("div", { class: "callout danger" }, r.error) : null,
           h("div", { class: "hint" }, t("What each Tradovate endpoint returned (counts and column names only — no prices, ids or balances). Copy this when reporting an empty import.")),
           pre),
-        foot: h("div", { class: "form-actions" }, h("button", { type: "button", class: "btn", onClick: async () => { try { await navigator.clipboard.writeText(pretty); toast("Copied", "success"); } catch (e) { toast("Copy failed", "error"); } } }, t("Copy diagnostics")),
+        foot: h("div", { class: "form-actions" }, h("button", { type: "button", class: "btn", onClick: async () => { try { await navigator.clipboard.writeText(pretty); toast(t("Copied"), "success"); } catch (e) { toast(t("Copy failed"), "error"); } } }, t("Copy diagnostics")),
           h("button", { type: "button", class: "btn btn-ghost", onClick: () => closeDrawer() }, t("Close"))) });
     }
 
@@ -248,7 +248,7 @@ export default {
       const feeInput = h("input", { class: "input", type: "number", step: "0.01", min: "0", value: "0", style: "max-width:140px" });
       const result = h("div", { class: "muted", style: "font-size:12.5px;white-space:pre-wrap" });
       const go = h("button", { type: "button", class: "btn btn-primary", onClick: async () => {
-        if (!file.files || !file.files[0]) { toast("Choose a CSV file first", "error"); return; }
+        if (!file.files || !file.files[0]) { toast(t("Choose a CSV file first"), "error"); return; }
         go.disabled = true; go.textContent = t("Importing…");
         try {
           const fd = new FormData();
@@ -261,7 +261,7 @@ export default {
           if (!res.ok) throw new Error(data.detail || res.statusText);
           result.textContent = t("{format} export: {rows} rows → {trades} trades, {new} new, {dup} already known, {skipped} rows skipped.", { format: data.format, rows: data.rows ?? data.fills, trades: data.trades, new: data.trades_new, dup: data.duplicates, skipped: data.skipped })
             + (data.skipped_rows?.length ? "\n" + data.skipped_rows.join("\n") : "");
-          toast(`${data.trades_new} new trade(s) imported`, "success");
+          toast(t("{n} new trade(s) imported", { n: data.trades_new }), "success");
           await load();
         } catch (e) { toast(e.message, "error"); result.textContent = e.message; }
         finally { go.disabled = false; go.textContent = t("Import file"); }
@@ -289,7 +289,7 @@ export default {
         try {
           const upd = await api.put(`/api/journal/trades/${tr.id}`, { note: note.value, tags: tags.value.split(",") });
           const i = tradeRows.findIndex((x) => x.id === tr.id); if (i >= 0) { tradeRows[i] = upd; trades.update(tradeRows); }
-          toast("Note saved", "success"); closeDrawer();
+          toast(t("Note saved"), "success"); closeDrawer();
         } catch (e) { toast(e.message, "error"); }
       } }, t("Save note"));
       const row = (l, v) => h("div", { class: "kv" }, h("dt", null, l), h("dd", null, v));

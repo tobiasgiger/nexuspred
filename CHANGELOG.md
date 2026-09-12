@@ -4,6 +4,29 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.75
+Restructuring round 2 — no trading behaviour change (596 tests, 33 new):
+- **Settings schema** `app/settings_schema.py`: one typed entry per setting (type, bounds,
+  choices, format, secret / protected / portable flags). `POST /api/settings` and the
+  settings-file import coerce every value through it before the specific checks run, so a
+  number where text belongs, an out-of-range quantity or an unknown key is a 400 with the
+  key named instead of a stored oddity. The export key list, the secret list and the
+  protected list derive from the schema (a test keeps them in step with `config`).
+- **Event bus** `app/events.py`: producers announce what happened (`connection.lost`,
+  `trade.executed`, `position.closed`, `risk.triggered`, `execution.problem`, `news.lock`,
+  `copy.alert`, `daily.summary`, `signal.failed`, `rollover.due`, …) and no longer call
+  the alert module directly; `alerts` subscribes at import. A failing listener is logged
+  and never reaches the producer, coroutines run in the background unless the producer
+  awaits them (`emit_async`), and the last 200 events are kept for the coming automations
+  and metrics. The watch, risk, news, rollover, discord, copy and broker modules dropped
+  their `alerts` / `_fire` imports.
+- **Frontend**: every toast goes through `t()` (59 literals, 62 new German entries — the
+  save / delete / error toasts were English in the German UI); `actions.js` had used `t()`
+  without importing it, so switching the Trading toggle threw in the console. Shared
+  `routedAccountsTable` (webhook routing, marketplace subscribe and follow drawers) and
+  `passwordInput` (broker credentials, Discord token) components.
+- Unused imports removed across the engine, broker and copy modules.
+
 ## 5.0.0-alpha.74
 Restructuring, no behaviour change (563 tests unchanged in outcome):
 - **`app/db.py` → `app/db/` package**: `core` (connection, schema and migrations, hot-path

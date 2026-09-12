@@ -28,7 +28,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
-from . import alerts, config, context, db, http, state
+from . import config, context, db, events, http, state
 
 log = logging.getLogger(__name__)
 
@@ -417,7 +417,7 @@ async def _tick_area(area_id: int, settings: Optional[dict[str, Any]] = None) ->
                                         f"{_local(w['lock_until'], area_id)}" + (" — flattening open positions" if s["action"] == "flatten" else ""))
                 if s["alert"]:
                     try:
-                        await alerts.news_lock(w["title"], w["currency"], _local(w["lock_until"], area_id), flatten=s["action"] == "flatten")
+                        await events.emit_async("news.lock", title=w["title"], currency=w["currency"], until=_local(w["lock_until"], area_id), flatten=s["action"] == "flatten")
                     except Exception as exc:  # noqa: BLE001
                         log.warning("news alert failed: %s", exc)
         if s["action"] == "flatten" and k not in _flattened and _flatten_tries.get(k, 0) < FLATTEN_TRIES:

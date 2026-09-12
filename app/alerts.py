@@ -395,3 +395,31 @@ async def test_alert() -> dict[str, Any]:
     if sends:
         await asyncio.gather(*sends)
     return channels
+
+
+# ------------------------------------------------------------- event bus
+# The producers announce, the alert functions above listen. Handlers look the
+# alert function up at call time, so a test that patches ``alerts.trade_opened``
+# still sees the call.
+def _register() -> None:
+    from . import events as ev
+    ev.subscribe("connection.lost", lambda e: connection_lost(e["account"], e["environment"], e.get("error", ""), broker=e.get("broker", "tradovate")))
+    ev.subscribe("connection.restored", lambda e: connection_restored(e["account"], e["environment"], broker=e.get("broker", "tradovate")))
+    ev.subscribe("trade.executed", lambda e: trade_executed(e["webhook"], e["action"], e["contract"], e["accounts"], **({"settings": e["settings"]} if e.get("settings") is not None else {})))
+    ev.subscribe("position.opened", lambda e: trade_opened(e["account"], e["symbol"], e["direction"], e["qty"], e.get("price")))
+    ev.subscribe("position.added", lambda e: position_added(e["account"], e["symbol"], e["direction"], e["added"], e["total"]))
+    ev.subscribe("position.closed", lambda e: trade_closed(e["account"], e["symbol"], e["direction"], e["qty"], e.get("pnl"), e.get("duration", ""), **({"remaining": e["remaining"]} if e.get("remaining") else {})))
+    ev.subscribe("agent.lost", lambda e: agent_lost(e["name"], e.get("last_ip", "")))
+    ev.subscribe("agent.restored", lambda e: agent_restored(e["name"]))
+    ev.subscribe("risk.triggered", lambda e: risk_triggered(e["spec"], e["kind"], e["reason"], e["pnl"], e.get("errors") or []))
+    ev.subscribe("execution.problem", lambda e: execution_problem(e["title"], e["message"]))
+    ev.subscribe("news.lock", lambda e: news_lock(e["title"], e["currency"], e["until"], flatten=bool(e.get("flatten"))))
+    ev.subscribe("copy.alert", lambda e: copy_alert(e["title"], e["message"], email=bool(e.get("email"))))
+    ev.subscribe("daily.summary", lambda e: daily_summary(e["pnl"], e["closes"], e["day"]))
+    ev.subscribe("discord.lost", lambda e: discord_listener_lost(e.get("error", "")))
+    ev.subscribe("discord.restored", lambda e: discord_listener_restored(e.get("user", "")))
+    ev.subscribe("signal.failed", lambda e: webhook_failed(e["webhook"], e["reason"], **({"settings": e["settings"]} if e.get("settings") is not None else {})))
+    ev.subscribe("rollover.due", lambda e: contract_rollover(e["message"]))
+
+
+_register()

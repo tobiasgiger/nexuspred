@@ -7,7 +7,7 @@ import re
 import threading
 from typing import Any
 
-from .. import state
+from .. import events, state
 from ..tradovate import TradovateError
 
 
@@ -200,8 +200,7 @@ async def _place_stop_with_retry(ex: Any, *, symbol: str, action: str, qty: int,
     cancelled and only what the broker shows as filled is closed (a blind market
     order on an unfilled limit would open the opposite position).
     Returns the stop order."""
-    from .. import alerts
-    from ..tradovate import OrderOutcomeUnknown, RateLimited, _fire
+    from ..tradovate import OrderOutcomeUnknown, RateLimited
     last: Exception | None = None
     for attempt in (1, 2):
         try:
@@ -237,7 +236,7 @@ async def _place_stop_with_retry(ex: Any, *, symbol: str, action: str, qty: int,
         close_qty = max(0, min(qty, filled))
     if close_qty <= 0:
         state.log_event("error", f"{tag}{ex.name}: entry on {symbol} cancelled — the {what} could not be placed and nothing had filled")
-        _fire(alerts.execution_problem(f"Entry cancelled on {ex.name}", f"{symbol}: the {what} could not be placed ({last}); the unfilled entry was cancelled."))
+        events.emit("execution.problem", title=f"Entry cancelled on {ex.name}", message=f"{symbol}: the {what} could not be placed ({last}); the unfilled entry was cancelled.")
         raise StopFailed(f"{what} could not be placed ({last}); unfilled entry cancelled")
     try:
         await ex.place_order(symbol=symbol, action=action, qty=close_qty, order_type="Market")
@@ -245,14 +244,14 @@ async def _place_stop_with_retry(ex: Any, *, symbol: str, action: str, qty: int,
         raise
     except Exception as exc:  # noqa: BLE001
         state.log_event("error", f"{tag}{ex.name}: the close after the failed {what} FAILED too ({exc}) — position on {symbol} is unprotected")
-        _fire(alerts.execution_problem(f"Unprotected position on {ex.name}",
-                                       f"{symbol}: the {what} could not be placed ({last}) and the position could not be closed ({exc}). "
-                                       "Set a stop by hand or close the position."))
+        events.emit("execution.problem", title=f"Unprotected position on {ex.name}",
+                    message=f"{symbol}: the {what} could not be placed ({last}) and the position could not be closed ({exc}). "
+                            "Set a stop by hand or close the position.")
         return None
     left = f"; {len(errors)} order(s) could not be cancelled: {'; '.join(errors)[:200]} — cancel them by hand" if errors else ""
     state.log_event("error", f"{tag}{ex.name}: {close_qty} × {symbol} closed again at market — the {what} could not be placed{left}")
-    _fire(alerts.execution_problem(f"Entry closed again on {ex.name}",
-                                   f"{symbol}: the {what} could not be placed ({last}); the {close_qty}-lot entry was closed at market{left}."))
+    events.emit("execution.problem", title=f"Entry closed again on {ex.name}",
+                message=f"{symbol}: the {what} could not be placed ({last}); the {close_qty}-lot entry was closed at market{left}.")
     raise StopFailed(f"{what} could not be placed ({last}); entry closed again at market{left}")
 
 
@@ -267,7 +266,6 @@ async def _close_contract(ex: Any, tag: str, contract: str) -> int:
     retry any cancel that failed — a stop or target left working on a flat
     position would open a new trade. Failures that survive the retry are
     reported, alerted, and raised so callers cannot treat the close as clean."""
-    from .. import alerts
     errors: list[str] = []
     cancelled = await _cancel_working(ex, tag, errors, contract=contract)
     await ex.liquidate_position(contract)
@@ -278,9 +276,8 @@ async def _close_contract(ex: Any, tag: str, contract: str) -> int:
             detail = "; ".join(retry_errors)
             state.log_event("error", f"{tag}{ex.name}: working orders on {contract} could not be cancelled after the close: "
                                      f"{detail} — cancel them by hand")
-            from ..tradovate import _fire
-            _fire(alerts.execution_problem(f"Orders left working on {ex.name}",
-                                           f"{contract} was closed but {len(retry_errors)} working order(s) could not be cancelled: {detail[:300]}"))
+            events.emit("execution.problem", title=f"Orders left working on {ex.name}",
+                        message=f"{contract} was closed but {len(retry_errors)} working order(s) could not be cancelled: {detail[:300]}")
             raise OrdersLeftWorking(f"working orders remain after closing {contract}: {detail}")
     return cancelled
 

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app import config, signals
+from app import alerts, config, signals
 from tests.helpers import FakeExecutor
 
 
@@ -19,7 +19,7 @@ def live(monkeypatch, admin):
     async def fake_trade_executed(*args, **kwargs):
         return None
 
-    monkeypatch.setattr(signals.alerts, "trade_executed", fake_trade_executed)
+    monkeypatch.setattr(alerts, "trade_executed", fake_trade_executed)
 
     def use(*executors):
         box["execs"] = list(executors)

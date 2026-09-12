@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app import auth, config, context, db, marketplace, signals, state
+from app import alerts, auth, config, context, db, marketplace, signals, state
 from tests.conftest import _make_client
 from tests.helpers import FakeExecutor, settle
 
@@ -41,7 +41,7 @@ def execs(monkeypatch):
 
     async def no_alert(*a, **k):
         pass
-    monkeypatch.setattr(signals.alerts, "trade_executed", no_alert)
+    monkeypatch.setattr(alerts, "trade_executed", no_alert)
     return made
 
 
@@ -138,9 +138,9 @@ async def test_subscriber_failure_is_isolated(two_areas, execs, monkeypatch):
     db.upsert_subscription(a2, 1, wh["id"], [S1])
     failed = []
 
-    async def fake_failed(name, reason):
+    async def fake_failed(name, reason, **kw):
         failed.append((context.get_area(), name, reason))
-    monkeypatch.setattr(signals.alerts, "webhook_failed", fake_failed)
+    monkeypatch.setattr(alerts, "webhook_failed", fake_failed)
     with context.use_area(1):
         signals.accept({"action": "buy", "symbol": "XX1!"}, wh)  # not mapped → error in both areas
     await settle(30)

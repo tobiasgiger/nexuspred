@@ -2,6 +2,7 @@
 import { h, card, tag, toast, confirmDialog, pageHead } from "../ui.js";
 import { maskAccount } from "../privacy.js";
 import { icon } from "../icons.js";
+import { passwordInput } from "../components/form.js";
 import { api } from "../api.js";
 import { store } from "../store.js";
 import { actions } from "../actions.js";
@@ -17,11 +18,8 @@ export default {
     let dirty = false;
     const markDirty = () => { dirty = true; saveHint.textContent = t("Unsaved changes"); saveHint.className = "save-hint"; };
 
-    const secretInput = (cls, value, placeholder) => {
-      const inp = h("input", { type: "password", class: `${cls} input-sm`, value: value || "", placeholder, autocomplete: "off", style: "min-width:160px" });
-      const eye = h("button", { type: "button", class: "btn btn-ghost btn-icon btn-sm", title: t("Show / hide"), onClick: () => { const show = inp.type === "password"; inp.type = show ? "text" : "password"; eye.replaceChildren(icon(show ? "eyeOff" : "eye")); } }, icon("eye"));
-      return h("div", { style: "display:flex;gap:4px;align-items:center" }, inp, eye);
-    };
+    const secretInput = (cls, value, placeholder) =>
+      passwordInput({ class: `${cls} input-sm`, value: value || "", placeholder, style: "min-width:160px" }, { small: true }).el;
     const row = (a = {}) => {
       const isR = a.broker === "rithmic", isP = a.broker === "projectx";
       const brokerSel = h("select", { class: "ta-broker input-sm", style: "min-width:100px", title: t("Broker this login belongs to") },
@@ -88,13 +86,13 @@ export default {
         dirty = false;
         store.set("tokenAccounts", list);
         paint(list);
-        toast("Token accounts saved", "success");
+        toast(t("Token accounts saved"), "success");
         actions.refreshStatus(); actions.loadTradeAccounts();
       } catch (e) { toast(e.message, "error"); }
       finally { saveBtn.disabled = false; }
     } }, icon("check"), t("Save logins"));
     const connectBtn = h("button", { type: "button", class: "btn btn-secondary", onClick: async () => {
-      if (dirty) { toast("Save your logins first", "warn"); return; }
+      if (dirty) { toast(t("Save your logins first"), "warn"); return; }
       if (connectBtn.disabled) return;
       connectBtn.disabled = true;
       try { await actions.connectAll(); } finally { connectBtn.disabled = false; }
@@ -122,7 +120,7 @@ export default {
         : h("div", { class: "callout" }, t("Not locked. When a rule fires, every working order is cancelled, every position closed at market and the account locked until the next local day."));
       const unlockBtn = lock ? h("button", { type: "button", class: "btn btn-ghost btn-danger", onClick: async () => {
         if (!(await confirmDialog({ title: t("Unlock {spec}?", { spec: maskAccount(a.spec) }), body: t("Bridge orders are accepted again today. The rules stay in place and can fire again."), confirmText: t("Unlock"), danger: true }))) return;
-        try { await api.post("/api/risk/unlock", { spec: a.spec }); toast("Account unlocked", "success"); closeDrawer(); actions.loadTradeAccounts(); }
+        try { await api.post("/api/risk/unlock", { spec: a.spec }); toast(t("Account unlocked"), "success"); closeDrawer(); actions.loadTradeAccounts(); }
         catch (e) { toast(e.message, "error"); }
       } }, icon("key"), t("Unlock for today")) : null;
       const saveRisk = h("button", { type: "button", class: "btn btn-primary", onClick: async () => {
@@ -131,7 +129,7 @@ export default {
           const list = await api.post("/api/trade-accounts", [{ token_idx: a.token_idx, spec: a.spec, id: a.id, enabled: a.enabled, qty_multiplier: a.qty_multiplier,
             risk: { loss_limit: Number(lossInp.value) || 0, profit_limit: Number(profitInp.value) || 0, flatten_at: timeInp.value || "", flatten_tz: tzSel.value } }]);
           store.set("tradeAccounts", list);
-          toast("Risk rules saved", "success");
+          toast(t("Risk rules saved"), "success");
           closeDrawer();
         } catch (e) { toast(e.message, "error"); }
         finally { saveRisk.disabled = false; }

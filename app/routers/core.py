@@ -9,7 +9,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 
-from .. import alerts, config, context, db, news, pnl, rollover, security, signals, state, tradovate, watchdog
+from .. import alerts, config, context, db, news, pnl, rollover, security, settings_schema, signals, state, tradovate, watchdog
 from ..tradovate import TradovateError
 from ..web import BASE_DIR, render
 from .accounts import trade_accounts_overview
@@ -110,7 +110,13 @@ async def api_get_settings(request: Request) -> dict[str, Any]:
 
 async def validate_settings(updates: dict[str, Any]) -> None:
     """Coerce and check the generic settings keys in place (raises 400). Shared
-    by the settings form and the settings import."""
+    by the settings form and the settings import: the schema types and bounds
+    every key, the checks below add what needs the network or another key."""
+    try:
+        typed = settings_schema.coerce({k: v for k, v in updates.items() if k in settings_schema.SCHEMA and not settings_schema.SCHEMA[k].protected})
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    updates.update(typed)
     if "ui_language" in updates:
         if str(updates.get("ui_language") or "auto") not in ("auto", "de", "en"):
             raise HTTPException(status_code=400, detail="ui_language must be auto, de or en")

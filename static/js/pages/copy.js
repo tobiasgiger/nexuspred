@@ -187,8 +187,8 @@ function groupDrawer(group, { reload, onClose = null }) {
   // --- Save / delete
   const saveBtn = h("button", { type: "button", class: "btn btn-primary", onClick: async () => {
     const b = body();
-    if (!b.leader) return toast("Choose a leader account", "error");
-    if (!b.followers.length) return toast("Switch on at least one follower", "error");
+    if (!b.leader) return toast(t("Choose a leader account"), "error");
+    if (!b.followers.length) return toast(t("Switch on at least one follower"), "error");
     saveBtn.disabled = true;
     try {
       const saved = isNew ? await api.post("/api/copy/groups", b) : await api.put(`/api/copy/groups/${g.id}`, b);
@@ -201,7 +201,7 @@ function groupDrawer(group, { reload, onClose = null }) {
   } }, icon("check"), isNew ? t("Create group") : t("Save changes"));
   const delBtn = isNew ? null : h("button", { type: "button", class: "btn btn-ghost btn-danger", onClick: async () => {
     if (!(await confirmDialog({ title: t("Delete \"{name}\"?", { name: g.name }), body: t("Followers keep whatever positions they hold — nothing is closed."), confirmText: t("Delete"), danger: true }))) return;
-    try { await api.del(`/api/copy/groups/${g.id}`); toast("Copy group deleted", "success"); closeDrawer(); reload(); }
+    try { await api.del(`/api/copy/groups/${g.id}`); toast(t("Copy group deleted"), "success"); closeDrawer(); reload(); }
     catch (e) { toast(e.message, "error"); }
   } }, icon("trash"), t("Delete"));
 
@@ -230,7 +230,7 @@ function groupDrawer(group, { reload, onClose = null }) {
       { label: t("Since"), render: (s) => fmtDateTime(s.created_at) },
       { label: "", render: (s) => h("button", { type: "button", class: "btn btn-ghost btn-sm", onClick: async () => {
         if (!(await confirmDialog({ title: t("Remove {email}?", { email: s.email }), body: t("Their accounts leave the mirror immediately (positions are not closed). They can follow again unless you restrict visibility."), confirmText: t("Remove"), danger: true }))) return;
-        try { await api.del(`/api/copy/groups/${g.id}/subscribers/${s.id}`); toast("Follower removed", "success"); loadSubs(); }
+        try { await api.del(`/api/copy/groups/${g.id}/subscribers/${s.id}`); toast(t("Follower removed"), "success"); loadSubs(); }
         catch (e) { toast(e.message, "error"); }
       } }, icon("trash"), t("Remove")) },
     ] });
@@ -370,7 +370,7 @@ export default {
     async function load() {
       try {
         const fresh = await api.get("/api/copy/groups");
-        if (outage) { outage = false; toast("Copy trading reachable again", "success"); }
+        if (outage) { outage = false; toast(t("Copy trading reachable again"), "success"); }
         const json = JSON.stringify(fresh);
         groups = fresh;
         if (json !== lastGroupsJson) { lastGroupsJson = json; table.update(groups); }   // no DOM churn on identical polls

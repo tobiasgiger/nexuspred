@@ -16,7 +16,7 @@ import httpx
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from . import alerts, broker, config, context, http, risk, sizing, state
+from . import broker, config, context, events, http, risk, sizing, state
 
 REQUEST_SPACING_S = 0.2   # minimum gap between two requests of one login (5/s)
 PRIORITY_SPACING_S = 0.06  # orders / cancels / liquidations: a small gap of their own, never behind polls
@@ -313,8 +313,8 @@ class TradovateSession:
         """Log + alert an order request whose answer was lost, and build the
         exception the order path treats as 'maybe live' (see OrderOutcomeUnknown)."""
         state.log_event("error", f"[{self.name}] {path}{via}: {detail} — CHECK THE ACCOUNT, the order may have gone through")
-        _fire(alerts.execution_problem(f"Order outcome unknown on {self.name}",
-                                       f"{path}{via}: {detail}. Check the account for an untracked position or order."))
+        events.emit("execution.problem", title=f"Order outcome unknown on {self.name}",
+                    message=f"{path}{via}: {detail}. Check the account for an untracked position or order.")
         return OrderOutcomeUnknown(f"[{self.name}] {path}: outcome unknown ({detail})")
 
     # ------------------------------------------------------------------ token
@@ -483,9 +483,9 @@ class TradovateSession:
         was_connected = state.session_status(self.name).get("connected") if had_prior else None
         state.set_session_status(self.name, connected=connected, agent_id=self.agent_id, **fields)
         if had_prior and was_connected and not connected:
-            _fire(alerts.connection_lost(self.name, self.environment, fields.get("last_error", ""), broker=getattr(self, "kind", "tradovate")))
+            events.emit("connection.lost", account=self.name, environment=self.environment, error=fields.get("last_error", ""), broker=getattr(self, "kind", "tradovate"))
         elif had_prior and not was_connected and connected:
-            _fire(alerts.connection_restored(self.name, self.environment, broker=getattr(self, "kind", "tradovate")))
+            events.emit("connection.restored", account=self.name, environment=self.environment, broker=getattr(self, "kind", "tradovate"))
 
     async def connect(self) -> dict[str, Any]:
         try:

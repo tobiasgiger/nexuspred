@@ -61,11 +61,11 @@ export default {
     }
     const saveBtn = h("button", { type: "button", class: "btn btn-primary", onClick: async () => {
       saveBtn.disabled = true;
-      try { const r = await api.put("/api/news/settings", collect()); fill(r.settings); paintStatus(r.status); toast("News lock saved", "success"); await load(); }
+      try { const r = await api.put("/api/news/settings", collect()); fill(r.settings); paintStatus(r.status); toast(t("News lock saved"), "success"); await load(); }
       catch (e) { toast(e.message, "error"); } finally { saveBtn.disabled = false; }
     } }, icon("check"), t("Save"));
     const refreshBtn = h("button", { type: "button", class: "btn", onClick: async () => {
-      try { await api.post("/api/news/refresh"); toast("Calendar refreshed", "success"); await load(); } catch (e) { toast(e.message, "error"); }
+      try { await api.post("/api/news/refresh"); toast(t("Calendar refreshed"), "success"); await load(); } catch (e) { toast(e.message, "error"); }
     } }, icon("refresh"), t("Refresh calendar"));
 
     const row = (label, ctrl, hint) => h("div", { class: "field" }, h("label", null, label), ctrl, hint ? h("small", null, hint) : null);

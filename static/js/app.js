@@ -50,7 +50,7 @@ function render() {
   if (!m) { go("/", { replace: true }); return; }
   if (m.route.redirect) { go(m.route.redirect, { replace: true }); return; }
   const page = m.route.page;
-  if (page.gate && !can(me, page.gate)) { toast("That page isn't available for your account", "warn"); go("/", { replace: true }); return; }
+  if (page.gate && !can(me, page.gate)) { toast(t("That page isn't available for your account"), "warn"); go("/", { replace: true }); return; }
 
   const samePage = currentPath !== null && matchRoute(ROUTES, currentPath)?.route.page === page;
   currentPath = path;

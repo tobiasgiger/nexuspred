@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app import config, context, news, signals
+from app import alerts, config, context, news, signals
 
 
 def _feed(now, **over):
@@ -97,7 +97,7 @@ async def test_loop_alerts_once_and_flattens_once(admin, monkeypatch):
 
     async def fake_alert(title, currency, until, *, flatten=False):
         sent.append((title, flatten))
-    monkeypatch.setattr(news.alerts, "news_lock", fake_alert)
+    monkeypatch.setattr(alerts, "news_lock", fake_alert)
 
     async def fake_flatten():
         flattened.append(1)

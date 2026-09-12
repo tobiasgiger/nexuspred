@@ -93,16 +93,16 @@ export default {
         await new Promise((r) => setTimeout(r, 600));
       }
       paintProgress(); running = false; runAll.disabled = false;
-      toast("Simulation finished", "success");
+      toast(t("Simulation finished"), "success");
     } }, icon("play"), t("Run all"));
     const stepBtn = h("button", { class: "btn btn-secondary", onClick: async () => {
       const sc = current();
-      if (!sc || simIndex >= sc.steps.length) return toast("Scenario complete — reset to run again");
+      if (!sc || simIndex >= sc.steps.length) return toast(t("Scenario complete — reset to run again"));
       if (await runStep(simIndex)) { simIndex++; paintProgress(); }
     } }, icon("skip"), t("Run next step"));
     const resetBtn = h("button", { class: "btn btn-ghost", onClick: async () => {
       try { await api.post("/api/simulate/reset"); } catch (e) { /* ignore */ }
-      paintScenario(); toast("Simulation reset");
+      paintScenario(); toast(t("Simulation reset"));
     } }, icon("refresh"), t("Reset"));
     sel.addEventListener("change", async () => { try { await api.post("/api/simulate/reset"); } catch (e) { /* ignore */ } paintScenario(); });
 
@@ -121,7 +121,7 @@ export default {
       scenarios = list || [];
       sel.replaceChildren(...scenarios.map((s, i) => h("option", { value: String(i) }, s.name)));
       paintScenario();
-    }).catch(() => toast("Could not load scenarios", "error"));
+    }).catch(() => toast(t("Could not load scenarios"), "error"));
     return () => {};
   },
 };

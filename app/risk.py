@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
-from . import alerts, config, context, state
+from . import config, context, events, state
 from .drawdown import ET, session_day
 
 _bypass: ContextVar[bool] = ContextVar("risk_bypass", default=False)
@@ -318,7 +318,7 @@ async def check_area(area_id: int, sessions: list[Any], snapshots: list[dict[str
                                     f" ({c} order(s) cancelled, {f} position(s) closed" + (f"; errors: {'; '.join(errs)}" if errs else "") + ")")
             with context.use_area(area_id):
                 try:
-                    await alerts.risk_triggered(spec, kind, reason, total, errs)
+                    await events.emit_async("risk.triggered", spec=spec, kind=kind, reason=reason, pnl=total, errors=errs)
                 except Exception as exc:  # noqa: BLE001
                     state.log_event("warn", f"risk alert failed: {exc}")
     return fired

@@ -4,10 +4,7 @@ from __future__ import annotations
 import time
 
 import asyncio
-from typing import Any
-
-from .. import alerts, config, state
-from ..tradovate import _fire
+from .. import config, events, state
 from .common import _collect_entries, _lock, _price, _signal_qty, _trade_key
 from ..sizing import account_qty
 
@@ -55,6 +52,6 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
         f"{len(acct_state)}/{len(executors)} account(s): {', '.join(acct_state)}"
     )
     if acct_state and not tag:
-        _fire(alerts.trade_executed(webhook.get("name", "?"), action, contract, list(acct_state), settings=s))   # never wait for SMTP
+        events.emit("trade.executed", webhook=webhook.get("name", "?"), action=action, contract=contract, accounts=list(acct_state), settings=s)
     return {"status": "ok", "action": action, "contract": contract,
             "accounts": summary, "orders": orders, "simulated": tag != ""}

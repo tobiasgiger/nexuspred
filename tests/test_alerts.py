@@ -155,7 +155,7 @@ async def test_test_alert_reports_channels(capture):
 async def test_background_signal_failure_alerts(admin, monkeypatch):
     failed = []
 
-    async def fake_failed(name, reason):
+    async def fake_failed(name, reason, **kw):
         failed.append((name, reason))
 
     monkeypatch.setattr(alerts, "webhook_failed", fake_failed)

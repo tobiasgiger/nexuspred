@@ -102,7 +102,7 @@ export default {
     rangeSel.addEventListener("change", load); relevantSw.addEventListener("change", load);
     let debounceT = null; search.addEventListener("input", () => { clearTimeout(debounceT); debounceT = setTimeout(load, 250); });
     const refreshBtn = h("button", { type: "button", class: "btn", onClick: async () => {
-      try { await api.post("/api/news/refresh"); toast("Calendar refreshed", "success"); await load(); } catch (e) { toast(e.message, "error"); }
+      try { await api.post("/api/news/refresh"); toast(t("Calendar refreshed"), "success"); await load(); } catch (e) { toast(e.message, "error"); }
     } }, icon("refresh"), t("Refresh calendar"));
 
     root.append(

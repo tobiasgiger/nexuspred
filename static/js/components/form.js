@@ -3,6 +3,15 @@ import { h, toast } from "../ui.js";
 import { icon } from "../icons.js";
 import { t } from "../i18n.js";
 
+/** A password input with the show / hide eye. Returns { el, input }. */
+export function passwordInput(attrs = {}, { small = false } = {}) {
+  const inp = h("input", { type: "password", autocomplete: "off", ...attrs });
+  const eye = h("button", { type: "button", class: `btn btn-ghost btn-icon${small ? " btn-sm" : ""}`, title: t("Show / hide"),
+    onClick: () => { const show = inp.type === "password"; inp.type = show ? "text" : "password"; eye.replaceChildren(icon(show ? "eyeOff" : "eye")); } },
+    icon("eye"));
+  return { el: h("div", { style: `display:flex;gap:${small ? 4 : 6}px;align-items:center` }, inp, eye), input: inp };
+}
+
 /** Build one field element from a spec. */
 export function fieldEl(spec) {
   const id = "f_" + spec.name;
@@ -18,11 +27,7 @@ export function fieldEl(spec) {
   } else if (spec.type === "textarea") {
     input = h("textarea", { name: spec.name, id, rows: spec.rows || 4, spellcheck: "false", placeholder: spec.placeholder });
   } else if (spec.type === "password") {
-    const inp = h("input", { type: "password", name: spec.name, id, placeholder: spec.placeholder, autocomplete: "off" });
-    const eye = h("button", { type: "button", class: "btn btn-ghost btn-icon", title: t("Show / hide"),
-      onClick: () => { const show = inp.type === "password"; inp.type = show ? "text" : "password"; eye.replaceChildren(icon(show ? "eyeOff" : "eye")); } },
-      icon("eye"));
-    input = h("div", { style: "display:flex;gap:6px;align-items:center" }, inp, eye);
+    input = passwordInput({ name: spec.name, id, placeholder: spec.placeholder }).el;
   } else {
     input = h("input", {
       type: spec.type === "list" ? "text" : (spec.type || "text"), name: spec.name, id,
@@ -111,7 +116,7 @@ export function settingsForm({ sections, values, onSave, saveLabel = t("Save cha
       for (const [k, v] of Object.entries(all)) if (JSON.stringify(v) !== JSON.stringify(saved ? saved[k] : undefined)) changed[k] = v;
       const next = await onSave(changed);      // nothing changed → an empty post just refreshes the form
       apply(next || all);
-      toast("Settings saved", "success");
+      toast(t("Settings saved"), "success");
     } catch (err) {
       toast(err.message, "error");
       setDirty(true);

@@ -54,10 +54,10 @@ export function renderTopbar(root, { navigate, onHamburger, onPrivacy }) {
     try {
       const r = await actions.flattenAll();
       const msg = t("Flattened {p} position(s), cancelled {c} order(s) on {a} account(s)", { p: r.flattened, c: r.cancelled, a: r.accounts });
-      if (r.errors && r.errors.length) toast(`${msg} — ${r.errors.length} error(s), see Logs`, "error");
+      if (r.errors && r.errors.length) toast(t("{msg} — {n} error(s), see Logs", { msg, n: r.errors.length }), "error");
       else toast(msg, "success");
     } catch (e) {
-      toast("Flatten all failed: " + e.message, "error");
+      toast(t("Flatten all failed: {error}", { error: e.message }), "error");
     } finally {
       sosBtn.disabled = false;
     }

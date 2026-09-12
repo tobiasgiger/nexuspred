@@ -24,7 +24,7 @@ import random
 import time
 from typing import Any, Optional
 
-from .. import alerts, config, context, db, state
+from .. import config, context, db, events, state
 from . import pipeline
 from .parser import embed_from_discord
 
@@ -113,7 +113,7 @@ class ListenerManager:
             if self._health_down:
                 self._health_down = False
                 with context.use_area(self._area()):
-                    await alerts.discord_listener_restored(self._status.get("user", ""))
+                    await events.emit_async("discord.restored", user=self._status.get("user", ""))
             return
         if not self._desired(s):
             # Not meant to be connected (disabled / no token / not entitled): a
@@ -125,7 +125,7 @@ class ListenerManager:
         if (now - self._last_connected_mono) >= grace and not self._health_down:
             self._health_down = True
             with context.use_area(self._area()):
-                await alerts.discord_listener_lost(self._status.get("error", ""))
+                await events.emit_async("discord.lost", error=self._status.get("error", ""))
 
     def health(self) -> str:
         """Coarse health label for the dashboard: ok | connecting | down | idle."""

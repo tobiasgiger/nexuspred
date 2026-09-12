@@ -41,7 +41,7 @@ export default {
         inviteLink.show(url);
         copyText(url);
         if (inviteSend.checked && email) toast(r.emailed ? t("Invite emailed to {email}", { email }) : t("Invite created — email not sent (SMTP not configured)"), r.emailed ? "success" : "warn");
-        else toast("Invite link created and copied", "success");
+        else toast(t("Invite link created and copied"), "success");
         loadInvites(); loadAudit();
       } catch (e) { toast(e.message, "error"); }
     } }, icon("plus"), t("Create invite"));
@@ -52,7 +52,7 @@ export default {
       { label: t("Admin"), render: (i) => i.is_admin ? tag("admin", "accent") : "—" },
       { label: t("Created"), render: (i) => fmtDateTime(i.created_at) },
       { label: "", render: (i) => h("button", { type: "button", class: "btn btn-ghost btn-sm", onClick: async () => {
-        try { await api.del(`/api/invites/${i.code}`); toast("Invite revoked"); loadInvites(); loadAudit(); } catch (e) { toast(e.message, "error"); }
+        try { await api.del(`/api/invites/${i.code}`); toast(t("Invite revoked")); loadInvites(); loadAudit(); } catch (e) { toast(e.message, "error"); }
       } }, t("Revoke")) },
     ] });
 
@@ -62,7 +62,7 @@ export default {
       { label: t("Email"), render: (u) => [u.email, u.id === me.id ? [" ", tag("you")] : null] },
       { label: t("Role"), render: (u) => u.is_admin ? tag("admin", "accent") : "user" },
       { label: t("Discord Signals"), render: (u) => h("input", { type: "checkbox", class: "switch", checked: (u.features || {}).discord_signals === true, title: t("Grant the Discord listener module"), onChange: async (e) => {
-        try { await api.post(`/api/users/${u.id}/features`, { feature: "discord_signals", enabled: e.target.checked }); toast(`Discord Signals ${e.target.checked ? "enabled" : "disabled"} for ${u.email}`, "success"); loadAudit(); }
+        try { await api.post(`/api/users/${u.id}/features`, { feature: "discord_signals", enabled: e.target.checked }); toast(t("Discord Signals {state} for {email}", { state: e.target.checked ? t("enabled") : t("disabled"), email: u.email }), "success"); loadAudit(); }
         catch (err) { e.target.checked = !e.target.checked; toast(err.message, "error"); }
       } }) },
       { label: t("2FA"), render: (u) => u.totp_enabled ? tag(t("on"), "on") : u.totp_required ? h("span", { title: t("Enrolment pending — asked for at the next sign-in") }, tag(t("pending"), "warn")) : tag(t("off"), "off") },
@@ -73,18 +73,18 @@ export default {
           try {
             const r = await api.post(`/api/users/${u.id}/reset`);
             if (r.emailed) {
-              toast(`Reset link emailed to ${u.email}`, "success");
+              toast(t("Reset link emailed to {email}", { email: u.email }), "success");
             } else {
               resetLink.show(r.url, t("Password-reset link for {email} — single use, expires in 24 h", { email: u.email }));
               copyText(r.url);
-              toast("Reset link created and copied", "success");
+              toast(t("Reset link created and copied"), "success");
             }
             loadAudit();
           } catch (e) { toast(e.message, "error"); }
         } }, icon("key"), t("Reset password")),
         h("button", { type: "button", class: "btn btn-ghost btn-sm", title: t("Log this user out of every browser and phone (lost device, leaked cookie)."), onClick: async () => {
           if (!(await confirmDialog({ title: t("Sign {email} out everywhere?", { email: u.email }), body: t("Every session of this user is ended immediately; they sign in again with their password."), confirmText: t("Sign out everywhere") }))) return;
-          try { await api.post(`/api/users/${u.id}/sessions/revoke`); toast("Sessions revoked", "success"); loadAudit(); } catch (e) { toast(e.message, "error"); }
+          try { await api.post(`/api/users/${u.id}/sessions/revoke`); toast(t("Sessions revoked"), "success"); loadAudit(); } catch (e) { toast(e.message, "error"); }
         } }, icon("logout"), t("Sign out everywhere")),
         u.totp_enabled || u.totp_required ? h("button", { type: "button", class: "btn btn-ghost btn-sm", title: t("Lost authenticator and backup codes: drops both, signs the user out everywhere; they enrol again at the next sign-in."), onClick: async () => {
           if (!(await confirmDialog({ title: t("Reset two-factor setup for {email}?", { email: u.email }), body: t("Their authenticator secret and backup codes are deleted and every session ends. They sign in with the password and set up two-factor authentication again."), confirmText: t("Reset 2FA"), danger: true }))) return;
@@ -92,7 +92,7 @@ export default {
         } }, icon("key"), t("Reset 2FA")) : null,
         u.id === me.id ? null : h("button", { type: "button", class: "btn btn-ghost btn-sm", onClick: async () => {
           if (!(await confirmDialog({ title: t("Delete {email}?", { email: u.email }), body: t("Their area and all its data (webhooks, tokens, logs) are removed. This cannot be undone."), confirmText: t("Delete user"), danger: true }))) return;
-          try { await api.del(`/api/users/${u.id}`); toast("User deleted", "success"); loadUsers(); loadAudit(); } catch (e) { toast(e.message, "error"); }
+          try { await api.del(`/api/users/${u.id}`); toast(t("User deleted"), "success"); loadUsers(); loadAudit(); } catch (e) { toast(e.message, "error"); }
         } }, icon("trash"), t("Delete"))) },
     ] });
 

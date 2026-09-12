@@ -10,12 +10,12 @@ import { store, can } from "../store.js";
 import { actions } from "../actions.js";
 import { dataTable } from "../components/table.js";
 import { openDrawer, closeDrawer } from "../components/drawer.js";
+import { accountKey, routedAccountsTable } from "../components/accounts.js";
 import { alertMessageTemplate, STRATEGY_LABEL, STRATEGY_OPTIONS, PRESETS, webhookUrl } from "../templates.js";
 import { openSubscriptionDrawer } from "./marketplace.js";
 import { sizingOf } from "../sizing.js";
 import { t } from "../i18n.js";
 
-const accountKey = (idx, spec) => `${idx}::${spec}`;
 
 /** The sizing rule of a routed account (older entries carry only qty_multiplier). */
 
@@ -87,30 +87,8 @@ function webhookDrawer(wh, { navigate }) {
 
   // --- Accounts
   const selected = new Map((w.accounts || []).map((a) => [accountKey(a.token_idx, a.spec), a]));
-  const accTable = dataTable({
-    empty: t("No trade accounts discovered yet — add a login under Settings → Broker Accounts and Connect & Verify."),
-    columns: [
-      { label: t("Route"), render: (a) => h("input", { type: "checkbox", class: "switch acc-on", checked: !!(selected.get(accountKey(a.token_idx, a.spec)) || {}).enabled, dataset: { key: accountKey(a.token_idx, a.spec) } }) },
-      { label: t("Login"), render: (a) => a.token_name || "—" },
-      { label: t("Account"), render: (a) => h("code", null, maskAccount(a.spec) || "—") },
-      { label: t("Env"), render: (a) => tag((a.environment || "—").toUpperCase(), a.environment === "live" ? "live" : "demo") },
-      { label: t("Status"), render: (a) => h("span", { class: a.connected ? "pos" : "muted" }, a.connected ? "connected" : "offline") },
-      { label: t("Sizing"), render: (a) => { const sz = sizingOf(selected.get(accountKey(a.token_idx, a.spec))); return h("select", { class: "acc-mode input-sm", dataset: { key: accountKey(a.token_idx, a.spec) } },
-        h("option", { value: "same", selected: sz.mode === "same" }, t("Same (1:1)")), h("option", { value: "multiplier", selected: sz.mode === "multiplier" }, t("Multiplier")), h("option", { value: "fixed", selected: sz.mode === "fixed" }, t("Fixed"))); } },
-      { label: "×", render: (a) => h("input", { type: "number", class: "acc-mult input-sm", min: 0.01, step: 0.01, style: "width:70px", value: sizingOf(selected.get(accountKey(a.token_idx, a.spec))).multiplier, dataset: { key: accountKey(a.token_idx, a.spec) } }) },
-      { label: t("Fixed"), render: (a) => h("input", { type: "number", class: "acc-fixed input-sm", min: 1, step: 1, style: "width:64px", value: sizingOf(selected.get(accountKey(a.token_idx, a.spec))).fixed, dataset: { key: accountKey(a.token_idx, a.spec) } }) },
-      { label: t("Max"), render: (a) => h("input", { type: "number", class: "acc-max input-sm", min: 0, step: 1, style: "width:64px", title: t("0 = no cap"), value: sizingOf(selected.get(accountKey(a.token_idx, a.spec))).max_contracts, dataset: { key: accountKey(a.token_idx, a.spec) } }) },
-    ],
-  });
-  accTable.update(known);
-  const collectAccounts = () => known.map((a) => {
-    const key = accountKey(a.token_idx, a.spec);
-    const q = (cls) => accTable.tbody.querySelector(`.${cls}[data-key="${CSS.escape(key)}"]`);
-    const on = q("acc-on");
-    const sizing = { mode: q("acc-mode") ? q("acc-mode").value : "same", multiplier: Number(q("acc-mult") && q("acc-mult").value) || 1,
-      fixed: Number(q("acc-fixed") && q("acc-fixed").value) || 1, max_contracts: Number(q("acc-max") && q("acc-max").value) || 0 };
-    return { token_idx: a.token_idx, lid: a.lid || "", spec: a.spec, enabled: !!(on && on.checked), qty_multiplier: sizing.mode === "multiplier" ? sizing.multiplier : 1, sizing };
-  }).filter((a) => a.enabled);
+  const accTable = routedAccountsTable({ known, selected });
+  const collectAccounts = accTable.collect;
 
   // --- Alert template
   const urlCode = h("code", null, webhookUrl(w.token));
@@ -133,7 +111,7 @@ function webhookDrawer(wh, { navigate }) {
     h("button", { type: "button", class: "chip", onClick: () => { payloadTa.value = JSON.stringify(p.payload, null, 2); } }, p.label)));
   const sendBtn = h("button", { type: "button", class: "btn btn-primary", onClick: async () => {
     let payload;
-    try { payload = JSON.parse(payloadTa.value); } catch { return toast("Payload is not valid JSON", "error"); }
+    try { payload = JSON.parse(payloadTa.value); } catch { return toast(t("Payload is not valid JSON"), "error"); }
     if (forwardCb.checked && !(await confirmDialog({ title: t("Forward the test signal to subscribers?"), body: t("It will execute on every subscriber's routed accounts (subject to their own Trading switch)."), confirmText: t("Send to everyone"), danger: true }))) return;
     sendBtn.disabled = true;
     try {
@@ -173,7 +151,7 @@ function webhookDrawer(wh, { navigate }) {
       { label: t("Since"), render: (s) => fmtDateTime(s.created_at) },
       { label: "", render: (s) => h("button", { type: "button", class: "btn btn-ghost btn-sm", onClick: async () => {
         if (!(await confirmDialog({ title: t("Remove {email}?", { email: s.email }), body: t("They stop receiving this signal immediately and can subscribe again unless you restrict visibility."), confirmText: t("Remove"), danger: true }))) return;
-        try { await api.del(`/api/webhooks/${w.id}/subscribers/${s.id}`); toast("Subscriber removed", "success"); loadSubs(); }
+        try { await api.del(`/api/webhooks/${w.id}/subscribers/${s.id}`); toast(t("Subscriber removed"), "success"); loadSubs(); }
         catch (e) { toast(e.message, "error"); }
       } }, icon("trash"), t("Remove")) },
     ] });
@@ -234,7 +212,7 @@ function webhookDrawer(wh, { navigate }) {
             const updated = await api.post(`/api/webhooks/${w.id}/regenerate-token`);
             store.update("webhooks", (list) => list.map((x) => (x.id === w.id ? { ...x, ...updated } : x)));
             w = { ...w, ...updated }; urlCode.textContent = webhookUrl(w.token);
-            toast("Token regenerated — copy the new URL", "success");
+            toast(t("Token regenerated — copy the new URL"), "success");
           } catch (e) { toast(e.message, "error"); }
         } }, icon("key"), t("Regenerate token"))),
       card({ title: t("Delete webhook"), cls: "danger", hint: t("Removes the webhook, its routing and every marketplace subscription to it. Signals to its URL will be rejected (403).") },
@@ -243,7 +221,7 @@ function webhookDrawer(wh, { navigate }) {
           try {
             await api.del(`/api/webhooks/${w.id}`);
             store.update("webhooks", (list) => list.filter((x) => x.id !== w.id));
-            toast("Webhook deleted", "success");
+            toast(t("Webhook deleted"), "success");
             closeDrawer();
           } catch (e) { toast(e.message, "error"); }
         } }, icon("trash"), t("Delete webhook")))),
@@ -274,7 +252,7 @@ function webhookDrawer(wh, { navigate }) {
       w = { ...w, ...updated };
       drawer.setTitle(w.name);
       tabsEl.querySelector('[data-tab="accounts"]').textContent = `Accounts (${(w.accounts || []).filter((a) => a.enabled).length})`;
-      toast("Webhook saved", "success");
+      toast(t("Webhook saved"), "success");
     } catch (e) { toast(e.message, "error"); } finally { saveBtn.disabled = false; }
   } }, icon("check"), t("Save"));
   const drawer = openDrawer({
@@ -311,7 +289,7 @@ export default {
         const n = (store.get("webhooks") || []).length + 1;
         const wh = await api.post("/api/webhooks", { name: `Strategy ${n}`, strategy: "simple", default_qty: 1, tp_qty: 1 });
         store.update("webhooks", (list) => [...list, wh]);
-        toast("Webhook created", "success");
+        toast(t("Webhook created"), "success");
         navigate(`/webhooks/${wh.id}`);
       } catch (e) { toast(e.message, "error"); }
     } }, icon("plus"), t("Add webhook"));
@@ -333,7 +311,7 @@ export default {
           h("button", { type: "button", class: "btn btn-ghost btn-sm", disabled: !s.webhook, onClick: () => openSubscriptionDrawer({ ...(s.webhook || {}), subscription: s }, loadSubs) }, t("Manage"), icon("chevron")),
           h("button", { type: "button", class: "btn btn-ghost btn-sm", onClick: async () => {
             if (!(await confirmDialog({ title: t("Unsubscribe?"), body: t("Future signals from this publisher won't reach your accounts."), confirmText: t("Unsubscribe"), danger: true }))) return;
-            try { await api.del(`/api/subscriptions/${s.id}`); toast("Unsubscribed", "success"); loadSubs(); } catch (e) { toast(e.message, "error"); }
+            try { await api.del(`/api/subscriptions/${s.id}`); toast(t("Unsubscribed"), "success"); loadSubs(); } catch (e) { toast(e.message, "error"); }
           } }, icon("trash"))) },
       ],
     });
