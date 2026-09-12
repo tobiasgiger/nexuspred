@@ -46,3 +46,15 @@ async def test_close_all_keeps_tracking_when_order_cleanup_remains_unresolved(ad
 
     assert key in active
     assert "A" in active[key]["accounts"]
+
+
+async def test_leftover_orders_are_reported_as_orders_not_position(admin, monkeypatch):
+    from app import state
+    ex = FakeExecutor("A", working=[{"id": 7, "symbol": "MNQ"}])
+    _always_fail_cancel(ex)
+    monkeypatch.setattr(alerts, "execution_problem", lambda *args, **kwargs: None)
+    monkeypatch.setattr(tradovate, "_fire", lambda value: None)
+    r = await handle_close_all("MNQ", "MNQ", [ex], {"wh:MNQ": {"accounts": {"A": {"name": "A", "contract": "MNQ"}}}}, "", {"id": "wh", "name": "test"})
+    assert r["status"] == "error" and r["failed"] == ["A"]
+    msg = next(e["message"] for e in state.recent_events() if "close_all FAILED" in e["message"])
+    assert "orders are not" in msg and "may still be open" not in msg

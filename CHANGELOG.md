@@ -4,6 +4,15 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.66
+- **Close failures are never reported as clean** (PRs #11 and #12 by andrasmining,
+  merged). A working order that survives both cancel attempts after a close makes that
+  account fail (it stays tracked for a retry, the alert is unchanged) instead of returning
+  success with a stop or target still resting on a flat position. Close results carry
+  `status: error` whenever an account failed, so the signal log and history agree with
+  the broker outcome. The error line now says which case it is: "position closed but its
+  orders are not" versus "the position may still be open".
+
 ## 5.0.0-alpha.65
 - **Calendar shows this and next week.** The weekly file stops at Sunday, so the coming
   weeks (15 days) are previewed from TradingView's public calendar endpoint and marked

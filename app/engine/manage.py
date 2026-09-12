@@ -7,7 +7,7 @@ from typing import Any
 
 from .. import config, state
 from ..tradovate import TradovateError
-from .common import _cancel_working, _close_contract, _close_untracked, _lock, _trade_key
+from .common import OrdersLeftWorking, _cancel_working, _close_contract, _close_untracked, _lock, _trade_key
 
 
 async def handle_close_all(root, target, executors, active_map, tag, webhook):
@@ -35,7 +35,8 @@ async def handle_close_all(root, target, executors, active_map, tag, webhook):
     extra_closed, extra_failed = await _close_untracked(executors, {ex.name for ex in targets}, tag, target) if tracked_names else ([], [])
     for ex, r in zip(targets, results):
         if isinstance(r, Exception):
-            state.log_event("error", f"{tag}close_all FAILED for {ex.name}: {r} — the position may still be open")
+            state.log_event("error", f"{tag}close_all FAILED for {ex.name}: {r} — "
+                                     + ("the position is closed but its orders are not: cancel them by hand" if isinstance(r, OrdersLeftWorking) else "the position may still be open"))
 
     # On a mixed broker outcome, remove only accounts whose close was confirmed;
     # failed accounts remain tracked so a retry cannot forget a live position or

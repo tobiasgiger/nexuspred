@@ -125,6 +125,12 @@ async def _place_stop_with_retry(ex: Any, *, symbol: str, action: str, qty: int,
     return None
 
 
+class OrdersLeftWorking(TradovateError):
+    """The position was closed but a working order survived both cancel
+    attempts — the account is unresolved (a stop or target on a flat position
+    would open a new trade), not "still open"."""
+
+
 async def _close_contract(ex: Any, tag: str, contract: str) -> int:
     """Cancel the contract's working orders, then liquidate the position, then
     retry any cancel that failed — a stop or target left working on a flat
@@ -144,7 +150,7 @@ async def _close_contract(ex: Any, tag: str, contract: str) -> int:
             from ..tradovate import _fire
             _fire(alerts.execution_problem(f"Orders left working on {ex.name}",
                                            f"{contract} was closed but {len(retry_errors)} working order(s) could not be cancelled: {detail[:300]}"))
-            raise TradovateError(f"working orders remain after closing {contract}: {detail}")
+            raise OrdersLeftWorking(f"working orders remain after closing {contract}: {detail}")
     return cancelled
 
 

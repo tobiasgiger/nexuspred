@@ -15,7 +15,7 @@ from typing import Any
 
 from .. import alerts, config, state
 from ..tradovate import TradovateError, _fire
-from .common import _close_contract, _close_untracked, _place_stop_with_retry, SignalError, _cancel_working, _lock, _opposite
+from .common import OrdersLeftWorking, _close_contract, _close_untracked, _place_stop_with_retry, SignalError, _cancel_working, _lock, _opposite
 from ..sizing import account_qty
 
 
@@ -214,7 +214,8 @@ async def handle_full_close(payload, trade_id, target, executors, active_map, ta
     extra_closed, extra_failed = await _close_untracked(executors, tracked_now, tag, target) if (active and active.get("accounts")) else ([], [])
     for (ex, _), r in zip(targets, results):
         if isinstance(r, Exception):
-            state.log_event("error", f"{tag}TS-Hunter full_close FAILED for {ex.name}: {r} — the position may still be open")
+            state.log_event("error", f"{tag}TS-Hunter full_close FAILED for {ex.name}: {r} — "
+                                     + ("the position is closed but its orders are not: cancel them by hand" if isinstance(r, OrdersLeftWorking) else "the position may still be open"))
 
     # On a mixed broker outcome, remove only accounts whose close was confirmed;
     # failed accounts remain tracked so a retry cannot forget a live position or
