@@ -1,24 +1,18 @@
 """Fail-closed maintenance for copy-trading login/account bindings.
 
 Copy groups persist a stable login id (``lid``), account ``spec`` and a numeric
-broker account id.  The id is only a cache: the stable login + account spec are
-the authority.  When Broker Accounts are edited or rediscovered we refresh the
-cached ids and restart publisher-side runners so no long-lived poll keeps using
-a replaced broker session.
+broker account id. The id is only a cache: stable login + account spec are the
+authority. Broker-account edits or rediscovery refresh cached ids and restart
+publisher-side runners so a long-lived poll cannot retain a replaced session.
 """
 from __future__ import annotations
 
 from typing import Any
 
-from . import config, copy, db
+from . import config, copy, db, leader_feed
 
 
 def _resolve_route(settings: dict[str, Any], route: dict[str, Any]) -> tuple[int | None, int]:
-    """Return (current login index, current account id) for a stored route.
-
-    A missing login/spec deliberately yields account id 0.  We never retain a
-    numeric id merely because the intended account can no longer be resolved.
-    """
     tokens = settings.get("token_accounts") or []
     lid = str(route.get("lid") or "")
     idx = config.login_index(settings, lid) if lid else None
@@ -32,7 +26,8 @@ def _resolve_route(settings: dict[str, Any], route: dict[str, Any]) -> tuple[int
     if idx is None or not (0 <= idx < len(tokens)):
         return None, 0
     spec = str(route.get("spec") or "")
-    account = next((a for a in (tokens[idx].get("accounts") or []) if str(a.get("spec") or a.get("account_spec") or "") == spec), None)
+    account = next((a for a in (tokens[idx].get("accounts") or [])
+                    if str(a.get("spec") or a.get("account_spec") or "") == spec), None)
     try:
         aid = int((account or {}).get("id") or (account or {}).get("account_id") or 0)
     except (TypeError, ValueError):
@@ -46,20 +41,27 @@ def _refresh_route(settings: dict[str, Any], route: dict[str, Any]) -> bool:
     if idx is not None and route.get("token_idx") != idx:
         route["token_idx"] = idx
         changed = True
-    # A stale broker id is more dangerous than an unknown one.  Zero makes the
-    # copy runner resolve by current session/spec or fail closed.
     if int(route.get("account_id") or 0) != aid:
         route["account_id"] = aid
         changed = True
     return changed
 
 
-def repair(area_id: int) -> set[int]:
-    """Refresh persisted bindings for one workspace.
+def _refresh_runtime(area_id: int, settings: dict[str, Any]) -> None:
+    """Clear stale numeric ids in already-running groups immediately."""
+    for (publisher_area, _gid), runner in list(copy._runners.items()):
+        if publisher_area == area_id:
+            lead = runner.group.get("leader")
+            if isinstance(lead, dict):
+                _refresh_route(settings, lead)
+        for follower in runner.followers:
+            farea = int(follower.get("area_id") or publisher_area)
+            if farea == area_id:
+                _refresh_route(settings, follower)
 
-    Returns publisher area ids whose external-follower subscription changed and
-    therefore need ``copy.sync_area`` after the caller is ready to touch tasks.
-    """
+
+def repair(area_id: int) -> set[int]:
+    """Refresh persisted and live bindings; return affected publisher areas."""
     publishers: set[int] = set()
 
     def mutate(s: dict[str, Any]) -> None:
@@ -79,9 +81,8 @@ def repair(area_id: int) -> set[int]:
 
     config.update(mutate, area_id=area_id)
     settings = config.load_settings(area_id=area_id)
+    _refresh_runtime(area_id, settings)
 
-    # Marketplace copy followers live in the subscriber's workspace settings but
-    # execute inside a publisher-side runner. Refresh their cached account ids too.
     for sub in db.list_subscriptions(area_id):
         if not str(sub.get("webhook_id") or "").startswith("copy:"):
             continue
@@ -96,23 +97,23 @@ def repair(area_id: int) -> set[int]:
 
 
 async def _restart_area(area_id: int) -> None:
-    """Restart this area's group runners so they re-resolve the current session."""
-    for key, runner in list(copy._runners.items()):  # one intentional lifecycle hook; no trade state is rewritten
+    """Restart runners and invalidate shared snapshots from their old sessions."""
+    for key, runner in list(copy._runners.items()):
         if key[0] != area_id:
             continue
+        try:
+            session = runner._leader_session()
+            if session is not None:
+                leader_feed.drop(area_id, session)
+        except Exception:  # noqa: BLE001 - cache invalidation is best effort; stop still proceeds
+            pass
         await runner.stop()
         copy._runners.pop(key, None)
     await copy.sync_area(area_id)
 
 
 async def refresh(area_id: int) -> None:
-    """Repair bindings after a login/account edit or broker re-discovery.
-
-    Publisher runners are restarted even when the stable lid/spec did not change:
-    the SessionManager may have replaced the underlying session because the broker,
-    environment or account set changed.  A running copy feed must not retain that
-    old session object.
-    """
+    """Repair and restart after login/account edits or Connect & Verify."""
     publishers = repair(area_id)
     await _restart_area(area_id)
     for publisher in publishers:
