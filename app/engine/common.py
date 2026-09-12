@@ -191,13 +191,15 @@ async def _flatten_account(ex: Any, tag: str = "") -> tuple[int, int, list[str]]
     """Best-effort account-wide emergency flatten.
 
     Working orders are cancelled before liquidation and the broker is queried a
-    second time afterwards. The second sweep is important even when the first
-    one looked clean: an order can appear while positions are being flattened.
-    A cancellation with an unknown outcome is only retried after this fresh
-    broker read confirms that the order is still working.
+    second time afterwards. Only failures that remain after that second broker
+    read are reported as cleanup errors: a first cancel can fail while the
+    post-liquidation reconciliation subsequently confirms and removes the order.
     """
+    # First pass is preparatory. Its cancel/list failures are not final until the
+    # broker is queried again after liquidation.
+    pre_cleanup_errors: list[str] = []
+    cancelled = await _cancel_working(ex, tag, pre_cleanup_errors)
     errors: list[str] = []
-    cancelled = await _cancel_working(ex, tag, errors)
 
     try:
         positions = await ex.positions()
@@ -220,11 +222,11 @@ async def _flatten_account(ex: Any, tag: str = "") -> tuple[int, int, list[str]]
 
     # Always re-read working orders after the liquidations. This is reconciliation,
     # not a blind retry: _cancel_working only sends cancels for orders the broker
-    # still reports as working.
+    # still reports as working. A clean second sweep resolves transient first-pass
+    # cancellation/listing failures.
     post_errors: list[str] = []
     cancelled += await _cancel_working(ex, tag, post_errors)
-    if post_errors:
-        errors.extend(f"post-close {err}" for err in post_errors)
+    errors.extend(f"post-close {err}" for err in post_errors)
     return cancelled, flattened, errors
 
 
