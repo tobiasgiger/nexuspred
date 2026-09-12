@@ -29,6 +29,12 @@ async def handle_entry(payload, side, root, target, trade_id, executors, active_
     if base_qty <= 0:
         raise SignalError("'risk.value' must be positive")
 
+    with _lock:
+        existing = active_map.get(trade_id)
+    if existing and existing.get("accounts"):
+        state.log_event("warn", f"{tag}[{webhook.get('name', '?')}] TS-Hunter trade {trade_id} ignored — an active trade with that id is already tracked")
+        return {"status": "skipped", "reason": "active_trade_exists", "action": "signal", "trade_id": trade_id}
+
     sl_price = (payload.get("sl") or {}).get("value")
     entry_price_ref = (payload.get("tv") or {}).get("entry_price")
 
