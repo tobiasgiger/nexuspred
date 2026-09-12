@@ -61,6 +61,11 @@ export function connectStream() {
     if (reconnTimer) return;
     reconnTimer = setTimeout(() => { reconnTimer = null; store.set("stream", "reconnecting"); }, 4000);
   };
+  es.addEventListener("resync", () => {
+    // the server dropped messages for this tab (slow consumer): pull the current picture
+    store.set("statusDirty", Date.now());
+    store.set("streamResync", Date.now());
+  });
   es.onmessage = (m) => {
     markLive();
     let msg;
@@ -70,7 +75,13 @@ export function connectStream() {
       case "event": prepend("events", d); break;
       case "signal": prepend("signals", d); break;
       case "order": prepend("orders", d); store.set("statusDirty", Date.now()); break;
-      case "session": store.update("status", (s) => patchSession(s, d)); store.set("statusDirty", Date.now()); break;
+      case "session": {
+        const before = ((store.get("status") || {}).sessions || []).find((s) => s.name === d.name);
+        store.update("status", (s) => patchSession(s, d));
+        // the health loop emits a session message per check: only a real change re-pulls /api/status
+        if (!before || before.connected !== d.connected || (d.environment && before.environment !== d.environment)) store.set("statusDirty", Date.now());
+        break;
+      }
       case "discord": prepend("discordFeed", d); break;
       case "pnl": store.set("pnl", d); break;
       default: break;

@@ -47,6 +47,14 @@ c_green=$'\033[32m'; c_blue=$'\033[34m'; c_yellow=$'\033[33m'; c_red=$'\033[31m'
 say()  { printf "%s==>%s %s\n" "$c_blue" "$c_reset" "$1"; }
 ok()   { printf "%s ok %s %s\n" "$c_green" "$c_reset" "$1"; }
 warn() { printf "%s !! %s %s\n" "$c_yellow" "$c_reset" "$1"; }
+# run_as USER HOME CMD... — as the service user; runuser (util-linux) first, sudo
+# next, plain su last: minimal cloud images ship without sudo.
+run_as() {
+  local u="$1" h="$2"; shift 2
+  if command -v runuser >/dev/null 2>&1; then runuser -u "$u" -- env HOME="$h" "$@"
+  elif command -v sudo >/dev/null 2>&1; then sudo -u "$u" env HOME="$h" "$@"
+  else su -s /bin/sh "$u" -c "$(printf '%q ' env HOME="$h" "$@")"; fi
+}
 die()  { printf "%s error:%s %s\n" "$c_red" "$c_reset" "$1" >&2; exit 1; }
 
 [[ $EUID -eq 0 ]] || die "run as root (sudo)"
@@ -86,9 +94,9 @@ if [[ -d "$APP_DIR/.git" ]]; then
   say "Updating checkout in $APP_DIR (branch $BRANCH)"
   # as the service user: the checkout is theirs (and writable by the web process), so git never runs as root in it
   chown -R "$SVC_USER:$SVC_USER" "$APP_DIR"
-  sudo -u "$SVC_USER" -H git -C "$APP_DIR" fetch --quiet --all --tags --prune
-  sudo -u "$SVC_USER" -H git -C "$APP_DIR" checkout --quiet "$BRANCH" 2>/dev/null || sudo -u "$SVC_USER" -H git -C "$APP_DIR" checkout --quiet -b "$BRANCH" "origin/$BRANCH"
-  sudo -u "$SVC_USER" -H git -C "$APP_DIR" reset --quiet --hard "origin/$BRANCH"
+  run_as "$SVC_USER" "$DATA_DIR" git -C "$APP_DIR" fetch --quiet --all --tags --prune
+  run_as "$SVC_USER" "$DATA_DIR" git -C "$APP_DIR" checkout --quiet "$BRANCH" 2>/dev/null || run_as "$SVC_USER" "$DATA_DIR" git -C "$APP_DIR" checkout --quiet -b "$BRANCH" "origin/$BRANCH"
+  run_as "$SVC_USER" "$DATA_DIR" git -C "$APP_DIR" reset --quiet --hard "origin/$BRANCH"
 else
   say "Cloning $REPO_URL (branch $BRANCH) into $APP_DIR"
   git clone --quiet --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
@@ -96,32 +104,37 @@ fi
 chown -R "$SVC_USER:$SVC_USER" "$APP_DIR"
 
 say "Installing Python dependencies"
-sudo -u "$SVC_USER" -H bash -c "cd '$APP_DIR' && python3 -m venv .venv && .venv/bin/python -m pip install --quiet --upgrade pip && .venv/bin/python -m pip install --quiet -r requirements.txt"
+run_as "$SVC_USER" "$DATA_DIR" bash -c "cd '$APP_DIR' && python3 -m venv .venv && .venv/bin/python -m pip install --quiet --upgrade pip && .venv/bin/python -m pip install --quiet -r requirements.txt"
 ok "Dependencies installed"
 
 # --- secrets / environment (generated once) ---------------------------------
-if [[ -f "$ENV_FILE" ]]; then
-  # shellcheck disable=SC1090
-  source "$ENV_FILE"
-fi
-SECRET="${SESSION_SECRET_IN:-${SESSION_SECRET:-}}"
+# The existing file is read, never sourced: a re-run keeps the SESSION_SECRET
+# and the public URL, honours the flags given now (--port), and preserves any
+# variable the operator added by hand (SMTP, proxy, NEXUSPRED_RITHMIC_APP_NAME…).
+env_get() { [[ -f "$ENV_FILE" ]] && grep -m1 "^$1=" "$ENV_FILE" | cut -d= -f2- || true; }
+SECRET="${SESSION_SECRET_IN:-$(env_get SESSION_SECRET)}"
 if [[ -z "$SECRET" ]]; then
   SECRET="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
   say "Generated a new SESSION_SECRET (encrypts the stored broker tokens — keep $ENV_FILE safe)"
 fi
-if [[ -n "$DOMAIN" ]]; then PUBLIC_URL="https://$DOMAIN"; else PUBLIC_URL="${NEXUSPRED_PUBLIC_URL:-}"; fi
+if [[ -n "$DOMAIN" ]]; then PUBLIC_URL="https://$DOMAIN"; else PUBLIC_URL="$(env_get NEXUSPRED_PUBLIC_URL)"; fi
 umask 077
-cat > "$ENV_FILE" <<ENV
-# Fluxbridge environment — written by install-server.sh. SESSION_SECRET is never
-# regenerated on re-runs: it encrypts the Tradovate tokens stored in the database.
-SESSION_SECRET=$SECRET
-NEXUSPRED_DATA_DIR=$DATA_DIR
-NEXUSPRED_BRANCH=$BRANCH
-NEXUSPRED_PUBLIC_URL=$PUBLIC_URL
-NEXUSPRED_PROXY_HOPS=1
-HOST=127.0.0.1
-PORT=$PORT
-ENV
+{
+  echo "# Fluxbridge environment — written by install-server.sh. SESSION_SECRET is never"
+  echo "# regenerated on re-runs: it encrypts the Tradovate tokens stored in the database."
+  echo "SESSION_SECRET=$SECRET"
+  echo "NEXUSPRED_DATA_DIR=$DATA_DIR"
+  echo "NEXUSPRED_BRANCH=$BRANCH"
+  echo "NEXUSPRED_PUBLIC_URL=$PUBLIC_URL"
+  echo "NEXUSPRED_PROXY_HOPS=1"
+  echo "HOST=127.0.0.1"
+  echo "PORT=$PORT"
+  if [[ -f "$ENV_FILE" ]]; then
+    # everything else the operator put there survives the re-run
+    grep -Ev '^(#|SESSION_SECRET=|NEXUSPRED_DATA_DIR=|NEXUSPRED_BRANCH=|NEXUSPRED_PUBLIC_URL=|NEXUSPRED_PROXY_HOPS=|HOST=|PORT=|$)' "$ENV_FILE" || true
+  fi
+} > "$ENV_FILE.new"
+mv "$ENV_FILE.new" "$ENV_FILE"
 umask 022
 chown root:"$SVC_USER" "$ENV_FILE"; chmod 640 "$ENV_FILE"
 ok "Environment written to $ENV_FILE"

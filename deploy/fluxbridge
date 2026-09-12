@@ -11,6 +11,15 @@ DATA_DIR="${NEXUSPRED_DATA_DIR:-/var/lib/fluxbridge}"
 DB="$DATA_DIR/fluxbridge.db"
 PY="$APP_DIR/.venv/bin/python"; [[ -x "$PY" ]] || PY=python3
 
+# run_as USER HOME CMD... — as the service user; runuser (util-linux) first, sudo
+# next, plain su last: minimal cloud images ship without sudo.
+run_as() {
+  local u="$1" h="$2"; shift 2
+  if command -v runuser >/dev/null 2>&1; then runuser -u "$u" -- env HOME="$h" "$@"
+  elif command -v sudo >/dev/null 2>&1; then sudo -u "$u" env HOME="$h" "$@"
+  else su -s /bin/sh "$u" -c "$(printf '%q ' env HOME="$h" "$@")"; fi
+}
+
 need_root() { [[ $EUID -eq 0 ]] || { echo "run as root (sudo fluxbridge $1)"; exit 1; }; }
 
 cmd_backup() {
@@ -38,16 +47,25 @@ c = sqlite3.connect(sys.argv[1])
 assert c.execute("SELECT COUNT(*) FROM sqlite_master WHERE name='users'").fetchone()[0] == 1
 PYEOF
   local stop=0
-  if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet fluxbridge 2>/dev/null; then need_root restore; systemctl stop fluxbridge; stop=1; fi
   mkdir -p "$DATA_DIR"
+  # copy and validate first: the live database is only swapped once the new file is complete
+  cp "$src" "$DB.new"; chmod 600 "$DB.new"
+  if id -u fluxbridge >/dev/null 2>&1 && [[ $EUID -eq 0 ]]; then chown fluxbridge:fluxbridge "$DB.new"; fi
+  python3 - "$DB.new" <<'PYEOF' || { rm -f "$DB.new"; echo "the copy is not a readable Fluxbridge database"; exit 1; }
+import sqlite3, sys
+c = sqlite3.connect(sys.argv[1])
+assert c.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+PYEOF
+  if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet fluxbridge 2>/dev/null; then need_root restore; systemctl stop fluxbridge; stop=1; fi
+  trap '[[ "$stop" == "1" ]] && systemctl start fluxbridge' EXIT
   if [[ -f "$DB" ]]; then
     local keep="$DATA_DIR/fluxbridge.db.before-restore-$(date +%Y%m%d-%H%M%S)"
     mv "$DB" "$keep"; rm -f "$DB-wal" "$DB-shm"
     echo "previous database kept as $keep"
   fi
-  cp "$src" "$DB"; chmod 600 "$DB"
-  if id -u fluxbridge >/dev/null 2>&1 && [[ $EUID -eq 0 ]]; then chown fluxbridge:fluxbridge "$DB"; fi
+  mv "$DB.new" "$DB"
   [[ "$stop" == "1" ]] && systemctl start fluxbridge
+  trap - EXIT
   echo "restored $src → $DB"
   echo "note: the SESSION_SECRET in $ENV_FILE must be the one the backup was made under, or the stored broker tokens are unreadable (re-enter them in the dashboard otherwise)."
 }
@@ -57,9 +75,9 @@ cmd_update() {
   # git runs as the service user, never as root: the checkout is writable by the
   # web process (self-updates), so a hook or config planted there must not be
   # able to run with root rights.
-  sudo -u fluxbridge -H git -C "$APP_DIR" fetch --quiet --all --tags --prune
-  sudo -u fluxbridge -H git -C "$APP_DIR" reset --quiet --hard "origin/${NEXUSPRED_BRANCH:-main}"
-  sudo -u fluxbridge -H "$APP_DIR/.venv/bin/python" -m pip install --quiet -r "$APP_DIR/requirements.txt"
+  run_as fluxbridge "$DATA_DIR" git -C "$APP_DIR" fetch --quiet --all --tags --prune
+  run_as fluxbridge "$DATA_DIR" git -C "$APP_DIR" reset --quiet --hard "origin/${NEXUSPRED_BRANCH:-main}"
+  run_as fluxbridge "$DATA_DIR" "$APP_DIR/.venv/bin/python" -m pip install --quiet -r "$APP_DIR/requirements.txt"
   systemctl restart fluxbridge
   echo "updated to v$(cat "$APP_DIR/VERSION") and restarted"
   if ! cmp -s "$APP_DIR/deploy/fluxbridge" /usr/local/bin/fluxbridge; then

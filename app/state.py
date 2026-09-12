@@ -9,6 +9,7 @@ via the API (which runs in the logged-in user's area context).
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 from collections import deque
 from datetime import datetime, timezone
@@ -23,11 +24,12 @@ _lock = threading.Lock()
 class _Sub:
     """A live subscriber (SSE connection): a queue plus the loop it belongs to,
     so events logged from any thread can be delivered thread-safely."""
-    __slots__ = ("queue", "loop")
+    __slots__ = ("queue", "loop", "dropped")
 
     def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
         self.queue: asyncio.Queue = asyncio.Queue(maxsize=200)
         self.loop = loop
+        self.dropped = False          # a message was lost on a full queue: the stream tells the client to resync
 
 
 class _AreaState:
@@ -58,18 +60,27 @@ def _st() -> _AreaState:
     return _st_for(context.get_area())
 
 
-def _safe_put(q: asyncio.Queue, message: dict[str, Any]) -> None:
+def _safe_put(sub: "_Sub", frame: str) -> None:
     try:
-        q.put_nowait(message)
+        sub.queue.put_nowait(frame)
     except asyncio.QueueFull:
-        pass
+        sub.dropped = True            # a slow tab: it gets a resync marker once it catches up
+
+
+def frame_message(frame: str) -> dict[str, Any]:
+    """The message inside an SSE frame built by :func:`_broadcast` (tests)."""
+    return json.loads(frame[len("data: "):].strip())
 
 
 def _broadcast(st: _AreaState, message: dict[str, Any]) -> None:
-    """Push a message to this area's live subscribers (thread-safe)."""
+    """Push a message to this area's live subscribers (thread-safe). The SSE
+    frame is built once here, not once per subscriber in the stream handler."""
+    if not st.subscribers:
+        return
+    frame = f"data: {json.dumps(message, default=str)}\n\n"
     for sub in list(st.subscribers):
         try:
-            sub.loop.call_soon_threadsafe(_safe_put, sub.queue, message)
+            sub.loop.call_soon_threadsafe(_safe_put, sub, frame)
         except RuntimeError:  # loop already closed
             pass
 

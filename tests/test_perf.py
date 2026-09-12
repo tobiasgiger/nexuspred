@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from app import alerts, config, news, signals
+from app import alerts, config, context, news, signals, state
 from tests.helpers import FakeExecutor
 from tests.test_strategies import ENTRY, live, wh  # noqa: F401
 
@@ -72,3 +72,54 @@ async def test_trade_alert_uses_the_signal_snapshot(admin, monkeypatch):
 def test_news_lock_check_uses_the_signal_snapshot(admin, monkeypatch):
     monkeypatch.setattr(config, "load_settings", lambda *a, **k: pytest.fail("settings were re-read"))
     assert news.active_lock(1, settings={"news_lock": {"enabled": False}}) is None
+
+
+# ------------------------------------------------------------ polling cadence
+async def test_each_area_keeps_its_own_pnl_cadence(admin, monkeypatch):
+    from app import pnl
+    calls = []
+
+    async def fake_refresh(aid):
+        calls.append(aid)
+        return {"error": "", "accounts": []}
+    monkeypatch.setattr(pnl, "refresh_area", fake_refresh)
+    with context.use_area(1):
+        config.save_settings({"pnl_poll_seconds": 5})
+    assert await pnl._poll_area(1) == 5.0 and calls == [1]
+    left = await pnl._poll_area(1)                       # not due yet: no broker poll, just the wait
+    assert calls == [1] and 4.0 < left <= 5.0
+    monkeypatch.setattr(pnl.time, "monotonic", lambda: pnl._next_due[1] + 0.01)
+    assert await pnl._poll_area(1) == 5.0 and calls == [1, 1]
+
+
+async def test_health_refreshes_a_session_only_when_due(admin, monkeypatch):
+    from app import health
+
+    class Sess:
+        area_id, name = 1, "L"
+        renews = 0
+        def has_token(self): return True
+        async def proactive_refresh(self): Sess.renews += 1
+        async def health_check(self): pass
+        def seconds_until_refresh(self, fallback=60): return 900.0
+    sess = Sess()
+    monkeypatch.setattr(state, "session_status", lambda name: {"connected": True})
+    assert await health._session_due(sess, 60) == 900.0 and Sess.renews == 1
+    left = await health._session_due(sess, 60)
+    assert Sess.renews == 1 and 890 < left <= 900                  # skipped: not due
+
+
+async def test_health_backs_off_a_failing_session(admin, monkeypatch):
+    from app import health
+
+    class Bad:
+        area_id, name = 1, "B"
+        def has_token(self): return True
+        async def proactive_refresh(self): raise RuntimeError("bad token")
+        async def health_check(self): pass
+        def seconds_until_refresh(self, fallback=60): return 900.0
+    monkeypatch.setattr(state, "session_status", lambda name: {"connected": False})
+    delays = []
+    for _ in range(5):
+        delays.append(await health._refresh_session(Bad(), 60))
+    assert delays == [60.0, 120.0, 240.0, 480.0, 600.0]

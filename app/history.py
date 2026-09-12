@@ -51,7 +51,10 @@ def _worker() -> None:
             return
         _idle.clear()
         try:
-            _write(*item)
+            if item[0] == "call":
+                item[1](*item[2], **item[3])
+            else:
+                _write(*item)
         except Exception as exc:  # noqa: BLE001 - history must never kill the writer
             log.error("history write failed (%s row dropped): %s", item[0], exc)
         finally:
@@ -85,6 +88,21 @@ def flush(timeout: float = 5.0) -> None:
     """Block until every queued write has landed (tests / shutdown)."""
     if _running:
         _idle.wait(timeout)
+
+
+def defer(fn: Any, *args: Any, **kwargs: Any) -> None:
+    """Run a small database write on the writer thread (in order with the
+    history rows) instead of on the event loop; synchronous when the writer is
+    not running (tests, shutdown). The copy engine's event and state rows go
+    through here so a WAL commit never stalls an order."""
+    if _running:
+        _idle.clear()
+        _q.put(("call", fn, args, kwargs))
+    else:
+        try:
+            fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001
+            log.error("deferred write failed (%s): %s", getattr(fn, "__name__", fn), exc)
 
 
 def _submit(kind: str, area_id: int, entry: dict[str, Any]) -> None:

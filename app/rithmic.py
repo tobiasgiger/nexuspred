@@ -71,10 +71,18 @@ def _int_id(text: str) -> int:
 
 def _root(symbol: str) -> str:
     s = str(symbol or "").upper()
-    if len(s) >= 3 and s[-1].isdigit() and s[-2] in _MONTHS:
-        s = s[:-2]
-        if s and s[-1].isdigit():                       # two-digit year (MNQZ26)
-            s = s[:-1]
+    if len(s) >= 3 and s[-1].isdigit() and s[-2] in _MONTHS:          # one-digit year (MNQZ6)
+        return s[:-2]
+    if len(s) >= 4 and s[-1].isdigit() and s[-2].isdigit() and s[-3] in _MONTHS:   # two-digit year (MNQZ26)
+        return s[:-3]
+    return s
+
+
+def _rithmic_symbol(symbol: str) -> str:
+    """Rithmic's one-digit-year form: MNQZ26 → MNQZ6 (MNQZ6 stays)."""
+    s = str(symbol or "").upper()
+    if len(s) >= 4 and s[-1].isdigit() and s[-2].isdigit() and s[-3] in _MONTHS:
+        return s[:-2] + s[-1]
     return s
 
 
@@ -105,6 +113,22 @@ def _fingerprint(entry: dict[str, Any]) -> str:
                        "enabled": bool(entry.get("enabled")), "qty_multiplier": float(entry.get("qty_multiplier", 1) or 1),
                        "rithmic_user": entry.get("rithmic_user") or "", "rithmic_system": entry.get("rithmic_system") or "",
                        "rithmic_gateway": entry.get("rithmic_gateway") or "", "accounts": entry.get("accounts") or []}, sort_keys=True, default=str)
+
+
+RECONNECT_GRACE_TICKS = 10        # 5 s for the library's own reconnect before a new client is built
+
+
+def _disconnect_later(client: Any) -> None:
+    async def run() -> None:
+        try:
+            await asyncio.wait_for(client.disconnect(), timeout=10.0)
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        from .tradovate import _fire
+        _fire(run())
+    except RuntimeError:                                # no running loop (tests, shutdown)
+        pass
 
 
 class RithmicSession:
@@ -139,6 +163,7 @@ class RithmicSession:
         self._baskets: dict[int, tuple[str, str]] = {}      # order int id → (basket id, account id)
         self._front: dict[str, tuple[str, datetime]] = {}   # root → (front month, when)
         self._oco_warned = False
+        self._acct_warned: set[str] = set()                 # accounts whose feed error was reported
         for a in self.accounts:
             if a.get("id") and a.get("spec"):
                 self._acct_str[int(a["id"])] = str(a["spec"])
@@ -156,7 +181,9 @@ class RithmicSession:
         user, pw = str(entry.get("rithmic_user") or ""), str(entry.get("rithmic_password") or "")
         if (user, pw) != (self.user, self.password):
             self.user, self.password = user, pw
-            self._client = None                             # next call logs in with the new credentials
+            old, self._client = self._client, None          # next call logs in with the new credentials
+            if old is not None:
+                _disconnect_later(old)                      # never leave the old sockets (and Rithmic's login count) behind
 
     def _refresh_fingerprint(self) -> None:
         entries = config.load_settings(area_id=self.area_id).get("token_accounts") or []
@@ -202,8 +229,17 @@ class RithmicSession:
         if not self.system_name:
             raise TradovateError(f"[{self.name}] Rithmic system name not set (e.g. 'Apex', 'TopstepTrader', 'Rithmic Paper Trading')")
         async with self._lock:
-            if self._client is not None and self._connected():
-                return self._client
+            if self._client is not None:
+                if self._connected():
+                    return self._client
+                # the library reconnects on its own (max_retries=None): give it a
+                # moment before replacing the client, and disconnect what we replace
+                for _ in range(RECONNECT_GRACE_TICKS):
+                    await asyncio.sleep(0.5)
+                    if self._connected():
+                        return self._client
+                old, self._client = self._client, None
+                _disconnect_later(old)
             client = self._make_client()
             from async_rithmic import SysInfraType
             await asyncio.wait_for(client.connect(plants=[SysInfraType.ORDER_PLANT, SysInfraType.PNL_PLANT, SysInfraType.TICKER_PLANT]), timeout=45.0)
@@ -316,11 +352,13 @@ class RithmicSession:
     async def positions_snapshot(self) -> list[dict[str, Any]]:
         client = await self._ensure()
         out: list[dict[str, Any]] = []
+        failed: list[str] = []
         for a in self.accounts:
             try:
                 rows = await client.list_positions(account_id=a["spec"])
             except Exception as exc:  # noqa: BLE001
-                raise TradovateError(f"[{self.name}] positions: {exc}") from exc
+                self._account_failed(a["spec"], "positions", exc, failed)
+                continue
             for p in rows or []:
                 sym = str(getattr(p, "symbol", "") or "")
                 if not sym:
@@ -329,6 +367,8 @@ class RithmicSession:
                 out.append({"accountId": int(a["id"]), "contractId": self._cid(sym, str(getattr(p, "exchange", "") or "") or None),
                             "netPos": net, "netPrice": _num(getattr(p, "avg_open_fill_price", None)),
                             "openPnL": _num(getattr(p, "open_position_pnl", None)), "symbol": sym})
+        if failed and len(failed) == len(self.accounts):
+            raise TradovateError(f"[{self.name}] positions: every account failed ({failed[0]})")
         return out
 
     @staticmethod
@@ -369,16 +409,29 @@ class RithmicSession:
     async def orders_snapshot(self) -> list[dict[str, Any]]:
         client = await self._ensure()
         out: list[dict[str, Any]] = []
+        failed: list[str] = []
         for a in self.accounts:
             try:
                 rows = await client.list_orders(account_id=a["spec"])
             except Exception as exc:  # noqa: BLE001
-                raise TradovateError(f"[{self.name}] orders: {exc}") from exc
+                self._account_failed(a["spec"], "orders", exc, failed)
+                continue
             for o in rows or []:
                 if getattr(o, "basket_id", None):
                     out.append(self._order_row(o, a["spec"], int(a["id"])))
+        if failed and len(failed) == len(self.accounts):
+            raise TradovateError(f"[{self.name}] orders: every account failed ({failed[0]})")
         self._versions = {r["id"]: r["_version"] for r in out}
         return out
+
+    def _account_failed(self, spec: str, what: str, exc: Exception, failed: list[str]) -> None:
+        """One account's feed error (a closed eval account is common): reported
+        once per account, the other accounts of the login carry on."""
+        failed.append(f"{spec}: {exc}"[:200])
+        if spec not in self._acct_warned:
+            self._acct_warned.add(spec)
+            state.log_event("warn", f"[{self.name}] {what} of {spec} unavailable: {exc} — the other accounts of this login continue; "
+                                    f"run Connect & Verify to drop accounts the broker no longer lists")
 
     async def order_versions(self, order_ids: list[int]) -> dict[int, dict[str, Any]]:
         versions = getattr(self, "_versions", None)
@@ -508,6 +561,16 @@ class RithmicSession:
                 failure = "no basket id in the answer"
         except TradovateError:
             raise
+        except asyncio.TimeoutError:
+            # the request may have reached Rithmic: not a rejection — the operator checks the account
+            unknown = f"{name}: {action} {qty} {sym} {order_type} timed out — outcome unknown, CHECK THE ACCOUNT (tag {tag})"
+            state.log_order({"action": action, "symbol": sym, "account": name, "account_id": aid, "qty": qty, "order_type": order_type,
+                             "price": sent_price, "stop_price": sent_stop, "order_id": None, "user_tag": tag, "status": "unknown",
+                             "raw": {"errorText": "timeout"}})
+            state.log_event("error", unknown)
+            from .tradovate import OrderOutcomeUnknown, _fire
+            _fire(alerts.execution_problem(f"Order outcome unknown on {name}", unknown))
+            raise OrderOutcomeUnknown(unknown) from None
         except Exception as exc:  # noqa: BLE001
             failure, basket = f"{type(exc).__name__}: {exc}"[:200], ""
         order_id = self._oid(basket, spec) if basket else None
@@ -534,9 +597,12 @@ class RithmicSession:
         try:
             second = await self.place_order(symbol=symbol, action=other["action"], qty=qty, order_type=other["order_type"], price=other.get("price"),
                                             stop_price=other.get("stop_price"), account_spec=account_spec, account_id=account_id, account_name=account_name)
-        except TradovateError:
+        except TradovateError as exc:
+            from .tradovate import OrderOutcomeUnknown
+            if isinstance(exc, OrderOutcomeUnknown):
+                raise                                           # leg 2 may be live: nothing is cancelled blindly
             try:
-                await self.cancel_order(int(first["order_id"]))
+                await self.cancel_order(int(first["order_id"]), account_spec=account_spec, account_id=account_id)
             except Exception:  # noqa: BLE001
                 pass
             raise
@@ -546,7 +612,7 @@ class RithmicSession:
     async def modify_order(self, order_id: int, *, qty: int, order_type: str,
                            price: float | None = None, stop_price: float | None = None,
                            account_name: str | None = None, account_id: int | None = None, account_spec: str | None = None) -> dict[str, Any]:
-        basket, spec = self._basket(order_id)
+        basket, spec = self._basket(order_id, account_spec, account_id)
         from async_rithmic import OrderType
         otype = {"Market": OrderType.MARKET, "Limit": OrderType.LIMIT, "Stop": OrderType.STOP_MARKET, "StopLimit": OrderType.STOP_LIMIT}.get(order_type)
         kw: dict[str, Any] = {"basket_id": basket, "account_id": spec, "qty": int(qty)}
@@ -570,16 +636,24 @@ class RithmicSession:
             raise TradovateError(f"modify order {order_id} rejected — {failure}")
         return {"order_id": order_id, "status": "modified"}
 
-    def _basket(self, order_id: int) -> tuple[str, str]:
+    def _basket(self, order_id: int, account_spec: str | None = None, account_id: int | None = None) -> tuple[str, str]:
+        """(basket id, account) of an order we placed or reloaded. The caller's
+        account hint wins (twins reloaded after a restart are not in the map);
+        without one, a login with several accounts never guesses the primary."""
         rec = self._baskets.get(int(order_id))
-        if rec is None:
-            if len(str(order_id)) < 18:
-                return str(order_id), self.account_spec          # numeric basket ids round-trip unchanged
-            raise TradovateError(f"[{self.name}] unknown Rithmic order {order_id}")
-        return rec
+        hinted = self._acct(account_spec, account_id)[0] if (account_spec or account_id) else ""
+        if rec is not None:
+            return rec[0], (hinted or rec[1])
+        if len(str(order_id)) < 18:                             # numeric basket ids round-trip unchanged
+            if hinted:
+                return str(order_id), hinted
+            if len(self.accounts) <= 1:
+                return str(order_id), self.account_spec
+            raise TradovateError(f"[{self.name}] order {order_id}: account unknown (several accounts on this login) — pass the account")
+        raise TradovateError(f"[{self.name}] unknown Rithmic order {order_id}")
 
     async def cancel_order(self, order_id: int, *, account_id: int | None = None, account_spec: str | None = None) -> dict[str, Any]:
-        basket, spec = self._basket(order_id)
+        basket, spec = self._basket(order_id, account_spec, account_id)
         client = await self._ensure()
         try:
             raw = await client.cancel_order(basket_id=basket, account_id=spec)

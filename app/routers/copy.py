@@ -83,6 +83,9 @@ async def api_group_sharing(group_id: str, request: Request) -> dict[str, Any]:
     if before["enabled"] != after["enabled"]:
         db.log_action(user["id"], user["email"], "copy_share", after["title"] or g.get("name", ""), "published" if after["enabled"] else "unpublished")
         state.log_event("info", f"Copy group '{g.get('name')}' {'published on' if after['enabled'] else 'removed from'} the marketplace")
+    if before["enabled"] and not after["enabled"]:
+        r = copy._runners.get((context.get_area(), group_id))
+        await copy.release_followers(context.get_area(), group_id, [f["spec"] for f in (r.external if r else [])])
     await copy.sync_area(context.get_area())          # unpublished → subscribers' accounts leave the mirror
     return {**_with_status(g, copy.statuses(context.get_area())), "subscriber_count": db.subscriber_counts(context.get_area()).get(f"copy:{group_id}", 0)}
 
@@ -107,6 +110,7 @@ async def api_group_remove_subscriber(group_id: str, sub_id: int, request: Reque
     email = db.area_owner_email(removed["area_id"]) or str(removed["area_id"])
     db.log_action(user["id"], user["email"], "subscriber_remove", email, f"copy group {group_id}")
     state.log_event("info", f"Subscriber {email} removed from copy group {group_id}")
+    await copy.release_followers(context.get_area(), group_id, copy._enabled_specs(removed.get("accounts")))
     await copy.sync_area(context.get_area())
     return {"status": "deleted", "id": sub_id}
 

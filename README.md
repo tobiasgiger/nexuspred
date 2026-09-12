@@ -92,7 +92,7 @@ curl -fsSL https://raw.githubusercontent.com/tobiasgiger/nexuspred/main/deploy/i
 Installs Caddy (automatic Let's Encrypt certificate), a systemd service, daily backups and
 the `fluxbridge` helper command; then open `https://bridge.example.com/setup`. Moving from
 Render: **Settings → Updates → Download backup**, then `sudo fluxbridge restore FILE`.
-Details: [docs/SELF-HOSTING.md](docs/SELF-HOSTING.md).
+Details: [docs/SELF-HOSTING.md](docs/SELF-HOSTING.md). How the bridge stays fast and what keeps it safe: [docs/PERFORMANCE.md](docs/PERFORMANCE.md), [docs/SECURITY.md](docs/SECURITY.md).
 
 ### One-click installers (recommended)
 

@@ -41,12 +41,21 @@ c_green=$'\033[32m'; c_blue=$'\033[34m'; c_yellow=$'\033[33m'; c_red=$'\033[31m'
 say()  { printf "%s==>%s %s\n" "$c_blue" "$c_reset" "$1"; }
 ok()   { printf "%s ok %s %s\n" "$c_green" "$c_reset" "$1"; }
 warn() { printf "%s !! %s %s\n" "$c_yellow" "$c_reset" "$1"; }
+# run_as USER HOME CMD... — as the service user; runuser (util-linux) first, sudo
+# next, plain su last: minimal cloud images ship without sudo.
+run_as() {
+  local u="$1" h="$2"; shift 2
+  if command -v runuser >/dev/null 2>&1; then runuser -u "$u" -- env HOME="$h" "$@"
+  elif command -v sudo >/dev/null 2>&1; then sudo -u "$u" env HOME="$h" "$@"
+  else su -s /bin/sh "$u" -c "$(printf '%q ' env HOME="$h" "$@")"; fi
+}
 die()  { printf "%s error:%s %s\n" "$c_red" "$c_reset" "$1" >&2; exit 1; }
 
 OS="$(uname -s)"
 RAW="https://raw.githubusercontent.com/tobiasgiger/nexuspred/$BRANCH"
 SVC_USER=fluxagent
 if [[ "$OS" == "Darwin" ]]; then
+  [[ $EUID -eq 0 ]] && die "on macOS run the installer as your own user (no sudo): the agent runs as a LaunchAgent of your login"
   DIR="${DIR:-$HOME/fluxbridge-agent}"
 else
   [[ $EUID -eq 0 ]] || die "run as root (sudo) on Linux — the agent is installed as a system service"
@@ -87,7 +96,7 @@ if [[ "$OS" != "Darwin" ]]; then
   id -u "$SVC_USER" >/dev/null 2>&1 || useradd --system --home-dir "$DIR" --shell /usr/sbin/nologin "$SVC_USER" 2>/dev/null || useradd -r -d "$DIR" -s /sbin/nologin "$SVC_USER" \
     || adduser -S -D -H -h "$DIR" -s /sbin/nologin "$SVC_USER"     # Alpine (busybox)
   chown -R "$SVC_USER:$SVC_USER" "$DIR"; chmod 750 "$DIR"
-  sudo -u "$SVC_USER" test -r "$DIR/fluxbridge_agent.py" \
+  run_as "$SVC_USER" "$DIR" test -r "$DIR/fluxbridge_agent.py" \
     || die "user $SVC_USER cannot read $DIR — a parent directory is not traversable (chmod o+x it, or use --dir /opt/fluxbridge-agent)"
 fi
 
@@ -101,7 +110,7 @@ if [[ -n "$CODE" ]] || ! python3 -c "import json,sys; sys.exit(0 if json.load(op
   if [[ "$OS" == "Darwin" ]]; then
     (cd "$DIR" && python3 fluxbridge_agent.py --bridge "$BRIDGE" --code "$CODE" --name "$NAME" --pair-only)
   else
-    sudo -u "$SVC_USER" env HOME="$DIR" "$(command -v python3)" "$DIR/fluxbridge_agent.py" --bridge "$BRIDGE" --code "$CODE" --name "$NAME" --pair-only
+    run_as "$SVC_USER" "$DIR" "$(command -v python3)" "$DIR/fluxbridge_agent.py" --bridge "$BRIDGE" --code "$CODE" --name "$NAME" --pair-only
   fi
   chmod 600 "$CFG"
   ok "Paired — token stored in $CFG"
@@ -169,13 +178,13 @@ Type=simple
 User=$SVC_USER
 Group=$SVC_USER
 WorkingDirectory=$DIR
-ExecStart=$(command -v python3) $DIR/fluxbridge_agent.py
+ExecStart="$(command -v python3)" "$DIR/fluxbridge_agent.py"
 Restart=always
 RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=true
+ProtectHome=$( [[ "$DIR" == /home/* || "$DIR" == /root/* ]] && echo read-only || echo true )
 ReadWritePaths=$DIR
 UMask=0077
 

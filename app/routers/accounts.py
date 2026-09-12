@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
-from .. import config, context, db, risk, state, tradovate
+from .. import broker, config, context, db, risk, state, tradovate
 
 router = APIRouter(prefix="/api", tags=["accounts"])
 
@@ -14,7 +14,8 @@ def trade_accounts_overview() -> list[dict[str, Any]]:
     """Flat list of every trade account across all logins, with execution toggle
     and live connection status — powers the Trade Accounts overview."""
     out: list[dict[str, Any]] = []
-    for idx, t in enumerate(config.load_settings().get("token_accounts") or []):
+    s = config.load_settings()
+    for idx, t in enumerate(s.get("token_accounts") or []):
         tname = t.get("name") or f"account {idx + 1}"
         env = t.get("environment") or "demo"
         tconn = bool(state.session_status(tname).get("connected"))
@@ -25,6 +26,7 @@ def trade_accounts_overview() -> list[dict[str, Any]]:
         for a in accts:
             out.append({
                 "token_idx": idx, "lid": t.get("lid") or "", "token_name": tname, "environment": env,
+                "broker": broker.broker_of(t),
                 "token_enabled": bool(t.get("enabled")), "connected": tconn,
                 "agent_id": int(t.get("agent_id") or 0),
                 "spec": a.get("spec") or a.get("account_spec") or "",
@@ -32,7 +34,7 @@ def trade_accounts_overview() -> list[dict[str, Any]]:
                 "enabled": bool(a.get("enabled", True)),
                 "qty_multiplier": float(a.get("qty_multiplier", t.get("qty_multiplier", 1)) or 1),
                 "risk": dict(a.get("risk") or {}),
-                "locked": risk.lock_of(context.get_area(), a.get("spec") or a.get("account_spec") or ""),
+                "locked": risk.lock_of(context.get_area(), a.get("spec") or a.get("account_spec") or "", settings=s),
             })
     return out
 
@@ -68,6 +70,12 @@ async def api_save_token_accounts(request: Request) -> list[dict[str, Any]]:
         pxk = a.get("px_api_key", "")
         brk_raw = str(a.get("broker") or prev.get("broker") or "").lower()
         brk = brk_raw if brk_raw in ("rithmic", "projectx") else "tradovate"
+        if prev and brk != (str(prev.get("broker") or "tradovate")):
+            # a login moved to another broker: its discovered accounts, ids and
+            # the old broker's credentials do not carry over (Connect & Verify
+            # rediscovers them); the Tradovate token must not stay stored under
+            # a Rithmic entry either
+            prev = {k: v for k, v in prev.items() if k in ("name", "environment", "lid", "qty_multiplier")}
         cleaned.append({
             "name": (a.get("name") or f"account {i + 1}").strip(),
             "broker": brk,

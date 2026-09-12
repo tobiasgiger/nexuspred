@@ -66,7 +66,7 @@ async def api_subscribe_copy(request: Request, publisher_area_id: int, group_id:
         raise HTTPException(status_code=403, detail="That copy group isn't available to your account")
     body = await request.json()
     try:
-        accounts = copy.clean_subscriber_accounts(body.get("accounts"), area)
+        accounts = copy.clean_subscriber_accounts(body.get("accounts"), area, broker_kind=copy.leader_broker(publisher_area_id, group_id))
     except (TypeError, ValueError, KeyError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     enabled = bool(body.get("enabled", True))
@@ -117,7 +117,9 @@ async def api_update_subscription(request: Request, sub_id: int) -> dict[str, An
     if "accounts" in body:
         if _is_copy(current):
             try:
-                kwargs["accounts"] = copy.clean_subscriber_accounts(body["accounts"], context.get_area(), exclude_sub_id=sub_id)
+                kwargs["accounts"] = copy.clean_subscriber_accounts(
+                    body["accounts"], context.get_area(), exclude_sub_id=sub_id,
+                    broker_kind=copy.leader_broker(current["publisher_area_id"], current["webhook_id"][5:]))
             except (TypeError, ValueError, KeyError) as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
         else:
@@ -125,6 +127,10 @@ async def api_update_subscription(request: Request, sub_id: int) -> dict[str, An
     sub = db.update_subscription(sub_id, context.get_area(), **kwargs)
     if not sub:
         raise HTTPException(status_code=404, detail="Subscription not found")
+    if _is_copy(sub):
+        before = copy._enabled_specs(current.get("accounts")) if current.get("enabled", True) else set()
+        after = copy._enabled_specs(sub.get("accounts")) if sub.get("enabled", True) else set()
+        await copy.release_followers(sub["publisher_area_id"], sub["webhook_id"][5:], before - after)
     view = _enrich(sub)
     state.log_event("info", f"Subscription '{((view.get('webhook') or view.get('copy')) or {}).get('title', sub['webhook_id'])}' "
                     f"{'enabled' if sub['enabled'] else 'disabled'}")
@@ -143,7 +149,9 @@ async def api_unsubscribe(request: Request, sub_id: int) -> dict[str, Any]:
         g, sh = copy.find_published(sub["publisher_area_id"], sub["webhook_id"][5:])
         title = (sh.get("title") or (g or {}).get("name") or sub["webhook_id"]) if g else sub["webhook_id"]
         db.log_action(user["id"], user["email"], "unsubscribe", title)
-        state.log_event("info", f"Stopped following copy group '{title}' — your positions are not touched")
+        cancelled = await copy.release_followers(sub["publisher_area_id"], sub["webhook_id"][5:], copy._enabled_specs(sub.get("accounts")))
+        state.log_event("info", f"Stopped following copy group '{title}' — your positions are not touched"
+                        + (f" ({cancelled} mirrored working order(s) cancelled)" if cancelled else ""))
         await copy.sync_area(sub["publisher_area_id"])
         return {"status": "deleted", "id": sub_id}
     wh, sh = marketplace.find_published(sub["publisher_area_id"], sub["webhook_id"])

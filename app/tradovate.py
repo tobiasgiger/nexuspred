@@ -31,6 +31,14 @@ class TradovateError(Exception):
     """Raised when the Tradovate API returns an error."""
 
 
+class OrderOutcomeUnknown(TradovateError):
+    """The order request timed out after it may have reached the broker: not a
+    rejection. Callers never cancel or re-place blindly on it."""
+
+
+WORKING_STATUSES = frozenset({"Working", "Pending", "PendingNew", "PendingReplace", "PendingCancel", "Suspended"})
+
+
 class RateLimited(TradovateError):
     """Tradovate answered 429: the request was refused for ``retry_after`` s
     (``p-time`` in the body when given). Not a connectivity problem."""
@@ -114,6 +122,19 @@ def _fingerprint(entry: dict[str, Any]) -> str:
 _bg_tasks: set[asyncio.Task] = set()
 
 
+def _close_later(session: Any) -> None:
+    """Close a replaced broker session in the background (sockets, login slots)."""
+    async def run() -> None:
+        try:
+            await asyncio.wait_for(session.close(), timeout=10.0)
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        _fire(run())
+    except RuntimeError:                                # no running loop (tests)
+        pass
+
+
 def _fire(coro: Any) -> None:
     """Run an alert in the background (context — and so the area — is inherited).
     A 15 s SMTP handshake must never stall a health check or a connect."""
@@ -151,6 +172,7 @@ class TradovateSession:
         self.penalty_until: float = 0.0           # monotonic; set by a 429
         self.rate_limits = 0
         self._contract_id_cache: dict[str, tuple[int, datetime]] = {}
+        self._contract_names: dict[int, str] = {}      # contract id -> name (positions view)
         self.fingerprint = _fingerprint(entry)
         if self._token_expires:
             state.set_session_status(self.name, token_expires=self._token_expires.isoformat())
@@ -688,9 +710,8 @@ class TradovateSession:
     async def working_orders(self, account_id: int | None = None, *, account_spec: str | None = None) -> list[dict[str, Any]]:
         _, aid = self._target(account_spec, account_id)
         orders = await self._request("GET", "/order/list") or []
-        active = {"Working", "Pending", "PendingNew", "PendingReplace", "PendingCancel", "Suspended"}
         return [o for o in orders
-                if o.get("ordStatus") in active and o.get("accountId") == aid]
+                if o.get("ordStatus") in WORKING_STATUSES and o.get("accountId") == aid]
 
     async def contract_id(self, symbol: str) -> int:
         """Tradovate's numeric contract id for a contract name (cached 1 h).
@@ -719,28 +740,39 @@ class TradovateSession:
             raise TradovateError(f"{account_name or self.name}: liquidate {symbol} rejected — {failure}")
         return data
 
+    async def contract_name(self, contract_id: int) -> str:
+        """The contract's name for a broker id — cached for the session (a
+        contract id never changes its name)."""
+        cached = self._contract_names.get(contract_id)
+        if cached is not None:
+            return cached
+        try:
+            item = await self._request("GET", "/contract/item", params={"id": contract_id})
+            name = (item or {}).get("name") or str(contract_id)
+        except TradovateError:
+            return str(contract_id)              # not cached: the next look retries
+        if len(self._contract_names) > 512:
+            self._contract_names.clear()
+        self._contract_names[contract_id] = name
+        return name
+
+    def positions_from(self, raw: list[dict[str, Any]], *, account_id: int, account_name: str) -> list[dict[str, Any]]:
+        """One account's open positions out of a ``/position/list`` snapshot
+        (names resolved by :meth:`positions_named`)."""
+        return [{"symbol": p.get("contractId"), "account": account_name, "netPos": p.get("netPos"),
+                 "netPrice": p.get("netPrice")}
+                for p in raw if p.get("accountId") == account_id and (p.get("netPos") or 0)]
+
+    async def positions_named(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        for r in rows:
+            r["symbol"] = await self.contract_name(r["symbol"])
+        return rows
+
     async def positions(self, *, account_id: int | None = None,
                         account_name: str | None = None, account_spec: str | None = None) -> list[dict[str, Any]]:
         _, aid = self._target(account_spec, account_id)
-        name = account_name or self.name
         raw = await self._request("GET", "/position/list") or []
-        names: dict[int, str] = {}
-        out: list[dict[str, Any]] = []
-        for p in raw:
-            if p.get("accountId") != aid or not (p.get("netPos") or 0):
-                continue
-            cid = p.get("contractId")
-            cname = names.get(cid)
-            if cname is None:
-                try:
-                    item = await self._request("GET", "/contract/item", params={"id": cid})
-                    cname = (item or {}).get("name") or str(cid)
-                except TradovateError:
-                    cname = str(cid)
-                names[cid] = cname
-            out.append({"symbol": cname, "account": name, "netPos": p.get("netPos"),
-                        "netPrice": p.get("netPrice")})
-        return out
+        return await self.positions_named(self.positions_from(raw, account_id=aid, account_name=account_name or self.name))
 
 
 class AccountExecutor:
@@ -854,6 +886,10 @@ class SessionManager:
                 fresh.append(old)
             else:
                 fresh.append(TradovateSession(i, e, area_id=self.area_id))
+        kept = {id(s) for s in fresh}
+        for old in prev:
+            if id(old) not in kept and hasattr(old, "close"):
+                _close_later(old)                       # a replaced Rithmic/ProjectX session drops its sockets
         self._sessions = fresh
 
     def all(self) -> list[TradovateSession]:

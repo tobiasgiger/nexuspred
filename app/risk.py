@@ -126,14 +126,15 @@ def trading_day(now: Optional[datetime] = None) -> str:
 
 
 def _state(area_id: int) -> dict[str, Any]:
-    st = config.load_settings(area_id=area_id).get("risk_state")
+    st = config.setting("risk_state", area_id=area_id)
     return dict(st) if isinstance(st, dict) else {}
 
 
 def lock_of(area_id: int, spec: str, *, settings: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
-    """The account's lock record for today, or None."""
-    s = settings if settings is not None else config.load_settings(area_id=area_id)
-    st = s.get("risk_state") if isinstance(s.get("risk_state"), dict) else {}
+    """The account's lock record for today, or None. Runs before every order:
+    without ``settings`` only the ``risk_state`` key is read."""
+    raw = settings.get("risk_state") if settings is not None else config.setting("risk_state", area_id=area_id)
+    st = raw if isinstance(raw, dict) else {}
     rec = st.get(spec)
     if not isinstance(rec, dict) or rec.get("unlocked"):
         return None
@@ -236,13 +237,14 @@ _warned_no_id: set[tuple[int, str]] = set()
 
 
 async def check_area(area_id: int, sessions: list[Any], snapshots: list[dict[str, Any]], *,
-                     positions: Optional[dict[str, Optional[list[dict[str, Any]]]]] = None) -> list[dict[str, Any]]:
+                     positions: Optional[dict[str, Optional[list[dict[str, Any]]]]] = None,
+                     settings: Optional[dict[str, Any]] = None) -> list[dict[str, Any]]:
     """One P&L tick: apply every account's rules. Returns the triggers fired
     (also used by tests). Annotates each snapshot with its ``risk`` view.
     ``positions`` may carry the raw ``/position/list`` per login (from the P&L
     poll) so "still holds a position" is judged by the broker's list, not by
-    an open P&L that can be exactly 0.00."""
-    s = config.load_settings(area_id=area_id)
+    an open P&L that can be exactly 0.00. ``settings`` is the tick's snapshot."""
+    s = settings if settings is not None else config.load_settings(area_id=area_id)
     now_local = local_now(area_id, s)
     now_ny = now_local.astimezone(ET)
     raw_state = s.get("risk_state") if isinstance(s.get("risk_state"), dict) else {}

@@ -13,7 +13,7 @@ def capture(monkeypatch, admin):
     discord: list[str] = []
     email: list[tuple[str, str]] = []
 
-    async def fake_discord(message):
+    async def fake_discord(message, **kw):
         discord.append(message)
 
     async def fake_email(subject, body):

@@ -61,10 +61,18 @@ LOG_FILE = os.path.join(BASE_DIR, "agent.log")
 POLL_WAIT_S = 25
 
 
+LOG_MAX_BYTES = 2_000_000       # agent.log is rotated once (agent.log.1) past this size
+
+
 def log(msg: str) -> None:
     line = f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  {msg}"
     print(line, flush=True)
     try:
+        try:
+            if os.path.getsize(LOG_FILE) > LOG_MAX_BYTES:
+                os.replace(LOG_FILE, LOG_FILE + ".1")
+        except OSError:
+            pass
         with open(LOG_FILE, "a", encoding="utf-8") as f:
             f.write(line + "\n")
     except OSError:
@@ -231,7 +239,10 @@ def main() -> int:
                 return 0
         except urllib.error.HTTPError as exc:
             if exc.code == 401:
-                log("The bridge rejected this agent's token (revoked?). Delete agent.json and pair again.")
+                # a revoked token: the service manager would restart us every 5 s
+                # otherwise — wait, then let it try again (the operator re-pairs)
+                log("The bridge rejected this agent's token (revoked?). Delete agent.json and pair again. Retrying in 5 minutes.")
+                time.sleep(300)
                 return 1
             log(f"bridge answered {exc.code}; retrying in {backoff:.0f}s")
             time.sleep(backoff)

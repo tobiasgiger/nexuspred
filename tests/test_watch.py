@@ -209,7 +209,7 @@ async def test_alert_accounts_filter(admin, sent):
 async def test_alert_accounts_filter_texts(admin, monkeypatch):
     pushed = []
 
-    async def fake_push(title, message, *, url="/"):
+    async def fake_push(title, message, *, url="/", settings=None):
         pushed.append((title, message))
 
     async def quiet(*a, **k):

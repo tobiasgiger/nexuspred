@@ -13,8 +13,17 @@ export function dataTable({ columns, empty = "Nothing here yet", onRow = null, r
     h("thead", null, h("tr", null, columns.map((c) => h("th", { class: c.className || null }, c.label)))),
     tbody);
   const el = h("div", { class: "table-scroll" }, table);
+  let lastKey = null;
 
-  function update(rows) {
+  function update(rows, { force = false } = {}) {
+    // pollers hand the same rows back every few seconds: a cheap fingerprint
+    // spares the DOM the full clear-and-rebuild (and keeps scroll/selection)
+    let key = null;
+    if (!force) {
+      try { key = JSON.stringify(rows || []); } catch { key = null; }
+      if (key !== null && key === lastKey) return;
+    }
+    lastKey = key;
     clear(tbody);
     if (!rows || !rows.length) {
       tbody.append(h("tr", null, h("td", { class: "empty", colspan: columns.length }, empty)));

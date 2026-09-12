@@ -4,6 +4,56 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.61
+- **Performance pass** (see `docs/PERFORMANCE.md` for the numbers). Settings reads hand
+  out a pickled snapshot instead of a Python deep copy (135 → 25 µs on a normal workspace,
+  583 → 70 µs on a large one); a webhook signal reads the settings once instead of 3–4
+  times, and the per-order risk check / news lock read a single key. Each workspace keeps
+  its own P&L polling cadence (a busy dashboard no longer drags idle workspaces to a 5 s
+  broker poll); the health loop renews each login on its own schedule and backs a failing
+  login off (60 → 600 s) instead of renewing every login every minute. `/api/positions` and
+  the copy-order reconcile fetch one list per login, not per account; contract names are
+  cached on the session. Copy-engine event and state rows are written on the history
+  writer thread, never on the event loop between two mirror orders. The live stream
+  serialises each frame once and tells a slow tab to resync instead of silently dropping
+  messages; tables skip the rebuild when rows did not change and the Logs page inserts new
+  rows instead of repainting 200. The news lock check is memoised for 2 s and its feed is
+  retried every ten minutes after a failure, not on every page view. Benchmark: 885 →
+  ≈ 1 200 signals/s.
+- **Security patches** (see `docs/SECURITY.md`). The database backup strips the DB-stored
+  session secret and the Web-Push private key (and refuses with 409 while the encryption key
+  still lives inside the database); Web Push never follows redirects; publishers see
+  subscriber counts, never their account routing; the failed-login brakes spare the address
+  the account last signed in from (no lock-out of the kill switch by a stranger); reset
+  links are returned only when they could not be mailed and only the bootstrap admin can
+  reset or sign out another administrator; sessions are revocable ("Sign out other devices"
+  on the Account page, "Sign out everywhere" on the Users page); sign-out is POST-only;
+  the webhook ingress answers 400 to nested / non-object JSON; agent relay results are
+  validated and bounded; a push endpoint stays with the workspace that registered it;
+  the self-hosting helper never runs git as root inside the service-writable checkout.
+- **Copy trading fixes.** Followers stay within the leader's broker (positions are keyed
+  by broker contract ids); follower logins are resolved by login id, not by position;
+  runner tasks run in the group's own workspace (a leader login's problems no longer land
+  in another tenant's log); an account that leaves a group (unsubscribe, kick, unpublish,
+  edit) gets its mirrored working orders cancelled first; a subscriber's account name is
+  masked in the publisher's error texts too; the reconcile never re-opens a position the
+  news lock flattened, and uses the current leader picture after waiting for the lock;
+  the protective stop of a bracket waits out a short 429 penalty instead of failing twice
+  within half a second.
+- **Rithmic / ProjectX fixes.** Two-digit years (MNQZ26) parse as contracts; cancel and
+  modify honour the executor's account (twins reloaded after a restart) and never guess the
+  primary account on a multi-account login; one closed account no longer takes the whole
+  login's position/order feed down (reported once); a timed-out order is "outcome unknown"
+  with an alert, not a rejection, and an OCO never cancels a leg that may be live; replaced
+  Rithmic clients and sessions are disconnected; switching a login's broker resets the old
+  broker's accounts and credentials; ProjectX shares one account and position list per
+  login within a P&L tick and refuses to guess an unknown order's account.
+- **Installers.** The server installer keeps operator-added variables in the environment
+  file and honours `--port` on re-runs; `runuser`/`sudo`/`su` are used whichever exists;
+  restore copies and validates before it swaps the live database; the agent installer
+  refuses `sudo` on macOS, allows `--dir` under `/home`, quotes paths; the agent rotates its
+  log and waits five minutes on a revoked token instead of restart-looping.
+
 ## 5.0.0-alpha.60
 - **Calendar page.** The economic calendar has its own page under Monitoring (next to
   Journal): every entry of the feed plus your manual events, grouped by day, with filters

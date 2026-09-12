@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 
 from .. import alerts, config, context, db, news, pnl, rollover, security, signals, state, tradovate
 from ..tradovate import TradovateError
@@ -242,19 +242,21 @@ async def api_test_alert() -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------- logs
+# The ring buffers hold plain JSON dicts (they are json.dumps'd for the live
+# stream already): answer with them directly, skipping FastAPI's encoder walk.
 @router.get("/api/signals")
-async def api_signals() -> list[dict[str, Any]]:
-    return state.recent_signals()
+async def api_signals() -> JSONResponse:
+    return JSONResponse(state.recent_signals())
 
 
 @router.get("/api/orders")
-async def api_orders() -> list[dict[str, Any]]:
-    return state.recent_orders()
+async def api_orders() -> JSONResponse:
+    return JSONResponse(state.recent_orders())
 
 
 @router.get("/api/events")
-async def api_events() -> list[dict[str, Any]]:
-    return state.recent_events()
+async def api_events() -> JSONResponse:
+    return JSONResponse(state.recent_events())
 
 
 @router.get("/api/history/signals")
@@ -299,8 +301,11 @@ async def api_stream(request: Request) -> StreamingResponse:
                 if await request.is_disconnected():
                     break
                 try:
-                    msg = await asyncio.wait_for(sub.queue.get(), timeout=10.0)
-                    yield f"data: {json.dumps(msg)}\n\n"
+                    frame = await asyncio.wait_for(sub.queue.get(), timeout=10.0)
+                    yield frame                       # pre-serialised by state._broadcast
+                    if sub.dropped:
+                        sub.dropped = False
+                        yield "event: resync\ndata: {}\n\n"   # messages were lost on a full queue: re-pull
                 except asyncio.TimeoutError:
                     yield "event: ping\ndata: {}\n\n"  # named heartbeat; keeps proxies open
         finally:
@@ -317,14 +322,31 @@ async def api_stream(request: Request) -> StreamingResponse:
 # ------------------------------------------------------------ broker checks
 @router.get("/api/positions")
 async def api_positions() -> Any:
-    """Open positions across every enabled account, fetched concurrently."""
+    """Open positions across every enabled account: one ``/position/list`` per
+    login (not per account), logins fetched concurrently."""
     async def one(ex) -> list[dict[str, Any]]:
         try:
             return await ex.positions()
         except TradovateError:
             return []
 
-    results = await asyncio.gather(*(one(ex) for ex in tradovate.manager().enabled()))
+    async def per_login(sess, exs) -> list[dict[str, Any]]:
+        try:
+            raw = await sess.positions_snapshot()
+        except Exception:  # noqa: BLE001 - one login down must not hide the others
+            return []
+        rows = [r for ex in exs for r in sess.positions_from(raw or [], account_id=ex.id, account_name=ex.name)]
+        return await sess.positions_named(rows)
+
+    groups: dict[int, tuple[Any, list[Any]]] = {}
+    singles: list[Any] = []
+    for ex in tradovate.manager().enabled():
+        sess = getattr(ex, "session", None)
+        if sess is not None and getattr(sess, "kind", "tradovate") == "tradovate" and hasattr(sess, "positions_from") and getattr(ex, "id", 0):
+            groups.setdefault(id(sess), (sess, []))[1].append(ex)
+        else:
+            singles.append(ex)
+    results = await asyncio.gather(*[per_login(s, exs) for s, exs in groups.values()], *(one(ex) for ex in singles))
     return [p for chunk in results for p in chunk]
 
 

@@ -35,8 +35,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
+import httpx
+
 from . import alerts, config, context, http, risk, state
 from .tradovate import RateLimited, TradovateError, _fire
+
+SNAPSHOT_TTL_S = 3.0              # one Position/searchOpen and Account/search per login per P&L tick, not per account
 
 log = logging.getLogger(__name__)
 
@@ -148,6 +152,8 @@ class ProjectXSession:
         self._front: dict[str, tuple[str, float]] = {}       # root → (name, monotonic)
         self._orders_cache: dict[int, dict[str, Any]] = {}
         self._px_cache: dict[str, tuple[float, float]] = {}    # contract id → (last price, monotonic)
+        self._snap_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}   # per-login snapshots shared by the P&L tick's accounts
+        self._acct_warned: set[str] = set()
         self._oco_warned = False
 
     # ------------------------------------------------------------ config
@@ -422,10 +428,33 @@ class ProjectXSession:
         rec = self._contracts.get(cid)
         return rec["name"] if rec else gateway_id
 
-    async def positions_snapshot(self) -> list[dict[str, Any]]:
+    def _account_failed(self, spec: str, what: str, exc: Exception, failed: list[str]) -> None:
+        failed.append(f"{spec}: {exc}"[:200])
+        if spec not in self._acct_warned:
+            self._acct_warned.add(spec)
+            state.log_event("warn", f"[{self.name}] {what} of {spec} unavailable: {exc} — the other accounts of this login continue; "
+                                    f"run Connect & Verify to drop accounts the firm no longer lists")
+
+    async def positions_snapshot(self, *, cached: bool = False) -> list[dict[str, Any]]:
+        """The login's open positions. ``cached`` (the P&L tick, which asks once
+        per account) reuses a snapshot a few seconds old; the copy engine's
+        leader poll always fetches."""
+        hit = self._snap_cache.get("positions")
+        if cached and hit and time.monotonic() - hit[0] < SNAPSHOT_TTL_S:
+            return [dict(r) for r in hit[1]]
         out: list[dict[str, Any]] = []
+        failed: list[str] = []
         for a in self.accounts:
-            data = await self._post("/api/Position/searchOpen", {"accountId": int(a["id"])})
+            try:
+                data = await self._post("/api/Position/searchOpen", {"accountId": int(a["id"])})
+            except (httpx.TimeoutException, asyncio.TimeoutError) as exc:
+                self._account_failed(a.get("spec", str(a["id"])), "positions", exc, failed)
+                continue
+            except TradovateError as exc:
+                if isinstance(exc, RateLimited):
+                    raise
+                self._account_failed(a.get("spec", str(a["id"])), "positions", exc, failed)
+                continue
             for p in data.get("positions") or []:
                 if not isinstance(p, dict) or not p.get("contractId"):
                     continue
@@ -435,6 +464,10 @@ class ProjectXSession:
                 net = size if int(_num(p.get("type"), 1)) == 1 else -size
                 out.append({"accountId": int(a["id"]), "contractId": _int_id(gid), "netPos": net, "netPrice": _num(p.get("averagePrice"), None),
                             "symbol": name, "gateway_id": gid})
+        if failed and len(failed) == len(self.accounts):
+            raise TradovateError(f"[{self.name}] positions: every account failed ({failed[0]})")
+        if cached:                                  # only the P&L tick's own fetch is shared between its accounts
+            self._snap_cache["positions"] = (time.monotonic(), [dict(r) for r in out])
         return out
 
     def _order_row(self, o: dict[str, Any]) -> dict[str, Any]:
@@ -449,12 +482,24 @@ class ProjectXSession:
 
     async def orders_snapshot(self) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
+        failed: list[str] = []
         start = (datetime.now(timezone.utc) - timedelta(hours=36)).isoformat()
         for a in self.accounts:
-            data = await self._post("/api/Order/search", {"accountId": int(a["id"]), "startTimestamp": start})
+            try:
+                data = await self._post("/api/Order/search", {"accountId": int(a["id"]), "startTimestamp": start})
+            except (httpx.TimeoutException, asyncio.TimeoutError) as exc:
+                self._account_failed(a.get("spec", str(a["id"])), "orders", exc, failed)
+                continue
+            except TradovateError as exc:
+                if isinstance(exc, RateLimited):
+                    raise
+                self._account_failed(a.get("spec", str(a["id"])), "orders", exc, failed)
+                continue
             for o in data.get("orders") or []:
                 if isinstance(o, dict) and o.get("id") is not None:
                     out.append(self._order_row(o))
+        if failed and len(failed) == len(self.accounts):
+            raise TradovateError(f"[{self.name}] orders: every account failed ({failed[0]})")
         self._orders_cache = {r["id"]: r["_version"] for r in out}
         return out
 
@@ -492,7 +537,13 @@ class ProjectXSession:
         """Balance from the account list, realised P&L = today's trades, open
         P&L estimated from the last bar of each open position."""
         aid = int(account_id)
-        accounts = {a["id"]: a for a in await self.account_list()}
+        cached = self._snap_cache.get("accounts")
+        if cached and time.monotonic() - cached[0] < SNAPSHOT_TTL_S:
+            rows = cached[1]
+        else:
+            rows = await self.account_list()
+            self._snap_cache["accounts"] = (time.monotonic(), rows)
+        accounts = {a["id"]: a for a in rows}
         acct = accounts.get(aid)
         if acct is None:
             return {}
@@ -500,7 +551,7 @@ class ProjectXSession:
         data = await self._post("/api/Trade/search", {"accountId": aid, "startTimestamp": start.isoformat()})
         realized = sum(_num(t.get("profitAndLoss"), 0.0) - _num(t.get("fees"), 0.0) for t in data.get("trades") or [] if isinstance(t, dict) and not t.get("voided"))
         open_pnl = 0.0
-        for p in await self.positions_snapshot():
+        for p in await self.positions_snapshot(cached=True):
             if p["accountId"] != aid or not p["netPos"]:
                 continue
             rec = self._contracts.get(p["contractId"]) or {}
@@ -547,6 +598,15 @@ class ProjectXSession:
                 failure = str(data.get("errorMessage") or "no orderId in the answer")
         except TradovateError as exc:
             data, failure = {"errorText": str(exc)}, str(exc)
+        except (httpx.TimeoutException, asyncio.TimeoutError):
+            unknown = f"{name}: {action} {qty} {symbol} {order_type} timed out — outcome unknown, CHECK THE ACCOUNT"
+            state.log_order({"action": action, "symbol": str(symbol).upper(), "account": name, "account_id": aid, "qty": qty,
+                             "order_type": order_type, "price": sent_price, "stop_price": sent_stop, "order_id": None,
+                             "status": "unknown", "raw": {"errorText": "timeout"}})
+            state.log_event("error", unknown)
+            from .tradovate import OrderOutcomeUnknown, _fire
+            _fire(alerts.execution_problem(f"Order outcome unknown on {name}", unknown))
+            raise OrderOutcomeUnknown(unknown) from None
         result = {"action": action, "symbol": str(symbol).upper(), "account": name, "account_id": aid, "qty": qty, "order_type": order_type,
                   "price": sent_price, "stop_price": sent_stop, "order_id": int(data["orderId"]) if not failure else None,
                   "status": "rejected" if failure else "submitted", "raw": data}
@@ -611,7 +671,9 @@ class ProjectXSession:
                 continue
             if any(int(_num(o.get("id"), -1)) == int(order_id) for o in data.get("orders") or [] if isinstance(o, dict)):
                 return int(a["id"])
-        return int(self.account_id or (self.accounts[0]["id"] if self.accounts else 0))
+        if len(self.accounts) == 1:
+            return int(self.accounts[0]["id"])
+        raise TradovateError(f"[{self.name}] order {order_id} is not open on any account of this login")
 
     async def cancel_order(self, order_id: int, *, account_id: int | None = None, account_spec: str | None = None) -> dict[str, Any]:
         aid = await self._find_account(order_id, account_id, account_spec)

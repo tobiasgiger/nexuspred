@@ -420,7 +420,7 @@ async def test_stream_carries_order_session_and_discord_kinds(area):
         await settle()
         kinds = []
         while not sub.queue.empty():
-            kinds.append(sub.queue.get_nowait())
+            kinds.append(state.frame_message(sub.queue.get_nowait()))
         assert [k["kind"] for k in kinds] == ["order", "session", "discord"]
         assert kinds[0]["data"]["symbol"] == "MNQU6" and "ts" in kinds[0]["data"]
         assert kinds[1]["data"] == {"name": "L1", "connected": True}

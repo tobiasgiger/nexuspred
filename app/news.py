@@ -42,6 +42,7 @@ DEFAULTS: dict[str, Any] = {"enabled": False, "currencies": ["USD"], "impacts": 
 
 _events: list[dict[str, Any]] = []            # merged feed + parse cache (UTC datetimes as ISO strings)
 _fetched_at: float = 0.0
+_refresh_lock = asyncio.Lock()
 _feed_error: str = ""
 _alerted: set[tuple[int, str]] = set()        # (area, event key) already alerted / flattened
 _flattened: set[tuple[int, str]] = set()
@@ -84,12 +85,16 @@ def normalize(raw: Any) -> dict[str, Any]:
     return out
 
 
+LOCK_MEMO_S = 2.0
+_lock_memo: dict[int, tuple[float, tuple[Any, Any], Optional[dict[str, Any]]]] = {}
+
+
 def settings_for(area_id: int, settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     """The area's normalized news-lock settings; ``settings`` is an already
     loaded area settings dict (the signal path passes its snapshot)."""
     try:
-        s = settings if settings is not None else config.load_settings(area_id=area_id)
-        return normalize(s.get("news_lock"))
+        raw = settings.get("news_lock") if settings is not None else config.setting("news_lock", area_id=area_id)
+        return normalize(raw)
     except ValueError:
         return dict(DEFAULTS)
 
@@ -136,8 +141,16 @@ async def refresh(force: bool = False) -> dict[str, Any]:
     """Fetch the weekly calendars; on failure keep the last good copy (memory,
     then the database). Returns ``{"events": n, "error": str, "fetched_at": iso}``."""
     global _events, _fetched_at, _feed_error
-    if not force and _events and time.monotonic() - _fetched_at < REFRESH_S:
-        return {"events": len(_events), "error": _feed_error, "cached": True}
+    if not force and _fetched_at and time.monotonic() - _fetched_at < REFRESH_S:
+        return {"events": len(_events), "error": _feed_error, "cached": True}      # also after a failure (retry in ten minutes)
+    async with _refresh_lock:
+        if not force and _fetched_at and time.monotonic() - _fetched_at < REFRESH_S:
+            return {"events": len(_events), "error": _feed_error, "cached": True}  # another caller just did it
+        return await _refresh_now()
+
+
+async def _refresh_now() -> dict[str, Any]:
+    global _events, _fetched_at, _feed_error
     raw: list[Any] = []
     errors = []
     client = http.client("outbound")
@@ -198,6 +211,7 @@ def reset() -> None:
     _events, _fetched_at, _feed_error = [], 0.0, ""
     _alerted.clear()
     _flattened.clear()
+    _lock_memo.clear()
 
 
 # ---------------------------------------------------------------- windows
@@ -281,20 +295,46 @@ def active_lock(area_id: Optional[int] = None, *, now: Optional[datetime] = None
     """The event locking new entries right now for this workspace, else None.
     ``settings`` is the caller's already loaded area settings dict."""
     aid = area_id if area_id is not None else context.get_area()
+    if now is None:
+        # Sits in the order path: the answer only changes when the settings or
+        # the feed do, or a window edge passes — a 2 s memo per area covers a
+        # burst of signals with one scan.
+        hit = _lock_memo.get(aid)
+        if hit and time.monotonic() - hit[0] < LOCK_MEMO_S and hit[1] == (config._generation, _fetched_at):
+            return dict(hit[2]) if hit[2] else None
     s = settings_for(aid, settings)
-    if not s["enabled"]:
+    lock = None
+    if s["enabled"]:
+        for w in windows(aid, hours=6, now=now, settings=s):
+            if w["active"]:
+                lock = w
+                break
+    if now is None:
+        _lock_memo[aid] = (time.monotonic(), (config._generation, _fetched_at), dict(lock) if lock else None)
+    return lock
+
+
+def flattened_lock(area_id: int) -> Optional[dict[str, Any]]:
+    """The active lock when the workspace flattens for news (positions must stay
+    closed for its duration), else None."""
+    lock = active_lock(area_id)
+    if not lock:
         return None
-    for w in windows(aid, hours=6, now=now, settings=s):
-        if w["active"]:
-            return w
-    return None
+    return lock if settings_for(area_id).get("action") == "flatten" else None
 
 
 def status(area_id: Optional[int] = None) -> dict[str, Any]:
     aid = area_id if area_id is not None else context.get_area()
     s = settings_for(aid)
-    lock = active_lock(aid)
-    nxt = next((w for w in windows(aid, hours=48, settings=s) if _parse_ts(w["lock_from"]) > datetime.now(timezone.utc)), None) if s["enabled"] else None
+    lock = nxt = None
+    if s["enabled"]:
+        now = datetime.now(timezone.utc)
+        for w in windows(aid, hours=48, settings=s):          # one scan: the active window and the next one
+            if w["active"] and lock is None:
+                lock = w
+            elif nxt is None and _parse_ts(w["lock_from"]) > now:
+                nxt = w
+                break
     return {"enabled": s["enabled"], "action": s["action"], "active": lock, "next": nxt,
             "feed_events": len(_events), "feed_error": _feed_error,
             "feed_from": _events[0]["at"] if _events else None, "feed_to": _events[-1]["at"] if _events else None,
@@ -302,12 +342,13 @@ def status(area_id: Optional[int] = None) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------- loop
-async def _tick_area(area_id: int) -> None:
-    s = settings_for(area_id)
+async def _tick_area(area_id: int, settings: Optional[dict[str, Any]] = None) -> None:
+    s = settings if settings is not None else settings_for(area_id)
     if not s["enabled"]:
         return
     now = datetime.now(timezone.utc)
-    for w in windows(area_id, hours=1, now=now, settings=s):
+    # the lock may start up to ``before`` minutes ahead: scan as far as the widest setting
+    for w in windows(area_id, hours=max(1.0, float(s.get("before") or 0) / 60.0 + 0.1), now=now, settings=s):
         if not w["active"]:
             continue
         k = (area_id, w["key"])
@@ -353,11 +394,12 @@ async def news_loop() -> None:
     """Refresh the feed every few hours; every 30 s check each workspace's windows."""
     while True:
         try:
-            if any(settings_for(a)["enabled"] for a in db.all_area_ids()):
+            per_area = {a: settings_for(a) for a in db.all_area_ids()}
+            if any(s["enabled"] for s in per_area.values()):
                 await refresh()
-                for aid in db.all_area_ids():
+                for aid, s in per_area.items():
                     try:
-                        await _tick_area(aid)
+                        await _tick_area(aid, s)
                     except Exception as exc:  # noqa: BLE001
                         log.warning("news tick failed for area %s: %s", aid, exc)
         except asyncio.CancelledError:

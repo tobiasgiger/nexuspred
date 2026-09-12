@@ -3,14 +3,28 @@ Discord listener health, for every area concurrently."""
 from __future__ import annotations
 
 import asyncio
+import time
 
 from . import config, context, db, rollover, state, tradovate
 from .discord_signals import listener as discord_listener
 
+# Per-session schedule: (area, login name) -> monotonic time of its next renewal /
+# check, and the current retry backoff of a failing login. The loop wakes for
+# the earliest session and leaves the others alone — one login with a bad
+# token used to drag every login of every area into a renewal per minute.
+_next_at: dict[tuple[int, str], float] = {}
+_retry_s: dict[tuple[int, str], float] = {}
+RETRY_MIN_S = 60.0
+RETRY_MAX_S = 600.0
 
-async def _refresh_session(sess) -> float:
+
+def reset() -> None:
+    _next_at.clear()
+    _retry_s.clear()
+
+
+async def _refresh_session(sess, interval: int = 60) -> float:
     """Proactively renew one session's token and verify it; return next-check delay."""
-    interval = int(config.load_settings().get("health_check_interval", 60) or 60)
     try:
         if sess.has_token():
             await sess.proactive_refresh()    # renew well before expiry (never lapse)
@@ -19,7 +33,22 @@ async def _refresh_session(sess) -> float:
     except Exception as exc:  # noqa: BLE001 - never let the loop die
         state.log_event("warn", f"[{sess.name}] refresh error: {exc}")
         ok = False
-    return sess.seconds_until_refresh(fallback=interval) if ok else 60.0
+    key = (sess.area_id, sess.name)
+    if ok:
+        _retry_s.pop(key, None)
+        delay = float(sess.seconds_until_refresh(fallback=interval))
+    else:
+        delay = _retry_s[key] = min(RETRY_MAX_S, _retry_s.get(key, RETRY_MIN_S / 2) * 2)
+    _next_at[key] = time.monotonic() + delay
+    return delay
+
+
+async def _session_due(sess, interval: int) -> float:
+    """Refresh the session when its time has come, else report the wait."""
+    left = _next_at.get((sess.area_id, sess.name), 0.0) - time.monotonic()
+    if left > 0:
+        return left
+    return await _refresh_session(sess, interval)
 
 
 async def _health_area(area_id: int) -> list[float]:
@@ -39,7 +68,11 @@ async def _health_area(area_id: int) -> list[float]:
         sessions = mgr.all()
         if not sessions:
             return []
-        delays = await asyncio.gather(*(_refresh_session(s) for s in sessions),
+        live = {(s.area_id, s.name) for s in sessions}
+        for key in [k for k in _next_at if k[0] == area_id and k not in live]:
+            _next_at.pop(key, None)
+            _retry_s.pop(key, None)
+        delays = await asyncio.gather(*(_session_due(s, interval) for s in sessions),
                                       return_exceptions=True)
         return [d for d in delays if isinstance(d, (int, float))]
 
@@ -60,7 +93,7 @@ async def health_loop() -> None:
             await rollover.check_all()
         except Exception:  # noqa: BLE001
             pass
-        await asyncio.sleep(min(next_delays) if next_delays else 30.0)
+        await asyncio.sleep(max(1.0, min(next_delays)) if next_delays else 30.0)
 
 
 async def _discord_tick(area_id: int) -> None:

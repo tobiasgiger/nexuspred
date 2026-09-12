@@ -51,7 +51,7 @@ async def test_refresh_area_sums_accounts_and_pushes_once(admin, monkeypatch):
         assert [a["spec"] for a in s["accounts"]] == ["DEMO11", "DEMO12"] and s["error"] == ""
         assert s["accounts"][0]["cash"] == 50011.0 and s["accounts"][0]["total"] == 7.25
         await asyncio.sleep(0)  # the broadcast is scheduled on the loop
-        msg = sub.queue.get_nowait()
+        msg = state.frame_message(sub.queue.get_nowait())
         assert msg["kind"] == "pnl" and msg["data"]["total"] == 25.0
         # unchanged figures → stored but not re-broadcast
         await pnl.refresh_area(1)
@@ -93,6 +93,7 @@ async def test_loop_respects_off_and_watchers(admin, monkeypatch):
 
     async def fake_sleep(d):
         sleeps.append(d)
+        pnl._next_due.clear()         # the next iteration polls again (the loop is run once per assertion)
         raise asyncio.CancelledError  # one iteration only
     monkeypatch.setattr(pnl.asyncio, "sleep", fake_sleep)
     try:

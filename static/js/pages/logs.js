@@ -60,17 +60,44 @@ export default {
       level = l; chips.forEach((c) => c.classList.toggle("active", c === e.currentTarget)); paintEvents();
     } }, l));
 
+    const eventMatch = (e) => (level === "all" || e.level === level) && (!q || String(e.message || "").toLowerCase().includes(q));
+    // The live buffers are prepend-only ring buffers (newest first, capped). When
+    // the new list is the old one with items added at the top, only those rows
+    // are inserted — a signal burst used to rebuild 200 DOM rows per event.
+    function incremental(box, prev, list, lineOf, emptyText) {
+      if (prev && prev.length && list.length) {
+        const n = list.indexOf(prev[0]);                 // where the old top row sits now (identity: same store objects)
+        if (n >= 0 && n <= 50) {
+          const overlap = Math.min(prev.length, list.length - n);
+          let same = true;
+          for (let i = 0; i < overlap; i++) if (list[n + i] !== prev[i]) { same = false; break; }
+          if (same) {
+            if (n === 0 && list.length === prev.length) return;               // nothing changed
+            const empty = box.querySelector(".empty-state");
+            if (empty) empty.remove();
+            for (let i = n - 1; i >= 0; i--) box.prepend(lineOf(list[i]));   // the new rows, newest on top
+            while (box.childElementCount > list.length) box.lastElementChild.remove();   // the tail that fell off the buffer
+            return;
+          }
+        }
+      }
+      clear(box);
+      if (!list.length) box.append(h("div", { class: "empty-state" }, emptyText));
+      else box.append(...list.map(lineOf));
+    }
+    let prevEvents = null, prevSignals = null, prevFilter = "";
     function paintEvents() {
-      const list = (store.get("events") || []).filter((e) => (level === "all" || e.level === level) && (!q || String(e.message || "").toLowerCase().includes(q)));
-      clear(eventBox);
-      if (!list.length) eventBox.append(h("div", { class: "empty-state" }, "No events"));
-      else eventBox.append(...list.map(eventLine));
+      const all = store.get("events") || [];
+      const filterKey = `${level}|${q}`;
+      const list = all.filter(eventMatch);
+      if (filterKey !== prevFilter) { prevEvents = null; prevFilter = filterKey; }
+      incremental(eventBox, prevEvents, list, eventLine, "No events");
+      prevEvents = list;
     }
     function paintSignals() {
       const list = store.get("signals") || [];
-      clear(signalBox);
-      if (!list.length) signalBox.append(h("div", { class: "empty-state" }, "No signals yet"));
-      else signalBox.append(...list.map(signalLine));
+      incremental(signalBox, prevSignals, list, signalLine, "No signals yet");
+      prevSignals = list;
     }
 
     // --- persisted history (survives restarts/deploys) ---------------------

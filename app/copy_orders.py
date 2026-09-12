@@ -30,7 +30,7 @@ import time
 from typing import TYPE_CHECKING, Any, Optional
 
 from . import config, context, db
-from .tradovate import RateLimited, TradovateError
+from .tradovate import WORKING_STATUSES, RateLimited, TradovateError
 
 if TYPE_CHECKING:  # pragma: no cover
     from .copy import GroupRunner
@@ -132,16 +132,38 @@ class OrderMirror:
         db.delete_copy_twin(self.r.area_id, self.r.id, spec, leader_order_id)
 
     async def _follower_working(self) -> dict[str, set[int]]:
-        """spec → ids of the follower's working orders (specs whose login failed are absent)."""
+        """spec → ids of the follower's working orders (specs whose login failed
+        are absent). Followers on the same Tradovate login share one
+        ``/order/list`` — five followers used to cost five identical requests."""
         out: dict[str, set[int]] = {}
+        by_session: dict[int, tuple[Any, list[tuple[dict[str, Any], Any]]]] = {}
         for f in self.r.followers:
             ex = self.r._executor(f)
             if ex is None:
+                continue
+            sess = getattr(ex, "session", None)
+            if sess is not None and getattr(sess, "kind", "tradovate") == "tradovate" and hasattr(sess, "orders_snapshot") and getattr(ex, "id", 0):
+                by_session.setdefault(id(sess), (sess, []))[1].append((f, ex))
                 continue
             try:
                 out[f["spec"]] = {int(o["id"]) for o in await ex.working_orders() if o.get("id")}
             except Exception:  # noqa: BLE001
                 continue
+        for sess, items in by_session.values():
+            if len(items) == 1:
+                f, ex = items[0]
+                try:
+                    out[f["spec"]] = {int(o["id"]) for o in await ex.working_orders() if o.get("id")}
+                except Exception:  # noqa: BLE001
+                    pass
+                continue
+            try:
+                raw = await sess.orders_snapshot()
+            except Exception:  # noqa: BLE001
+                continue
+            for f, ex in items:
+                out[f["spec"]] = {int(o["id"]) for o in raw or []
+                                  if o.get("id") and o.get("ordStatus") in WORKING_STATUSES and o.get("accountId") == ex.id}
         return out
 
     # --------------------------------------------------------- leader feed

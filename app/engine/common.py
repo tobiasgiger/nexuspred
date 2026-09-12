@@ -95,6 +95,9 @@ async def _orders_for_contract(ex: Any, orders: list[dict[str, Any]], contract: 
     return mine
 
 
+STOP_PENALTY_WAIT_S = 30.0        # the longest a protective stop waits for a 429 penalty before its retry
+
+
 async def _place_stop_with_retry(ex: Any, *, symbol: str, action: str, qty: int, order_type: str,
                                  stop_price: float, tag: str, what: str = "stop") -> dict[str, Any] | None:
     """Place a protective stop; one retry on failure. When it still fails the
@@ -110,7 +113,11 @@ async def _place_stop_with_retry(ex: Any, *, symbol: str, action: str, qty: int,
         except Exception as exc:  # noqa: BLE001
             last = exc
             if attempt == 1:
-                await asyncio.sleep(0.5)
+                # a 429 penalty set by some poll must not leave the entry naked: the
+                # stop is protective, not latency-critical, so it waits the penalty out
+                from ..tradovate import RateLimited
+                wait = min(float(getattr(exc, "retry_after", 0) or 0) + 0.2, STOP_PENALTY_WAIT_S) if isinstance(exc, RateLimited) else 0.5
+                await asyncio.sleep(wait)
     state.log_event("error", f"{tag}{what} for {ex.name} on {symbol} FAILED twice — position is unprotected: {last}")
     from ..tradovate import _fire
     _fire(alerts.execution_problem(f"Unprotected position on {ex.name}",

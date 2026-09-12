@@ -363,6 +363,18 @@ def load_settings(area_id: int | None = None, force: bool = False) -> dict[str, 
         return _copy_of(aid)
 
 
+def setting(key: str, area_id: int | None = None) -> Any:
+    """A private copy of one settings key (defaults applied). Hot paths that
+    need a single small key — the risk guard's ``risk_state`` before every
+    order, the news lock's ``news_lock`` — use this instead of copying the
+    whole area's settings."""
+    aid = _resolve_area(area_id)
+    with _lock:
+        if aid in _cache:
+            return copy.deepcopy(_cache[aid].get(key))
+    return load_settings(area_id=aid).get(key)
+
+
 def _load_for_write(aid: int) -> dict[str, Any]:
     """The settings a write starts from: the cache when it is current (every
     write goes through _persist, which refreshes it), else a fresh read. Lock

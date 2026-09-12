@@ -38,6 +38,7 @@ def reset() -> None:
     _realized.clear()
     _names.clear()
     _agents.clear()
+    _agent_lists.clear()
     _summary_sent.clear()
     _closed_today.clear()
 
@@ -114,10 +115,11 @@ async def _current_positions(area_id: int, sessions: list[Any],
 
 
 async def observe_area(area_id: int, sessions: list[Any], snapshots: list[dict[str, Any]], *,
-                       positions: Optional[dict[str, Optional[list[dict[str, Any]]]]] = None) -> list[dict[str, Any]]:
+                       positions: Optional[dict[str, Optional[list[dict[str, Any]]]]] = None,
+                       settings: Optional[dict[str, Any]] = None) -> list[dict[str, Any]]:
     """One tick: diff positions against the last tick, fire trade alerts.
     Returns the list of events (also used by tests)."""
-    s = config.load_settings(area_id=area_id)
+    s = settings if settings is not None else config.load_settings(area_id=area_id)
     want_open = bool(s.get("alert_on_trade_opened", True))
     want_close = bool(s.get("alert_on_trade_closed", True))
     if not (want_open or want_close):
@@ -189,14 +191,28 @@ async def observe_area(area_id: int, sessions: list[Any], snapshots: list[dict[s
 
 
 # ------------------------------------------------------------ agents
-async def observe_agents(area_id: int) -> None:
-    s = config.load_settings(area_id=area_id)
+AGENT_LIST_TTL_S = 30.0          # the agent table changes on pairing / removal only: no query per tick
+_agent_lists: dict[int, tuple[float, list[dict[str, Any]]]] = {}
+
+
+def _agents_of(area_id: int) -> list[dict[str, Any]]:
+    import time
+    hit = _agent_lists.get(area_id)
+    if hit and time.monotonic() - hit[0] < AGENT_LIST_TTL_S:
+        return hit[1]
+    rows = db.list_agents(area_id)
+    _agent_lists[area_id] = (time.monotonic(), rows)
+    return rows
+
+
+async def observe_agents(area_id: int, settings: Optional[dict[str, Any]] = None) -> None:
+    s = settings if settings is not None else config.load_settings(area_id=area_id)
     if not (s.get("alert_on_agent_lost", True) or s.get("alert_on_agent_restored", True)):
         return
     known = _agents.setdefault(area_id, {})
     seen: set[int] = set()
     with context.use_area(area_id):
-        for agent in db.list_agents(area_id):
+        for agent in _agents_of(area_id):
             aid = int(agent["id"])
             seen.add(aid)
             online = relay.is_online(aid)
@@ -215,9 +231,10 @@ async def observe_agents(area_id: int) -> None:
 
 
 # ------------------------------------------------------ daily summary
-def _local_now(area_id: int) -> datetime:
+def _local_now(area_id: int, settings: Optional[dict[str, Any]] = None) -> datetime:
     from zoneinfo import ZoneInfo
-    name = str(config.load_settings(area_id=area_id).get("journal_timezone") or "Europe/Zurich")
+    s = settings if settings is not None else config.load_settings(area_id=area_id)
+    name = str(s.get("journal_timezone") or "Europe/Zurich")
     try:
         zone = ZoneInfo(name)
     except Exception:  # noqa: BLE001
@@ -225,12 +242,12 @@ def _local_now(area_id: int) -> datetime:
     return datetime.now(timezone.utc).astimezone(zone)
 
 
-async def maybe_daily_summary(area_id: int) -> bool:
+async def maybe_daily_summary(area_id: int, settings: Optional[dict[str, Any]] = None) -> bool:
     """Send the area's daily summary once the configured local time has passed."""
-    s = config.load_settings(area_id=area_id)
+    s = settings if settings is not None else config.load_settings(area_id=area_id)
     if not s.get("alert_daily_summary", True):
         return False
-    local = _local_now(area_id)
+    local = _local_now(area_id, s)
     try:
         hh, mm = (int(x) for x in str(s.get("daily_summary_time") or "22:05").split(":")[:2])
     except ValueError:
@@ -250,13 +267,14 @@ async def maybe_daily_summary(area_id: int) -> bool:
     return True
 
 
-async def tick(area_id: int) -> None:
-    """Agent transitions + daily summary for one area (cheap, no broker calls)."""
+async def tick(area_id: int, settings: Optional[dict[str, Any]] = None) -> None:
+    """Agent transitions + daily summary for one area (cheap, no broker calls).
+    ``settings`` is the P&L loop's snapshot for this tick."""
     try:
-        await observe_agents(area_id)
+        await observe_agents(area_id, settings)
     except Exception as exc:  # noqa: BLE001
         state.log_event("warn", f"agent watch failed: {exc}")
     try:
-        await maybe_daily_summary(area_id)
+        await maybe_daily_summary(area_id, settings)
     except Exception as exc:  # noqa: BLE001
         state.log_event("warn", f"daily summary failed: {exc}")

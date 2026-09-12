@@ -16,6 +16,7 @@ answer backs the interval off up to two minutes.
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -26,6 +27,7 @@ RISK_CACHE_S = 300.0          # /userAccountAutoLiq/list per login at most this 
 IDLE_SNAPSHOT_EVERY = 6       # flat accounts get a fresh cash snapshot every n-th tick
 MAX_BACKOFF_S = 120.0
 _backoff: dict[int, float] = {}
+_next_due: dict[int, float] = {}    # per-area: monotonic time of the next broker poll (areas keep their own cadence)
 
 
 def _num(v: Any) -> float:
@@ -67,6 +69,8 @@ def reset() -> None:
     _risk_cache.clear()
     _last_snap.clear()
     _tick.clear()
+    _backoff.clear()
+    _next_due.clear()
 
 
 async def risk_settings_cached(area_id: int, session: Any) -> dict[int, dict[str, Any]]:
@@ -157,15 +161,16 @@ async def refresh_area(area_id: int) -> dict[str, Any]:
             "error": "; ".join(errors)[:300],
         }
         summary["total"] = round(summary["realized"] + summary["open"], 2)
+        s = config.load_settings(area_id=area_id)      # one read per tick, shared by the guard and the watch
         try:
-            await risk.check_area(area_id, sessions, accounts, positions=positions_by_login)
+            await risk.check_area(area_id, sessions, accounts, positions=positions_by_login, settings=s)
         except Exception as exc:  # noqa: BLE001 - the guard must never break the P&L feed
             state.log_event("warn", f"risk guard failed: {exc}")
         changed = state.set_pnl(summary, area_id)
         if changed:
             state.publish("pnl", summary, area_id)
         try:
-            await watch.observe_area(area_id, sessions, accounts, positions=positions_by_login)
+            await watch.observe_area(area_id, sessions, accounts, positions=positions_by_login, settings=s)
         except Exception as exc:  # noqa: BLE001 - alerts must never break the P&L feed
             state.log_event("warn", f"position watch failed: {exc}")
         return summary
@@ -178,15 +183,24 @@ async def _poll_area(aid: int) -> Optional[float]:
     """One area's tick + P&L refresh. Returns the delay it wants before the next
     look, or None when the area is switched off."""
     s = config.load_settings(area_id=aid)
-    await watch.tick(aid)   # agent transitions + daily summary (no broker calls)
+    await watch.tick(aid, settings=s)   # agent transitions + daily summary (no broker calls)
     fast = float(s.get("pnl_poll_seconds", 5) or 0)
     if fast <= 0 and not risk.any_active(s):
+        _next_due.pop(aid, None)
         return None  # switched off for this area (a risk rule keeps it running regardless)
     fast = max(2.0, fast if fast > 0 else 5.0)
     # Fast while a dashboard is open — or while trade alerts need a
     # timely view of the broker's positions.
     watched = state.subscriber_count(aid) or watch.trade_alerts_enabled(s) or risk.any_active(s)
     interval = fast if watched else IDLE_INTERVAL_S
+    # Each area keeps its own cadence: the loop wakes for the earliest one, and
+    # an area that is not due yet is skipped instead of polled at its neighbour's
+    # (faster) rate — one busy dashboard used to drag every idle area's broker
+    # calls up to its 5 s interval.
+    now = time.monotonic()
+    due_at = _next_due.get(aid, 0.0)
+    if now < due_at:
+        return due_at - now
     try:
         summary = await asyncio.wait_for(refresh_area(aid), timeout=AREA_TIMEOUT_S)
         if summary["error"] and not summary["accounts"]:
@@ -199,7 +213,9 @@ async def _poll_area(aid: int) -> Optional[float]:
         _backoff[aid] = min(MAX_BACKOFF_S, max(interval, _backoff.get(aid, interval) * 2))
         if isinstance(exc, asyncio.TimeoutError):
             state.log_event("warn", f"P&L refresh for area {aid} timed out after {int(AREA_TIMEOUT_S)} s")
-    return _backoff.get(aid, interval)
+    delay = _backoff.get(aid, interval)
+    _next_due[aid] = time.monotonic() + delay
+    return delay
 
 
 async def pnl_loop() -> None:
@@ -217,4 +233,4 @@ async def pnl_loop() -> None:
             raise
         except Exception:  # noqa: BLE001 - the loop must survive anything
             delay = IDLE_INTERVAL_S
-        await asyncio.sleep(delay)
+        await asyncio.sleep(max(0.5, delay))
