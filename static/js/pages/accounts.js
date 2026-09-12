@@ -22,11 +22,15 @@ export default {
       return h("div", { style: "display:flex;gap:4px;align-items:center" }, inp, eye);
     };
     const row = (a = {}) => {
-      const isR = a.broker === "rithmic";
+      const isR = a.broker === "rithmic", isP = a.broker === "projectx";
       const brokerSel = h("select", { class: "ta-broker input-sm", style: "min-width:100px", title: "Broker this login belongs to" },
-        h("option", { value: "tradovate", selected: !isR }, "Tradovate"), h("option", { value: "rithmic", selected: isR }, "Rithmic (beta)"));
+        h("option", { value: "tradovate", selected: !isR && !isP }, "Tradovate"), h("option", { value: "projectx", selected: isP }, "ProjectX (Topstep …) beta"), h("option", { value: "rithmic", selected: isR }, "Rithmic (beta)"));
+      const pCells = h("div", { class: isP ? "" : "hidden", style: "display:flex;gap:6px;flex-wrap:wrap;align-items:center" },
+        h("input", { class: "ta-pxuser input-sm", value: a.px_user || "", placeholder: "ProjectX user name", autocomplete: "off", style: "min-width:140px" }),
+        secretInput("ta-pxkey", a.px_api_key, "API key"),
+        h("input", { class: "ta-pxfirm input-sm", value: a.px_firm || "topstep", placeholder: "firm (topstep, bulenox …)", list: "px-firms", style: "min-width:140px", title: "The prop firm's ProjectX gateway: topstep, alphaticks, bulenox, blusky, e8x, tradeify … or a full https:// URL" }));
       // Tradovate: access + check token. Rithmic: user, password, system, gateway.
-      const tvCells = h("div", { class: isR ? "hidden" : "", style: "display:flex;gap:6px;flex-wrap:wrap" },
+      const tvCells = h("div", { class: (isR || isP) ? "hidden" : "", style: "display:flex;gap:6px;flex-wrap:wrap" },
         secretInput("ta-access", a.access_token, "access token"), secretInput("ta-md", a.md_token, "check token (optional)"));
       const rCells = h("div", { class: isR ? "" : "hidden", style: "display:flex;gap:6px;flex-wrap:wrap;align-items:center" },
         h("input", { class: "ta-ruser input-sm", value: a.rithmic_user || "", placeholder: "Rithmic user", autocomplete: "off", style: "min-width:120px" }),
@@ -38,7 +42,7 @@ export default {
         h("td", null, h("input", { class: "ta-name input-sm", value: a.name || "", placeholder: "Account 1", style: "min-width:120px" })),
         h("td", null, brokerSel),
         h("td", null, h("select", { class: "ta-env input-sm", style: "min-width:90px" }, h("option", { value: "demo", selected: a.environment !== "live" }, "Demo"), h("option", { value: "live", selected: a.environment === "live" }, "Live"))),
-        h("td", { colspan: 2 }, tvCells, rCells),
+        h("td", { colspan: 2 }, tvCells, rCells, pCells),
         h("td", null, h("input", { type: "number", class: "ta-mult input-sm", min: 0.1, step: 0.1, value: a.qty_multiplier ?? 1, style: "width:70px" })),
         h("td", null, h("select", { class: "ta-agent input-sm", style: "min-width:120px", title: "Execute this login's Tradovate calls through a paired agent (own IP) or directly from the bridge" },
           h("option", { value: "0", selected: !a.agent_id }, "Bridge (direct)"),
@@ -49,7 +53,7 @@ export default {
           if (a.name && !(await confirmDialog({ title: `Remove login "${a.name}"?`, body: "Its token is dropped and every webhook routed to its accounts loses that route after you save.", confirmText: "Remove", danger: true }))) return;
           tr.remove(); markDirty();
         } }, icon("trash"))));
-      brokerSel.addEventListener("change", () => { const r = brokerSel.value === "rithmic"; tvCells.classList.toggle("hidden", !r ? false : true); rCells.classList.toggle("hidden", !r); });
+      brokerSel.addEventListener("change", () => { const v = brokerSel.value; tvCells.classList.toggle("hidden", v !== "tradovate"); rCells.classList.toggle("hidden", v !== "rithmic"); pCells.classList.toggle("hidden", v !== "projectx"); });
       tr.addEventListener("input", markDirty);
       tr.addEventListener("change", markDirty);
       return tr;
@@ -67,9 +71,12 @@ export default {
       rithmic_password: tr.querySelector(".ta-rpw").value.trim(),
       rithmic_system: tr.querySelector(".ta-rsys").value.trim(),
       rithmic_gateway: tr.querySelector(".ta-rgw").value.trim(),
+      px_user: tr.querySelector(".ta-pxuser").value.trim(),
+      px_api_key: tr.querySelector(".ta-pxkey").value.trim(),
+      px_firm: tr.querySelector(".ta-pxfirm").value.trim(),
       qty_multiplier: Number(tr.querySelector(".ta-mult").value) || 1,
       agent_id: Number(tr.querySelector(".ta-agent").value) || 0,
-    })).filter((a) => a.name || a.access_token || a.rithmic_user);
+    })).filter((a) => a.name || a.access_token || a.rithmic_user || a.px_user);
 
     const saveHint = h("span", { class: "save-hint" });
     const saveBtn = h("button", { type: "button", class: "btn btn-primary", onClick: async () => {
@@ -162,7 +169,8 @@ export default {
         h("div", { class: "table-scroll" }, h("table", { class: "data-table" },
           h("thead", null, h("tr", null, h("th", null, "On"), h("th", null, "Name"), h("th", null, "Broker"), h("th", null, "Env"), h("th", { colspan: 2 }, "Credentials"), h("th", null, "Qty ×"), h("th", null, "Execute via"), h("th", null, "Token expires"), h("th"))), tbody),
           h("datalist", { id: "rithmic-systems" }, ["Rithmic Paper Trading", "Rithmic Test", "Rithmic 01", "Apex", "TopstepTrader", "MyFundedFutures", "Bulenox", "Earn2Trade", "TradeFundrr"].map((x) => h("option", { value: x }))),
-          h("datalist", { id: "rithmic-gateways" }, ["chicago", "europe", "paper", "test"].map((x) => h("option", { value: x })))),
+          h("datalist", { id: "rithmic-gateways" }, ["chicago", "europe", "paper", "test"].map((x) => h("option", { value: x }))),
+          h("datalist", { id: "px-firms" }, ["topstep", "alphaticks", "bulenox", "blusky", "e8x", "fundingfutures", "thefuturesdesk", "futureselite", "fxifyfutures", "goatfundedfutures", "tickticktrader", "toponefutures", "tradeify", "daytraders", "lucidtrading", "holaprime", "nexgen", "aquafutures", "demo"].map((x) => h("option", { value: x })))),
         h("div", { class: "form-actions", style: "margin-top:12px" }, saveBtn, connectBtn, saveHint)),
       card({ title: "Discovered trade accounts", hint: "Every trade account found under your logins — one login can hold several. Which accounts a signal actually trades is chosen per webhook (Webhooks → Accounts tab)." }, discovered.el),
     );

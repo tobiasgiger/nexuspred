@@ -68,6 +68,13 @@ access control, and a built-in GitHub auto-updater.
 
 ## Quick start
 
+### ProjectX accounts (TopstepX, Bulenox, Alpha Futures … — beta)
+
+Logins can point at a **ProjectX** gateway: Settings → Tradovate Accounts → Broker
+*ProjectX*, user name, API key and the firm (`topstep`, `bulenox`, `alphaticks`, …).
+Webhooks, copy trading, risk guard and P&L work the same; the bridge polls the REST API.
+Not yet verified with a real key; see [docs/PROJECTX.md](docs/PROJECTX.md).
+
 ### Rithmic accounts (beta)
 
 Logins can point at **Rithmic** (Apex, Topstep, MFFU … on R|Trader) instead of Tradovate:

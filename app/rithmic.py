@@ -545,7 +545,7 @@ class RithmicSession:
 
     async def modify_order(self, order_id: int, *, qty: int, order_type: str,
                            price: float | None = None, stop_price: float | None = None,
-                           account_name: str | None = None) -> dict[str, Any]:
+                           account_name: str | None = None, account_id: int | None = None, account_spec: str | None = None) -> dict[str, Any]:
         basket, spec = self._basket(order_id)
         from async_rithmic import OrderType
         otype = {"Market": OrderType.MARKET, "Limit": OrderType.LIMIT, "Stop": OrderType.STOP_MARKET, "StopLimit": OrderType.STOP_LIMIT}.get(order_type)
@@ -578,7 +578,7 @@ class RithmicSession:
             raise TradovateError(f"[{self.name}] unknown Rithmic order {order_id}")
         return rec
 
-    async def cancel_order(self, order_id: int) -> dict[str, Any]:
+    async def cancel_order(self, order_id: int, *, account_id: int | None = None, account_spec: str | None = None) -> dict[str, Any]:
         basket, spec = self._basket(order_id)
         client = await self._ensure()
         try:

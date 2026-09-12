@@ -779,8 +779,12 @@ class AccountExecutor:
         return await self.session.place_order(
             account_spec=self.spec, account_id=self.id, account_name=self.name, **kw)
 
+    def _acct_hint(self) -> dict[str, Any]:
+        """Brokers that key orders by account get the account with every order call."""
+        return {"account_id": self.id, "account_spec": self.spec} if getattr(self.session, "kind", "tradovate") != "tradovate" else {}
+
     async def modify_order(self, order_id: int, **kw: Any) -> dict[str, Any]:
-        return await self.session.modify_order(order_id, account_name=self.name, **kw)
+        return await self.session.modify_order(order_id, account_name=self.name, **self._acct_hint(), **kw)
 
     async def place_oco(self, **kw: Any) -> dict[str, Any]:
         return await self.session.place_oco(account_spec=self.spec, account_id=self.id, account_name=self.name, **kw)
@@ -789,7 +793,7 @@ class AccountExecutor:
         return await self.session.order_versions(order_ids)
 
     async def cancel_order(self, order_id: int) -> dict[str, Any]:
-        return await self.session.cancel_order(order_id)
+        return await self.session.cancel_order(order_id, **self._acct_hint())
 
     async def working_orders(self) -> list[dict[str, Any]]:
         return await self.session.working_orders(account_id=self.id, account_spec=self.spec)
@@ -826,14 +830,17 @@ class SessionManager:
         prev = self._sessions or []
         fresh: list[TradovateSession] = []
         for i, e in enumerate(entries):
-            if broker.broker_of(e) == "rithmic":
-                from .rithmic import RithmicSession, _fingerprint as _rfp
+            if broker.broker_of(e) in ("rithmic", "projectx"):
+                if broker.broker_of(e) == "rithmic":
+                    from .rithmic import RithmicSession as _Cls, _fingerprint as _fp
+                else:
+                    from .projectx import ProjectXSession as _Cls, _fingerprint as _fp   # type: ignore[assignment]
                 old = prev[i] if i < len(prev) else None
-                if isinstance(old, RithmicSession) and old.fingerprint == _rfp(e):
+                if isinstance(old, _Cls) and old.fingerprint == _fp(e):
                     old.adopt_credentials(e)
                     fresh.append(old)
                 else:
-                    fresh.append(RithmicSession(i, e, area_id=self.area_id))   # type: ignore[arg-type]
+                    fresh.append(_Cls(i, e, area_id=self.area_id))   # type: ignore[arg-type]
                 continue
             if broker.broker_of(e) not in broker.BROKERS:
                 # a login for a broker this build does not ship never trades by accident:

@@ -4,6 +4,18 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.59
+- **ProjectX broker adapter (beta, untested with a real key).** Logins for TopstepX,
+  Bulenox, Alpha Futures, Blusky, E8X, Tradeify and the other ProjectX firms (Settings →
+  Tradovate Accounts → Broker *ProjectX*: user name, API key, firm). `app/projectx.py`
+  implements the broker interface over the Gateway REST API: token login with renewal,
+  accounts, positions, working orders with versions, market / limit / stop / stop-limit,
+  modify, cancel, flatten, linked OCO legs, contract search with front month and root
+  aliases (NQ→ENQ, ES→EP …), realised P&L from today's trades and open P&L from the last
+  bar, per-login pacing with 429 back-off. Copy trading polls a ProjectX leader; risk
+  guard, sizing, order log and alerts are shared. Executors now hand the account to
+  modify / cancel calls for brokers that need it. Tradovate logins are untouched.
+
 ## 5.0.0-alpha.58
 - **Rithmic broker adapter (beta, untested against a real system).** A login can now be a
   Rithmic login (Settings → Tradovate Accounts → Broker *Rithmic*: user, password, system

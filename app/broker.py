@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Any, Optional, Protocol, runtime_checkable
 
-BROKERS = ("tradovate", "rithmic")   # implementations the bridge ships
+BROKERS = ("tradovate", "rithmic", "projectx")   # implementations the bridge ships
 
 
 def broker_of(entry: dict[str, Any]) -> str:

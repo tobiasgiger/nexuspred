@@ -65,7 +65,9 @@ async def api_save_token_accounts(request: Request) -> list[dict[str, Any]]:
         access = a.get("access_token", "")
         md = a.get("md_token", "")
         rpw = a.get("rithmic_password", "")
-        brk = "rithmic" if str(a.get("broker") or prev.get("broker") or "").lower() == "rithmic" else "tradovate"
+        pxk = a.get("px_api_key", "")
+        brk_raw = str(a.get("broker") or prev.get("broker") or "").lower()
+        brk = brk_raw if brk_raw in ("rithmic", "projectx") else "tradovate"
         cleaned.append({
             "name": (a.get("name") or f"account {i + 1}").strip(),
             "broker": brk,
@@ -76,12 +78,15 @@ async def api_save_token_accounts(request: Request) -> list[dict[str, Any]]:
             "rithmic_password": prev.get("rithmic_password", "") if rpw == "********" else str(rpw or "").strip(),
             "rithmic_system": str(a.get("rithmic_system") if "rithmic_system" in a else prev.get("rithmic_system") or "").strip()[:60],
             "rithmic_gateway": str(a.get("rithmic_gateway") if "rithmic_gateway" in a else prev.get("rithmic_gateway") or "").strip()[:120],
+            "px_user": str(a.get("px_user") or prev.get("px_user") or "").strip()[:80],
+            "px_api_key": prev.get("px_api_key", "") if pxk == "********" else str(pxk or "").strip(),
+            "px_firm": str(a.get("px_firm") if "px_firm" in a else prev.get("px_firm") or "topstep").strip()[:120] or "topstep",
             "enabled": bool(a.get("enabled")),
             "qty_multiplier": float(a.get("qty_multiplier", 1) or 1),
             "account_spec": a.get("account_spec") or prev.get("account_spec", ""),
             "account_id": a.get("account_id") or prev.get("account_id", 0),
             "token_expires": prev.get("token_expires", ""),
-            "agent_id": 0 if brk == "rithmic" else _own_agent(a.get("agent_id")),    # agents relay HTTP: Tradovate only
+            "agent_id": 0 if brk != "tradovate" else _own_agent(a.get("agent_id")),    # agents relay HTTP: Tradovate only
             "accounts": prev.get("accounts") or [],
             "lid": prev.get("lid") or config._new_lid(),
         })

@@ -258,6 +258,7 @@ async def test_token_accounts_save_preserves_masked_tokens(client):
     assert t.pop("lid").startswith("lg_")
     assert t == {"name": "L1x", "broker": "tradovate", "environment": "demo", "access_token": "secret1", "md_token": "m1",
                  "rithmic_user": "", "rithmic_password": "", "rithmic_system": "", "rithmic_gateway": "",
+                 "px_user": "", "px_api_key": "", "px_firm": "topstep",
                  "enabled": False, "qty_multiplier": 1.0, "account_spec": "", "account_id": 0, "token_expires": "",
                  "accounts": [], "agent_id": 0}
     assert (await client.get("/api/token-accounts")).json()[0]["md_token"] == "********"
