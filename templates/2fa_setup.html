@@ -1,0 +1,21 @@
+{% extends "auth_base.html" %}
+{% block title %}{{ t("Set up two-factor authentication · Fluxbridge") }}{% endblock %}
+{% block heading %}{{ t("Protect your account") }}{% endblock %}
+{% block subheading %}{{ t("Two-factor authentication is required for every account.") }}{% endblock %}
+{% block content %}
+<ol class="mfa-steps">
+  <li>{{ t("Install an authenticator app (Google Authenticator, Microsoft Authenticator, Authy, 1Password, Aegis …).") }}</li>
+  <li>{{ t("Scan this QR code, or type the key by hand.") }}</li>
+  <li>{{ t("Enter the 6-digit code the app shows.") }}</li>
+</ol>
+<img class="mfa-qr" src="{{ qr }}" alt="QR" />
+<code class="mfa-secret">{{ secret }}</code>
+<form method="post" action="/2fa/setup">
+  <label>{{ t("6-digit code") }}
+    <input class="mfa-code" type="text" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,7}" maxlength="7" required autofocus />
+  </label>
+  <button type="submit">{{ t("Activate") }}</button>
+</form>
+<div class="auth-note">{{ t("Account") }}: {{ email }}</div>
+<form method="post" action="/logout"><button type="submit" class="auth-link" style="background:none;border:0;color:var(--accent);width:auto;margin:8px auto 0;padding:0;font-weight:400;font-size:12.5px">{{ t("Sign out") }}</button></form>
+{% endblock %}

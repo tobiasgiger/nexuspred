@@ -65,6 +65,7 @@ export default {
         try { await api.post(`/api/users/${u.id}/features`, { feature: "discord_signals", enabled: e.target.checked }); toast(`Discord Signals ${e.target.checked ? "enabled" : "disabled"} for ${u.email}`, "success"); loadAudit(); }
         catch (err) { e.target.checked = !e.target.checked; toast(err.message, "error"); }
       } }) },
+      { label: t("2FA"), render: (u) => u.totp_enabled ? tag(t("on"), "on") : u.totp_required ? h("span", { title: t("Enrolment pending — asked for at the next sign-in") }, tag(t("pending"), "warn")) : tag(t("off"), "off") },
       { label: t("Created"), render: (u) => fmtDateTime(u.created_at) },
       { label: t("Last sign-in"), render: (u) => u.last_login_at ? h("span", { title: u.last_login_ip ? t("from {ip}", { ip: u.last_login_ip }) : "" }, fmtDateTime(u.last_login_at)) : t("never") },
       { label: "", render: (u) => h("div", { class: "users-actions" },
@@ -85,6 +86,10 @@ export default {
           if (!(await confirmDialog({ title: t("Sign {email} out everywhere?", { email: u.email }), body: t("Every session of this user is ended immediately; they sign in again with their password."), confirmText: t("Sign out everywhere") }))) return;
           try { await api.post(`/api/users/${u.id}/sessions/revoke`); toast("Sessions revoked", "success"); loadAudit(); } catch (e) { toast(e.message, "error"); }
         } }, icon("logout"), t("Sign out everywhere")),
+        u.totp_enabled || u.totp_required ? h("button", { type: "button", class: "btn btn-ghost btn-sm", title: t("Lost authenticator and backup codes: drops both, signs the user out everywhere; they enrol again at the next sign-in."), onClick: async () => {
+          if (!(await confirmDialog({ title: t("Reset two-factor setup for {email}?", { email: u.email }), body: t("Their authenticator secret and backup codes are deleted and every session ends. They sign in with the password and set up two-factor authentication again."), confirmText: t("Reset 2FA"), danger: true }))) return;
+          try { await api.post(`/api/users/${u.id}/2fa/reset`); toast(t("Two-factor setup reset"), "success"); loadUsers(); loadAudit(); } catch (e) { toast(e.message, "error"); }
+        } }, icon("key"), t("Reset 2FA")) : null,
         u.id === me.id ? null : h("button", { type: "button", class: "btn btn-ghost btn-sm", onClick: async () => {
           if (!(await confirmDialog({ title: t("Delete {email}?", { email: u.email }), body: t("Their area and all its data (webhooks, tokens, logs) are removed. This cannot be undone."), confirmText: t("Delete user"), danger: true }))) return;
           try { await api.del(`/api/users/${u.id}`); toast("User deleted", "success"); loadUsers(); loadAudit(); } catch (e) { toast(e.message, "error"); }

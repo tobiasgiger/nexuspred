@@ -57,6 +57,32 @@ def make_session(user_id: int) -> str:
     return f"{body}.{_sign(body)}"
 
 
+MFA_COOKIE = "fb_mfa"
+MFA_TTL = 5 * 60
+
+
+def make_mfa_token(user_id: int) -> str:
+    """Signed 'password verified, second factor outstanding' token (5 min).
+    Not a session: read_session refuses it (no pv, kind=mfa)."""
+    body = _b64e(json.dumps({"uid": int(user_id), "exp": int(time.time()) + MFA_TTL, "kind": "mfa"}).encode())
+    return f"{body}.{_sign(body)}"
+
+
+def read_mfa_token(cookie: Optional[str]) -> Optional[int]:
+    if not cookie or "." not in cookie:
+        return None
+    body, _, sig = cookie.partition(".")
+    try:
+        if not hmac.compare_digest(sig, _sign(body)):
+            return None
+        payload = json.loads(_b64d(body))
+        if payload.get("kind") != "mfa" or int(payload.get("exp", 0)) < time.time():
+            return None
+        return int(payload["uid"])
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def read_session(cookie: Optional[str]) -> Optional[int]:
     """Return the user id from a valid, unexpired session cookie whose password
     fingerprint still matches the account, else None."""
@@ -67,8 +93,8 @@ def read_session(cookie: Optional[str]) -> Optional[int]:
         if not hmac.compare_digest(sig, _sign(body)):
             return None
         payload = json.loads(_b64d(body))
-        if int(payload.get("exp", 0)) < time.time():
-            return None
+        if payload.get("kind") or int(payload.get("exp", 0)) < time.time():
+            return None                      # an MFA-pending token is never a session
         uid = int(payload["uid"])
         pv = str(payload.get("pv", ""))
         if not pv or not hmac.compare_digest(pv, db.password_version(uid)):

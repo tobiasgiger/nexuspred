@@ -385,6 +385,21 @@ def init() -> None:
                 c.execute("ALTER TABLE users ADD COLUMN last_login_ip TEXT")
             if "session_salt" not in user_cols:
                 c.execute("ALTER TABLE users ADD COLUMN session_salt TEXT NOT NULL DEFAULT ''")
+            if "totp_secret" not in user_cols:
+                # two-factor authentication (app/mfa.py): encrypted secret, enrolment
+                # state, replay counter, salt of the backup-code hashes
+                c.execute("ALTER TABLE users ADD COLUMN totp_secret TEXT NOT NULL DEFAULT ''")
+                c.execute("ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0")
+                c.execute("ALTER TABLE users ADD COLUMN totp_required INTEGER NOT NULL DEFAULT 0")
+                c.execute("ALTER TABLE users ADD COLUMN totp_counter INTEGER NOT NULL DEFAULT -1")
+                c.execute("ALTER TABLE users ADD COLUMN backup_salt TEXT NOT NULL DEFAULT ''")
+            c.execute("""CREATE TABLE IF NOT EXISTS mfa_backup_codes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    code_hash TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_mfa_codes_user ON mfa_backup_codes(user_id)")
             imp_cols = {r["name"] for r in c.execute("PRAGMA table_info(journal_imports)").fetchall()}
             if imp_cols and "history_new" not in imp_cols:
                 c.execute("ALTER TABLE journal_imports ADD COLUMN history_new INTEGER NOT NULL DEFAULT 0")
@@ -450,7 +465,9 @@ def _row_to_user(row: sqlite3.Row) -> dict[str, Any]:
     return {"id": row["id"], "email": row["email"], "is_admin": bool(row["is_admin"]),
             "created_at": row["created_at"],
             "last_login_at": row["last_login_at"] if "last_login_at" in keys else None,
-            "last_login_ip": row["last_login_ip"] if "last_login_ip" in keys else None}
+            "last_login_ip": row["last_login_ip"] if "last_login_ip" in keys else None,
+            "totp_enabled": bool(row["totp_enabled"]) if "totp_enabled" in keys else False,
+            "totp_required": bool(row["totp_required"]) if "totp_required" in keys else False}
 
 
 def record_login(user_id: int, ip: str = "") -> None:
@@ -503,8 +520,10 @@ def list_users() -> list[dict[str, Any]]:
 
 
 def create_user(email: str, password: str, is_admin: bool = False,
-                initial_settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
-    """Create a user + their own area + an owner membership. Returns the user."""
+                initial_settings: Optional[dict[str, Any]] = None, *, totp_required: bool = False) -> dict[str, Any]:
+    """Create a user + their own area + an owner membership. Returns the user.
+    ``totp_required`` (sign-up and first-run setup) forces two-factor enrolment
+    before the dashboard can be used."""
     global _areas_generation
     init()
     email = email.strip().lower()
@@ -518,8 +537,8 @@ def create_user(email: str, password: str, is_admin: bool = False,
         # First user is forced admin; area id of the very first user is DEFAULT_AREA_ID.
         first = c.execute("SELECT COUNT(*) n FROM users").fetchone()["n"] == 0
         cur = c.execute(
-            "INSERT INTO users(email,password_hash,is_admin,created_at) VALUES(?,?,?,?)",
-            (email, hash_password(password), 1 if (is_admin or first) else 0, _now()),
+            "INSERT INTO users(email,password_hash,is_admin,created_at,totp_required) VALUES(?,?,?,?,?)",
+            (email, hash_password(password), 1 if (is_admin or first) else 0, _now(), 1 if totp_required else 0),
         )
         uid = cur.lastrowid
         if first:
@@ -588,8 +607,8 @@ async def authenticate_async(email: str, password: str) -> Optional[dict[str, An
 
 
 async def create_user_async(email: str, password: str, is_admin: bool = False,
-                            initial_settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
-    return await asyncio.to_thread(create_user, email, password, is_admin, initial_settings)
+                            initial_settings: Optional[dict[str, Any]] = None, *, totp_required: bool = False) -> dict[str, Any]:
+    return await asyncio.to_thread(lambda: create_user(email, password, is_admin, initial_settings, totp_required=totp_required))
 
 
 async def set_password_async(user_id: int, new_password: str) -> None:
@@ -600,12 +619,96 @@ async def consume_password_reset_async(token: str, new_password: str) -> Optiona
     return await asyncio.to_thread(consume_password_reset, token, new_password)
 
 
+# ------------------------------------------------------- two-factor (app/mfa.py)
+def mfa_secret(user_id: int) -> str:
+    """The user's TOTP secret (decrypted), '' when none is stored."""
+    init()
+    with _connect() as c:
+        row = c.execute("SELECT totp_secret FROM users WHERE id=?", (user_id,)).fetchone()
+    raw = row["totp_secret"] if row else ""
+    return crypto.decrypt(raw) if raw else ""
+
+
+def mfa_begin(user_id: int, secret: str) -> None:
+    """Store a fresh, not yet confirmed secret (enrolment step 1)."""
+    init()
+    with _connect() as c:
+        c.execute("UPDATE users SET totp_secret=?, totp_enabled=0, totp_counter=-1 WHERE id=?", (crypto.encrypt(secret), user_id))
+    _users.pop(user_id, None)
+
+
+def mfa_enable(user_id: int, counter: int) -> None:
+    """Enrolment confirmed with a valid code."""
+    init()
+    with _connect() as c:
+        c.execute("UPDATE users SET totp_enabled=1, totp_counter=? WHERE id=?", (counter, user_id))
+    _users.pop(user_id, None)
+
+
+def mfa_counter(user_id: int) -> int:
+    init()
+    with _connect() as c:
+        row = c.execute("SELECT totp_counter FROM users WHERE id=?", (user_id,)).fetchone()
+    return int(row["totp_counter"]) if row else -1
+
+
+def mfa_touch_counter(user_id: int, counter: int) -> bool:
+    """Record the counter a code was accepted at; False when a newer one is
+    already stored (two racing submits of the same code: one wins)."""
+    init()
+    with _connect() as c:
+        cur = c.execute("UPDATE users SET totp_counter=? WHERE id=? AND totp_counter<?", (counter, user_id, counter))
+    return cur.rowcount == 1
+
+
+def mfa_reset(user_id: int, *, required: bool) -> None:
+    """Drop the secret and every backup code (disable, or admin recovery)."""
+    init()
+    with _connect() as c:
+        c.execute("UPDATE users SET totp_secret='', totp_enabled=0, totp_required=?, totp_counter=-1, backup_salt='' WHERE id=?",
+                  (1 if required else 0, user_id))
+        c.execute("DELETE FROM mfa_backup_codes WHERE user_id=?", (user_id,))
+    _users.pop(user_id, None)
+
+
+def mfa_set_backup_codes(user_id: int, codes: list[str]) -> None:
+    """Replace the user's backup codes (stored salted-hashed)."""
+    from . import mfa
+    init()
+    salt = secrets.token_hex(16)
+    with _connect() as c:
+        c.execute("DELETE FROM mfa_backup_codes WHERE user_id=?", (user_id,))
+        c.execute("UPDATE users SET backup_salt=? WHERE id=?", (salt, user_id))
+        c.executemany("INSERT INTO mfa_backup_codes(user_id, code_hash, created_at) VALUES(?,?,?)",
+                      [(user_id, mfa.hash_backup_code(code, salt), _now()) for code in codes])
+
+
+def mfa_backup_codes_left(user_id: int) -> int:
+    init()
+    with _connect() as c:
+        return int(c.execute("SELECT COUNT(*) n FROM mfa_backup_codes WHERE user_id=?", (user_id,)).fetchone()["n"])
+
+
+def mfa_use_backup_code(user_id: int, code: str) -> bool:
+    """Burn a backup code atomically; True when it was valid and unused."""
+    from . import mfa
+    init()
+    with _connect() as c:
+        row = c.execute("SELECT backup_salt FROM users WHERE id=?", (user_id,)).fetchone()
+        if not row or not row["backup_salt"]:
+            return False
+        h = mfa.hash_backup_code(code, row["backup_salt"])
+        cur = c.execute("DELETE FROM mfa_backup_codes WHERE user_id=? AND code_hash=?", (user_id, h))
+    return cur.rowcount == 1
+
+
 def delete_user(user_id: int) -> None:
     global _areas_generation
     init()
     with _connect() as c:
         area_ids = [r["id"] for r in c.execute("SELECT id FROM areas WHERE owner_user_id=?", (user_id,)).fetchall()]
         c.execute("DELETE FROM memberships WHERE user_id=?", (user_id,))
+        c.execute("DELETE FROM mfa_backup_codes WHERE user_id=?", (user_id,))
         for aid in area_ids:
             c.execute("DELETE FROM memberships WHERE area_id=?", (aid,))
             c.execute("DELETE FROM areas WHERE id=?", (aid,))
@@ -1766,5 +1869,11 @@ def consume_password_reset(token: str, new_password: str) -> Optional[int]:
             return None
         c.execute("UPDATE users SET password_hash=? WHERE id=?",
                   (hash_password(new_password), rec["user_id"]))
+        # a reset link is the recovery path when the authenticator and the backup
+        # codes are gone: the user enrols again before using the dashboard
+        c.execute("UPDATE users SET totp_secret='', totp_enabled=0, totp_required=1, totp_counter=-1, backup_salt='' WHERE id=?",
+                  (rec["user_id"],))
+        c.execute("DELETE FROM mfa_backup_codes WHERE user_id=?", (rec["user_id"],))
     _pw_versions.pop(rec["user_id"], None)
+    _users.pop(rec["user_id"], None)
     return rec["user_id"]

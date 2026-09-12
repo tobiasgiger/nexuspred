@@ -1,0 +1,14 @@
+{% extends "auth_base.html" %}
+{% block title %}{{ t("Two-factor code · Fluxbridge") }}{% endblock %}
+{% block heading %}Fluxbridge{% endblock %}
+{% block subheading %}{{ t("Enter the code from your authenticator app") }}{% endblock %}
+{% block content %}
+<form method="post" action="/login/2fa">
+  <label>{{ t("6-digit code or a backup code") }}
+    <input class="mfa-code" type="text" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[A-Za-z0-9 \-]{6,12}" maxlength="12" required autofocus />
+  </label>
+  <button type="submit">{{ t("Continue") }}</button>
+</form>
+<div class="auth-note">{{ t("Lost your phone? Use one of your backup codes (each works once). Without phone and codes, an administrator can reset your two-factor setup.") }}</div>
+<a class="auth-link" href="/login">{{ t("Back to sign in") }}</a>
+{% endblock %}

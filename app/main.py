@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from . import auth, config, context, copy, crypto, db, drawdown, health, history, http, journal, news, pnl, push, security, state
 from .discord_signals.routes import router as discord_router
 from .routers import ROUTERS
-from .web import BASE_DIR, is_auth_exempt, wants_html
+from .web import BASE_DIR, is_auth_exempt, mfa_setup_allowed, wants_html
 
 _loop_tasks: list[asyncio.Task] = []
 
@@ -153,6 +153,11 @@ async def _auth_middleware(request: Request, call_next):
             return RedirectResponse("/login", status_code=302)
         return JSONResponse({"detail": "Authentication required"}, status_code=401)
 
+    if user.get("totp_required") and not user.get("totp_enabled") and not mfa_setup_allowed(path):
+        # new accounts enrol in two-factor authentication before anything else
+        if wants_html(request):
+            return RedirectResponse("/2fa/setup", status_code=302)
+        return JSONResponse({"detail": "Two-factor setup required"}, status_code=403)
     area = db.user_primary_area(user["id"]) or context.DEFAULT_AREA_ID
     request.state.user = user
     request.state.area_id = area

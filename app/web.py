@@ -20,8 +20,15 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 AUTH_EXEMPT_PREFIXES = ("/webhook/", "/static/", "/api/agent/")
 AUTH_EXEMPT_PATHS = frozenset({
     "/healthz", "/guide", "/favicon.ico", "/sw.js",
-    "/login", "/logout", "/register", "/setup", "/reset",
+    "/login", "/logout", "/register", "/setup", "/reset", "/login/2fa",
 })
+# Paths a signed-in user who still has to enrol in two-factor may reach.
+MFA_SETUP_PATHS = frozenset({"/2fa/setup", "/2fa/codes", "/logout", "/api/me"})
+MFA_SETUP_PREFIXES = ("/api/account/2fa",)
+
+
+def mfa_setup_allowed(path: str) -> bool:
+    return path in MFA_SETUP_PATHS or path.startswith(MFA_SETUP_PREFIXES)
 AUTH_EXEMPT = AUTH_EXEMPT_PREFIXES + tuple(sorted(AUTH_EXEMPT_PATHS))  # backwards-compat alias
 
 

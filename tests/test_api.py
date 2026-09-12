@@ -9,7 +9,7 @@ import zipfile
 import pytest
 
 from app import auth, config, context, db, signals, state
-from tests.conftest import _make_client, login_as
+from tests.conftest import _make_client, enrolled, login_as
 from tests.helpers import settle
 
 
@@ -47,13 +47,16 @@ async def test_setup_flow_creates_admin_and_migrates(anon_client):
 
     r = await anon_client.post("/setup", data={"email": "Boss@Example.com", "password": "password123",
                                                "password2": "password123"})
-    assert r.status_code == 302 and r.headers["location"] == "/"
+    assert r.status_code == 302 and r.headers["location"] == "/2fa/setup"     # two-factor enrolment comes first
     cookie = r.cookies.get(auth.COOKIE)
     assert cookie and auth.read_session(cookie) == 1
     login_as(anon_client, cookie)
+    assert (await anon_client.get("/api/me")).json()["totp_required"] is True
+    enrolled(1)
 
     me = (await anon_client.get("/api/me")).json()
-    assert me == {"id": 1, "email": "boss@example.com", "is_admin": True, "features": {"discord_signals": True}}
+    assert me == {"id": 1, "email": "boss@example.com", "is_admin": True, "features": {"discord_signals": True},
+                  "totp_enabled": True, "totp_required": True}
     whs = (await anon_client.get("/api/webhooks")).json()
     assert len(whs) == 1 and whs[0]["name"] == "Default" and whs[0]["strategy"] == "bracket"
     assert (await anon_client.get("/setup")).headers["location"] == "/login"
@@ -75,6 +78,7 @@ async def test_setup_seeds_area_from_legacy_settings_json(anon_client):
     try:
         r = await anon_client.post("/setup", data={"email": "a@b.c", "password": "password123", "password2": "password123"})
         login_as(anon_client, r.cookies[auth.COOKIE])
+        enrolled(1)
         s = (await anon_client.get("/api/settings")).json()
         assert s["default_qty"] == 7
         whs = (await anon_client.get("/api/webhooks")).json()
@@ -121,8 +125,9 @@ async def test_invite_register_and_area_isolation(client, anon_client):
 
     r = await anon_client.post("/register", data={"code": inv["code"], "email": "new@x.com",
                                                   "password": "password123", "password2": "password123"})
-    assert r.status_code == 302 and r.headers["location"] == "/"
+    assert r.status_code == 302 and r.headers["location"] == "/2fa/setup"
     login_as(anon_client, r.cookies[auth.COOKIE])
+    enrolled(auth.read_session(r.cookies[auth.COOKIE]))
     me = (await anon_client.get("/api/me")).json()
     assert me["is_admin"] is False and me["features"] == {"discord_signals": False}
     whs = (await anon_client.get("/api/webhooks")).json()

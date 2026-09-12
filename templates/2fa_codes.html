@@ -1,0 +1,11 @@
+{% extends "auth_base.html" %}
+{% block title %}{{ t("Backup codes · Fluxbridge") }}{% endblock %}
+{% block heading %}{{ t("Two-factor authentication is on") }}{% endblock %}
+{% block subheading %}{{ t("Save these backup codes now") }}{% endblock %}
+{% block content %}
+<div class="mfa-warn">{{ t("Each code signs you in once when your phone is not at hand. They are shown only now — store them in your password manager or print them. You can request a new set under Account at any time; it replaces this one.") }}</div>
+<ul class="mfa-codes">
+  {% for c in codes %}<li>{{ c }}</li>{% endfor %}
+</ul>
+<form method="get" action="/"><button type="submit">{{ t("I have saved them — continue") }}</button></form>
+{% endblock %}

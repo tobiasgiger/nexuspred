@@ -18,7 +18,8 @@ router = APIRouter(prefix="/api", tags=["users"])
 async def api_me(request: Request) -> dict[str, Any]:
     u = request.state.user
     return {"id": u["id"], "email": u["email"], "is_admin": u["is_admin"],
-            "features": db.user_features(u["id"])}
+            "features": db.user_features(u["id"]),
+            "totp_enabled": bool(u.get("totp_enabled")), "totp_required": bool(u.get("totp_required"))}
 
 
 @router.get("/users")

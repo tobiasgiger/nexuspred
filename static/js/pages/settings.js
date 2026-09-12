@@ -9,6 +9,8 @@ import { actions } from "../actions.js";
 import { settingsForm } from "../components/form.js";
 import { dataTable } from "../components/table.js";
 import { enablePush, disablePush, currentSubscription, unsupportedReason, isIOS, isStandalone } from "../push.js";
+import { openDrawer, closeDrawer } from "../components/drawer.js";
+import { copyText } from "../ui.js";
 import { t, LANGUAGES } from "../i18n.js";
 
 const lead = () => t("Changes are saved per page — only this page's settings are sent.");
@@ -436,9 +438,72 @@ export const account = {
         h("div", { class: "field" }, h("label", null, t("New password (min 8 characters)")), nw),
         h("div", { class: "field" }, h("label", null, t("Confirm new password")), nw2)),
       h("div", { class: "form-actions" }, h("button", { type: "submit", class: "btn btn-primary" }, t("Change password")), hint));
+    // ---- two-factor authentication
+    const mfaBody = h("div", null, t("Loading…"));
+    const codesList = (codes) => h("div", null,
+      h("p", { class: "hint", style: "color:var(--yellow)" }, t("Each code signs you in once when your phone is not at hand. They are shown only now — store them in your password manager or print them. You can request a new set under Account at any time; it replaces this one.")),
+      h("ul", { class: "mfa-codes" }, codes.map((c) => h("li", null, c))),
+      h("div", { class: "form-actions" },
+        h("button", { type: "button", class: "btn", onClick: async () => toast((await copyText(codes.join("\n"))) ? t("Copied") : t("Copy failed"), "success") }, icon("copy"), t("Copy codes")),
+        h("button", { type: "button", class: "btn btn-primary", onClick: () => { closeDrawer(); paintMfa(); } }, t("I have saved them — continue"))));
+    async function paintMfa() {
+      clear(mfaBody);
+      let st;
+      try { st = await api.get("/api/account/2fa"); } catch (err) { mfaBody.append(h("span", { class: "muted" }, err.message)); return; }
+      const status = st.enabled ? tag(t("On"), "on") : tag(t("Off"), "off");
+      const codes = st.enabled ? h("span", { class: st.backup_codes_left <= 2 ? "neg" : "muted", style: "margin-left:8px" }, t("{n} of {total} backup codes left", { n: st.backup_codes_left, total: st.backup_codes_total })) : null;
+      mfaBody.append(h("p", { class: "hint" }, t("A code from your authenticator app is asked for at every sign-in, in addition to the password. Ten single-use backup codes cover a lost phone.")),
+        h("div", { style: "display:flex;align-items:center;gap:6px;margin:8px 0 12px" }, status, codes, st.required ? h("span", { class: "muted", style: "margin-left:8px" }, t("required for this account")) : null));
+      const actions = h("div", { class: "form-actions" });
+      if (!st.enabled) {
+        actions.append(h("button", { type: "button", class: "btn btn-primary", onClick: async () => {
+          try {
+            const r = await api.post("/api/account/2fa/begin");
+            const codeInp = h("input", { class: "mfa-code", inputmode: "numeric", autocomplete: "one-time-code", maxlength: 7, placeholder: "123456", style: "text-align:center;font-size:22px;letter-spacing:6px" });
+            const err = h("span", { class: "save-hint err" });
+            const body = h("div", null,
+              h("ol", { class: "mfa-steps" }, h("li", null, t("Install an authenticator app (Google Authenticator, Microsoft Authenticator, Authy, 1Password, Aegis …).")), h("li", null, t("Scan this QR code, or type the key by hand.")), h("li", null, t("Enter the 6-digit code the app shows."))),
+              h("img", { class: "mfa-qr", src: r.qr, alt: "QR" }), h("code", { class: "mfa-secret" }, r.secret),
+              h("div", { class: "field" }, h("label", null, t("6-digit code")), codeInp), err);
+            const confirmBtn = h("button", { type: "button", class: "btn btn-primary", onClick: async () => {
+              try {
+                const res = await api.post("/api/account/2fa/confirm", { code: codeInp.value });
+                toast(t("Two-factor authentication enabled"), "success");
+                openDrawer({ title: t("Save these backup codes now"), body: codesList(res.backup_codes), width: "520px", onClose: paintMfa });
+              } catch (e) { err.textContent = e.message; }
+            } }, t("Activate"));
+            openDrawer({ title: t("Set up two-factor authentication"), body, width: "520px", foot: h("div", { class: "form-actions" }, h("button", { type: "button", class: "btn btn-ghost", onClick: () => closeDrawer() }, t("Cancel")), confirmBtn) });
+            codeInp.focus();
+          } catch (e) { toast(e.message, "error"); }
+        } }, icon("shield"), t("Enable two-factor authentication")));
+      } else {
+        const askPwCode = (title, onSubmit) => {
+          const pw = h("input", { type: "password", autocomplete: "current-password" });
+          const code = h("input", { class: "mfa-code", inputmode: "numeric", autocomplete: "one-time-code", maxlength: 7, style: "text-align:center;letter-spacing:4px" });
+          const err = h("span", { class: "save-hint err" });
+          const go = h("button", { type: "button", class: "btn btn-primary", onClick: async () => { try { await onSubmit(pw.value, code.value); } catch (e) { err.textContent = e.message; } } }, t("Continue"));
+          openDrawer({ title, width: "440px", body: h("div", null,
+            h("div", { class: "field" }, h("label", null, t("Current password")), pw),
+            h("div", { class: "field" }, h("label", null, t("Code from your authenticator app")), code), err),
+            foot: h("div", { class: "form-actions" }, h("button", { type: "button", class: "btn btn-ghost", onClick: () => closeDrawer() }, t("Cancel")), go) });
+          pw.focus();
+        };
+        actions.append(h("button", { type: "button", class: "btn", title: t("Replaces the current set — lost or used-up codes stop working."), onClick: () => askPwCode(t("New backup codes"), async (password, code) => {
+          const res = await api.post("/api/account/2fa/backup-codes", { password, code });
+          toast(t("New backup codes issued"), "success");
+          openDrawer({ title: t("Save these backup codes now"), body: codesList(res.backup_codes), width: "520px", onClose: paintMfa });
+        }) }, icon("refresh"), t("New backup codes")));
+        if (!st.required) actions.append(h("button", { type: "button", class: "btn btn-ghost", onClick: () => askPwCode(t("Disable two-factor authentication?"), async (password, code) => {
+          await api.post("/api/account/2fa/disable", { password, code }); closeDrawer(); toast(t("Two-factor authentication disabled"), "warn"); paintMfa();
+        }) }, t("Disable")));
+      }
+      mfaBody.append(actions);
+    }
+    paintMfa();
     root.append(
       pageHead(t("Account"), t("You're signed in to your own isolated area — token accounts, webhooks, Discord listener, symbol map and logs are private to you.")),
       h("div", { class: "grid grid-2" },
+        card({ title: t("Two-factor authentication") }, mfaBody),
         card({ title: t("Your account") },
           h("dl", { class: "kv" }, h("dt", null, t("Email")), h("dd", null, me.email || "—"), h("dt", null, t("Role")), h("dd", null, me.is_admin ? t("Administrator") : t("User")),
             h("dt", null, t("Discord Signals")), h("dd", null, (me.features || {}).discord_signals === false ? t("not enabled") : "enabled")),

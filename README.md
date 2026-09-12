@@ -723,6 +723,26 @@ Latency matters: run the bridge close to Tradovate (Render **Virginia / US East*
 avoid the agent path for the leader where you can — polling adds up to a second.
 
 ---
+## Two-factor authentication (authenticator app + backup codes)
+
+Every **new** account (first-run setup and invite sign-up) must enrol in two-factor
+authentication before it can use the dashboard: after registering, the user lands on
+`/2fa/setup`, scans the QR code (or types the key) with Google Authenticator, Microsoft
+Authenticator, Authy, 1Password, Aegis …, confirms with a 6-digit code and receives **ten
+backup codes** shown once. Existing accounts enable it under **Settings → Account** (there it
+can also be turned off again; accounts created through sign-up cannot).
+
+Signing in then asks for the password first and the code second; a backup code works
+instead of the app, **each code once**. Under Account the user sees how many are left and
+can request a **new set of ten at any time** (lost or all used) with password + current
+code — the old set stops working. TOTP codes are single-use too (a code accepted once is
+refused within its 30-second step), attempts are rate-limited and audited.
+
+Recovery when the phone *and* the codes are gone: an admin presses **Reset 2FA** on the
+Users page (or issues a password reset). Both delete the secret and the codes and sign the
+user out everywhere; they sign in with the password and enrol again. The secret is stored
+encrypted, backup codes as salted hashes.
+
 ## Users, areas & login (multi-tenant)
 
 Fluxbridge is **multi-user**. Each user signs in with **email + password** and gets

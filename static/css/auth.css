@@ -19,3 +19,13 @@ button:hover { background: var(--accent); }
 .auth-err { margin-bottom: 16px; color: var(--red); font-size: 13px; background: var(--red-soft); border: 1px solid color-mix(in srgb, var(--red) 40%, transparent); border-radius: 8px; padding: 9px 11px; }
 .auth-note { margin-top: 16px; color: var(--text-dim); font-size: 11.5px; text-align: center; }
 a { color: var(--accent); }
+/* two-factor pages */
+.mfa-qr { display: block; width: 200px; height: 200px; margin: 6px auto 12px; border-radius: 10px; background: #fff; padding: 6px; }
+.mfa-secret { display: block; text-align: center; font-family: var(--mono, ui-monospace, monospace); font-size: 13px; letter-spacing: 1px; color: var(--text); background: var(--bg-inset); border: 1px solid var(--border); border-radius: 8px; padding: 8px; margin: 6px 0 14px; user-select: all; }
+.mfa-steps { color: var(--text-dim); font-size: 12.5px; margin: 0 0 12px; padding-left: 18px; }
+.mfa-steps li { margin-bottom: 4px; }
+.mfa-codes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 10px 0 14px; padding: 0; list-style: none; }
+.mfa-codes li { font-family: var(--mono, ui-monospace, monospace); font-size: 14px; letter-spacing: 1px; background: var(--bg-inset); border: 1px solid var(--border); border-radius: 8px; padding: 8px; text-align: center; user-select: all; }
+.mfa-warn { color: var(--yellow, #d8a400); font-size: 12.5px; margin-bottom: 12px; }
+input.mfa-code { text-align: center; font-size: 22px; letter-spacing: 6px; font-family: var(--mono, ui-monospace, monospace); }
+.auth-link { display: block; text-align: center; margin-top: 12px; font-size: 12.5px; }

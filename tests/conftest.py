@@ -105,6 +105,13 @@ def area(admin):
         yield db.user_primary_area(admin["id"])
 
 
+def enrolled(user_id: int) -> None:
+    """Satisfy the two-factor gate a new account starts behind (tests that are
+    not about the enrolment flow itself)."""
+    db.mfa_begin(user_id, "JBSWY3DPEHPK3PXP")
+    db.mfa_enable(user_id, 0)
+
+
 def login_as(client: httpx.AsyncClient, cookie: str) -> None:
     """Attach a session cookie as a raw header (httpx's cookie jar treats the
     dotless host 'testserver' as 'testserver.local' and would drop it)."""

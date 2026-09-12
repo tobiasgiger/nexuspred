@@ -130,6 +130,8 @@ class RateLimiter:
 # of server CPU as well).
 _LIMITS: dict[str, RateLimiter] = {
     "/login": RateLimiter(10, 60.0),
+    "/login/2fa": RateLimiter(10, 60.0),
+    "/2fa/setup": RateLimiter(20, 60.0),
     "/setup": RateLimiter(5, 60.0),
     "/register": RateLimiter(10, 60.0),
     "/reset": RateLimiter(10, 60.0),
@@ -166,7 +168,7 @@ def login_failed(email: str) -> None:
 
 # Auth form pages redirect back to themselves with ``?error=rate`` so the user
 # sees a message instead of a bare 429.
-_FORM_PAGES = {"/login", "/setup", "/register", "/reset"}
+_FORM_PAGES = {"/login", "/setup", "/register", "/reset", "/login/2fa", "/2fa/setup"}
 
 
 def reset_limits() -> None:

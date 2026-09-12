@@ -176,7 +176,7 @@ async def test_setup_is_serialised(anon_client):
     form = {"email": "a@example.com", "password": "password123", "password2": "password123"}
     r1, r2 = await asyncio.gather(anon_client.post("/setup", data=form),
                                   anon_client.post("/setup", data={**form, "email": "b@example.com"}))
-    assert sorted([r1.headers["location"], r2.headers["location"]]) == ["/", "/login"]
+    assert sorted([r1.headers["location"], r2.headers["location"]]) == ["/2fa/setup", "/login"]
     assert db.user_count() == 1
 
 

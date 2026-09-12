@@ -16,3 +16,4 @@ pywebpush>=2.0.0
 discord.py-self>=2.1.0
 websockets>=12,<16
 async_rithmic>=1.6,<2      # Rithmic broker adapter (app/rithmic.py); imported lazily
+segno>=1.6,<2

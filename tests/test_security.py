@@ -179,7 +179,7 @@ async def test_invite_bound_to_email_enforced(anon_client, admin):
     assert r.headers["location"].endswith("error=email")
     r = await anon_client.post("/register", data={"code": code, "email": "invited@example.com",
                                                    "password": "password123", "password2": "password123"})
-    assert r.headers["location"] == "/"
+    assert r.headers["location"] == "/2fa/setup"
 
 
 # ------------------------------------------------------------ admin gates

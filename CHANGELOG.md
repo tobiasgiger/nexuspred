@@ -4,6 +4,19 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.68
+- **Two-factor authentication.** New accounts (first-run setup and invite sign-up) must
+  enrol with an authenticator app before they can use the dashboard: QR code / key,
+  6-digit confirmation, then ten single-use backup codes shown once. Signing in asks for
+  the code after the password; a backup code works instead of the app. Settings → Account
+  shows how many backup codes are left and issues a fresh set of ten on request (password
+  + current code; the old set stops working); accounts that enabled 2FA voluntarily can
+  disable it there, sign-up accounts cannot. Admins reset a user's 2FA on the Users page
+  (lost phone and codes) — secret and codes are wiped, every session ends, the user enrols
+  again; a password reset does the same. TOTP codes are single-use, the second-factor
+  page is rate-limited, everything is audited, the secret is stored encrypted. New
+  dependency: `segno` (QR code, pure Python).
+
 ## 5.0.0-alpha.67
 - **German and English dashboard.** Every page, menu, dialog, toast, hint and the
   sign-in / setup / reset pages are localised (1 000+ strings). The language follows the
