@@ -39,7 +39,7 @@ def validate_copy_accounts(publisher_area_id: int, group_id: str,
         )
 
 
-async def reconcile_copy_group(publisher_area_id: int, group_id: str) -> int:
+async def reconcile_copy_group(publisher_area_id: int, group_id: str, *, sync: bool = True) -> int:
     """Disable subscriptions/accounts no longer safe for one published group.
 
     ACLs are re-evaluated against the publisher's current sharing configuration.
@@ -65,7 +65,7 @@ async def reconcile_copy_group(publisher_area_id: int, group_id: str) -> int:
 
         if not marketplace.subscription_allowed(group, sub):
             removed = _enabled_specs(accounts)
-            if removed:
+            if sync and removed:
                 await copy.release_followers(publisher_area_id, group_id, removed)
             db.update_subscription(sub_id, sub_area, enabled=False)
             changed += 1
@@ -81,21 +81,23 @@ async def reconcile_copy_group(publisher_area_id: int, group_id: str) -> int:
             else:
                 taken.add(spec)
         if removed:
-            await copy.release_followers(publisher_area_id, group_id, removed)
+            if sync:
+                await copy.release_followers(publisher_area_id, group_id, removed)
             db.update_subscription(sub_id, sub_area, accounts=accounts)
             changed += 1
 
     if changed:
-        await copy.sync_area(publisher_area_id)
+        if sync:
+            await copy.sync_area(publisher_area_id)
         state.log_event("warn", f"Copy marketplace safety: {changed} subscription(s) revoked or de-duplicated")
     return changed
 
 
-async def reconcile_all() -> int:
-    """Repair stale marketplace-copy authorization before live runners start."""
+async def reconcile_all(*, sync: bool = True) -> int:
+    """Repair stale marketplace-copy authorization; optionally before runners start."""
     changed = 0
     for area_id in db.all_area_ids():
         for group in copy.load_groups(area_id):
             if marketplace.sharing_of(group).get("enabled"):
-                changed += await reconcile_copy_group(area_id, str(group.get("id") or ""))
+                changed += await reconcile_copy_group(area_id, str(group.get("id") or ""), sync=sync)
     return changed
