@@ -46,6 +46,7 @@ from .engine.common import (  # noqa: F401 - re-exported for callers/tests
     SignalError,
     _base_root,
     _cancel_working,
+    _flatten_account,
     _lock,
     _resolve_symbol,
     _trade_key,
@@ -416,30 +417,7 @@ async def flatten_all() -> dict[str, Any]:
         state.log_event("warn", "🆘 SOS flatten-all: no trade accounts found")
         return {"status": "ok", "accounts": 0, "cancelled": 0, "flattened": 0, "errors": []}
 
-    async def flatten(ex: AccountExecutor) -> tuple[int, int, list[str]]:
-        errors: list[str] = []
-        # 1) Cancel every working order first (so stops/targets don't re-fill).
-        cancelled = await _cancel_working(ex, "", errors)
-        # 2) Flatten every open position (any symbol) on this account — all at once.
-        flattened = 0
-        try:
-            positions = await ex.positions()
-        except TradovateError as exc:
-            errors.append(f"list positions: {exc}")
-            positions = []
-        symbols = [p.get("symbol") for p in positions if p.get("symbol")]
-        results = await asyncio.gather(*(ex.liquidate_position(s) for s in symbols),
-                                       return_exceptions=True)
-        for sym, r in zip(symbols, results):
-            if isinstance(r, TradovateError):
-                errors.append(f"flatten {sym}: {r}")
-            elif isinstance(r, BaseException):
-                raise r
-            else:
-                flattened += 1
-        return cancelled, flattened, errors
-
-    results = await asyncio.gather(*(flatten(ex) for ex in executors), return_exceptions=True)
+    results = await asyncio.gather(*(_flatten_account(ex, "") for ex in executors), return_exceptions=True)
 
     cancelled = flattened = 0
     all_errors: list[str] = []
@@ -459,8 +437,8 @@ async def flatten_all() -> dict[str, Any]:
         f"cancelled across {len(executors)} account(s)"
         + (f"; {len(all_errors)} error(s)" if all_errors else ""),
     )
-    return {"status": "ok", "accounts": len(executors), "cancelled": cancelled,
-            "flattened": flattened, "errors": all_errors}
+    return {"status": "error" if all_errors else "ok", "accounts": len(executors),
+            "cancelled": cancelled, "flattened": flattened, "errors": all_errors}
 
 
 # ------------------------------------------------------------- inspection
