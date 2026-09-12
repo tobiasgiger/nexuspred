@@ -13,7 +13,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, config, context, copy, crypto, db, drawdown, health, history, http, journal, news, pnl, push, security, state
+from . import (auth, config, context, copy, copy_bindings, crypto, db, drawdown, health,
+               history, http, journal, journal_other, marketplace_safety, news, pnl,
+               push, security, state, watchdog)
 from .discord_signals.routes import router as discord_router
 from .routers import ROUTERS
 from .web import BASE_DIR, is_auth_exempt, mfa_setup_allowed, wants_html
@@ -23,6 +25,20 @@ _loop_tasks: list[asyncio.Task] = []
 
 async def _startup() -> None:
     db.init()
+    # The other-broker journal adapters need to be active before either the
+    # scheduled importer or a manual Journal import can run.
+    journal_other.install()
+
+    # Repair persisted copy bindings and stale marketplace ACL state before any
+    # live copy runner starts. This is deliberately state-only: positions are
+    # never touched during startup repair.
+    try:
+        for aid in db.all_area_ids():
+            copy_bindings.repair(aid)
+        await marketplace_safety.reconcile_all(sync=False)
+    except Exception as exc:  # noqa: BLE001 - startup continues, but no failure is silent
+        state.log_event("warn", f"copy/marketplace safety repair failed: {exc}")
+
     # Default each area's alert "Notify email" to its owner's address where unset.
     try:
         if db.backfill_alert_emails():
@@ -44,7 +60,7 @@ async def _startup() -> None:
     # Encrypt secrets written by earlier versions (idempotent, one pass).
     try:
         try:
-            push.available() and push.public_key()  # re-encrypt the VAPID key under the current crypto key
+            push.available() and push.public_key()
         except Exception:  # noqa: BLE001
             pass
         if db.encrypt_existing_settings():
@@ -53,7 +69,7 @@ async def _startup() -> None:
             state.log_event("warn", "Secrets are encrypted with the auto-generated key stored in the "
                                     "database. Set NEXUSPRED_ENCRYPTION_KEY (or SESSION_SECRET) in the "
                                     "environment so the key lives outside the DB file.")
-    except Exception as exc:  # noqa: BLE001 - never block startup on the migration
+    except Exception as exc:  # noqa: BLE001
         state.log_event("warn", f"secret encryption pass failed: {exc}")
     # Durable signal/order history: prune, refill the live buffers, start the writer.
     try:
@@ -73,8 +89,9 @@ async def _startup() -> None:
                       asyncio.create_task(journal.scheduler_loop(), name="journal-import-loop"),
                       asyncio.create_task(pnl.pnl_loop(), name="pnl-loop"),
                       asyncio.create_task(copy.copy_loop(), name="copy-loop"),
-                      asyncio.create_task(news.news_loop(), name="news-loop")]
-    health.start_discord_listeners()     # the health loop keeps them alive from here on
+                      asyncio.create_task(news.news_loop(), name="news-loop"),
+                      asyncio.create_task(watchdog.heartbeat_loop(), name="heartbeat-loop")]
+    health.start_discord_listeners()
 
 
 async def _history_prune_loop() -> None:
@@ -87,7 +104,6 @@ async def _history_prune_loop() -> None:
 
 
 async def _shutdown() -> None:
-    """Stop the background loops and Discord listeners; close the HTTP pool."""
     for t in _loop_tasks:
         t.cancel()
     for t in _loop_tasks:
@@ -96,10 +112,10 @@ async def _shutdown() -> None:
     _loop_tasks.clear()
     await copy.stop_all()
     with contextlib.suppress(Exception):
-        await asyncio.to_thread(drawdown.flush)   # batched drawdown state → settings
+        await asyncio.to_thread(drawdown.flush)
     await health.stop_discord_listeners()
     await http.aclose_all()
-    await asyncio.to_thread(history.stop)  # drain queued history writes
+    await asyncio.to_thread(history.stop)
 
 
 @asynccontextmanager
@@ -112,19 +128,12 @@ async def _lifespan(_app: FastAPI):
 
 
 class _Static(StaticFiles):
-    """Static files whose scripts/styles always revalidate (ETag → 304), so a
-    deploy never leaves a browser with a stale ES module next to a fresh one."""
-
     async def get_response(self, path: str, scope):  # type: ignore[override]
         resp = await super().get_response(path, scope)
         if path.endswith(".js"):
-            # ES modules import their siblings with plain relative paths (no
-            # version query), and a standalone iOS PWA will serve those from
-            # cache without revalidating even under no-cache — leaving a device
-            # on stale code after a deploy. no-store forces a fresh fetch.
             resp.headers["Cache-Control"] = "no-store"
         elif path.endswith(".css"):
-            resp.headers["Cache-Control"] = "no-cache"  # already ?v= busted
+            resp.headers["Cache-Control"] = "no-cache"
         return resp
 
 
@@ -132,17 +141,16 @@ app = FastAPI(title="Fluxbridge", version=config.get_version(), lifespan=_lifesp
 app.mount("/static", _Static(directory=str(BASE_DIR / "static")), name="static")
 for _router in ROUTERS:
     app.include_router(_router)
-app.include_router(discord_router)  # Discord signal module (same server + auth)
+app.include_router(discord_router)
 
 
 @app.middleware("http")
 async def _auth_middleware(request: Request, call_next):
-    """Require a login session; set the request's area context to the user's area."""
     path = request.url.path
     if is_auth_exempt(path):
         return await call_next(request)
 
-    if db.user_count() == 0:  # first run: force admin setup
+    if db.user_count() == 0:
         if wants_html(request):
             return RedirectResponse("/setup", status_code=302)
         return JSONResponse({"detail": "Setup required"}, status_code=503)
@@ -154,7 +162,6 @@ async def _auth_middleware(request: Request, call_next):
         return JSONResponse({"detail": "Authentication required"}, status_code=401)
 
     if user.get("totp_required") and not user.get("totp_enabled") and not mfa_setup_allowed(path):
-        # new accounts enrol in two-factor authentication before anything else
         if wants_html(request):
             return RedirectResponse("/2fa/setup", status_code=302)
         return JSONResponse({"detail": "Two-factor setup required"}, status_code=403)
@@ -168,13 +175,10 @@ async def _auth_middleware(request: Request, call_next):
         context.reset_area(tok)
 
 
-# Outermost first: body cap → CSRF/rate-limit/headers → auth. (Starlette runs
-# ``@app.middleware`` decorators innermost-last, so this one wraps the auth one.)
 app.middleware("http")(security.security_middleware)
 app.add_middleware(security.BodyLimitMiddleware)
 
 
 @app.exception_handler(config.SettingsUnavailable)
 async def _settings_unavailable(_request: Request, exc: config.SettingsUnavailable) -> JSONResponse:
-    """A save that would have written defaults over unreadable settings was refused."""
     return JSONResponse({"detail": f"{exc} — check the database and try again"}, status_code=503)
