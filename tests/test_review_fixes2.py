@@ -199,3 +199,29 @@ def test_restart_under_systemd_is_a_clean_shutdown(monkeypatch):
     monkeypatch.setattr(os, "execv", lambda *a: sent.append("execv"))
     updater._restart()
     assert sent == [(os.getpid(), signal.SIGTERM)]
+
+
+# ------------------------------------------------------------- broker surface
+def test_tradovate_session_implements_the_broker_protocol(admin):
+    from app import broker, tradovate
+    s = tradovate.TradovateSession(0, {"name": "L", "environment": "demo", "enabled": True, "access_token": "t", "accounts": []}, area_id=1)
+    assert isinstance(s, broker.BrokerSession) and s.kind == "tradovate"
+    ex = tradovate.AccountExecutor(s, {"spec": "A1", "id": 1, "enabled": True})
+    assert isinstance(ex, broker.BrokerExecutor)
+    for name in ("positions_snapshot", "orders_snapshot", "account_list", "cash_snapshot", "auto_liq_rules", "user_id",
+                 "contract_info", "contract_find", "contract_suggest", "contract_maturity", "raw_get"):
+        assert callable(getattr(s, name)), name
+
+
+def test_unknown_broker_login_never_trades(admin):
+    from app import state, tradovate
+    with context.use_area(1):
+        config.save_settings({"token_accounts": [
+            {"name": "Rithmic X", "broker": "rithmic", "environment": "live", "enabled": True, "access_token": "t", "accounts": [{"spec": "R1", "id": 5, "enabled": True}]},
+            {"name": "Tradovate", "environment": "demo", "enabled": True, "access_token": "t", "accounts": [{"spec": "T1", "id": 6, "enabled": True}]}]})
+        mgr = tradovate.manager_for(1)
+        mgr.reload()
+        sessions = mgr.all()
+    assert [s.enabled for s in sessions] == [False, True]
+    assert [e.spec for e in mgr.enabled()] == ["T1"]                   # no executor for the unsupported broker
+    assert "not supported" in state.session_status("Rithmic X").get("last_error", "")

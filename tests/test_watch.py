@@ -6,9 +6,10 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app import alerts, config, context, db, relay, state, watch
+from tests.helpers import BrokerFeed
 
 
-class Sess:
+class Sess(BrokerFeed):
     """A login whose /position/list answer and cash snapshots the test controls."""
     def __init__(self, name="L1", accounts=None, positions=None, realized=None, fail=False):
         self.name, self.environment, self.enabled = name, "demo", True

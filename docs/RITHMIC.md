@@ -93,7 +93,14 @@ Total engineering: about four to five weeks of work, plus the conformance wait. 
 prerequisite that costs nothing but time is Rithmic's developer registration — start it
 first if the direction is wanted.
 
-## 5. Recommendation
+## 5. Status
+
+**Step 1 is done (alpha.57):** `app/broker.py` holds the protocols, the Tradovate session
+implements them, and no module outside `app/tradovate.py` calls a Tradovate endpoint
+directly any more. Tradovate behaviour is unchanged. Next: Rithmic API registration, then
+the adapter against the paper system.
+
+## 6. Recommendation
 
 Do step 1 (the broker interface) as its own release regardless: it removes the last raw
 Tradovate calls from the copy engine and P&L and shrinks the test fakes. Apply for Rithmic's

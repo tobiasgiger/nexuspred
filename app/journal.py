@@ -194,7 +194,7 @@ class _Reader:
 
     async def list(self, path: str) -> list[dict[str, Any]]:
         try:
-            data = await self.s._request("GET", path)
+            data = await self.s.raw_get(path)
         except Exception as exc:  # noqa: BLE001
             self._note(path, None, str(exc))
             raise ImportProblem(f"{path}: {exc}") from exc
@@ -208,7 +208,7 @@ class _Reader:
         for i in range(0, len(ids), 50):
             chunk = ids[i:i + 50]
             try:
-                data = await self.s._request("GET", path, params={"ids": ",".join(map(str, chunk))})
+                data = await self.s.raw_get(path, params={"ids": ",".join(map(str, chunk))})
             except Exception as exc:  # noqa: BLE001 - name lookups are best effort
                 self._note(path, None, str(exc))
                 continue
@@ -241,10 +241,10 @@ async def _contract_info(r: _Reader, contract_ids: list[int]) -> dict[int, tuple
 
 async def _snapshot(r: _Reader, account_id: int) -> Optional[dict[str, Any]]:
     try:
-        data = await r.s._request("POST", "/cashBalance/getcashbalancesnapshot", json={"accountId": account_id})
+        data = await r.s.cash_snapshot(account_id)
     except Exception:  # noqa: BLE001
         return None
-    if not isinstance(data, dict):
+    if not isinstance(data, dict) or not data:
         return None
     return {"total_cash": _num(data.get("totalCashValue")), "realized_pnl": _num(data.get("realizedPnL")),
             "open_pnl": _num(data.get("openPnL")), "week_realized_pnl": _num(data.get("weekRealizedPnL")),

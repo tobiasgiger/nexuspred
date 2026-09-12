@@ -14,6 +14,65 @@ from typing import Any
 from app.tradovate import TradovateError
 
 
+class BrokerFeed:
+    """The named feed methods of ``app.broker.BrokerSession`` on top of a fake's
+    ``_request`` — so a scripted session only has to answer the raw paths."""
+    kind = "tradovate"
+
+    async def positions_snapshot(self):
+        raw = await self._request("GET", "/position/list") or []
+        return raw if isinstance(raw, list) else []
+
+    async def orders_snapshot(self):
+        raw = await self._request("GET", "/order/list") or []
+        return raw if isinstance(raw, list) else []
+
+    async def account_list(self):
+        raw = await self._request("GET", "/account/list") or []
+        return raw if isinstance(raw, list) else []
+
+    async def cash_snapshot(self, account_id):
+        data = await self._request("POST", "/cashBalance/getcashbalancesnapshot", json={"accountId": int(account_id)})
+        return data if isinstance(data, dict) else {}
+
+    async def auto_liq_rules(self):
+        raw = await self._request("GET", "/userAccountAutoLiq/list") or []
+        return raw if isinstance(raw, list) else []
+
+    async def user_id(self):
+        try:
+            me = await self._request("GET", "/auth/me") or {}
+            uid = int(me.get("userId") or me.get("id") or 0)
+            if uid:
+                return uid
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            users = await self._request("GET", "/user/list") or []
+            return int((users[0] or {}).get("id") or 0) if isinstance(users, list) and users else 0
+        except Exception:  # noqa: BLE001
+            return 0
+
+    async def contract_info(self, contract_id):
+        item = await self._request("GET", "/contract/item", params={"id": int(contract_id)})
+        return item if isinstance(item, dict) else {}
+
+    async def contract_find(self, name):
+        found = await self._request("GET", "/contract/find", params={"name": name})
+        return found if isinstance(found, dict) else {}
+
+    async def contract_suggest(self, root, limit=30):
+        raw = await self._request("GET", "/contract/suggest", params={"t": root, "l": int(limit)}) or []
+        return raw if isinstance(raw, list) else []
+
+    async def contract_maturity(self, maturity_id):
+        mat = await self._request("GET", "/contractMaturity/item", params={"id": int(maturity_id)})
+        return mat if isinstance(mat, dict) else {}
+
+    async def raw_get(self, path, *, params=None):
+        return await self._request("GET", path, params=params) if params else await self._request("GET", path)
+
+
 class FakeExecutor:
     def __init__(
         self,

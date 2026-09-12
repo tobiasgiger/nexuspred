@@ -426,7 +426,7 @@ class GroupRunner:
         if self.group["leader"].get("account_id"):
             return int(self.group["leader"]["account_id"])
         try:
-            for a in await session._request("GET", "/account/list") or []:
+            for a in await session.account_list():
                 if str(a.get("name")) == spec and a.get("id"):
                     return int(a["id"])
         except Exception as exc:  # noqa: BLE001
@@ -455,7 +455,7 @@ class GroupRunner:
         if name:
             return name
         try:
-            item = await session._request("GET", "/contract/item", params={"id": cid})
+            item = await session.contract_info(cid)
             name = str((item or {}).get("name") or cid)
         except Exception:  # noqa: BLE001
             name = str(cid)
@@ -533,7 +533,7 @@ class GroupRunner:
                 if self._follower_id(s, f) == 0:
                     self.follower_err[f["spec"]] = "no Tradovate account id — run Connect & Verify on the login"
             try:
-                raw = await s._request("GET", "/position/list") or []
+                raw = await s.positions_snapshot()
             except Exception as exc:  # noqa: BLE001
                 for f in fs:
                     self.follower_err[f["spec"]] = f"positions: {exc}"
@@ -571,7 +571,7 @@ class GroupRunner:
         like after a reconnect. After a feed reconnect the picture is diffed
         against what we knew, so changes made during the outage are mirrored
         (or recorded as skipped while the group is paused)."""
-        raw = await session._request("GET", "/position/list") or []
+        raw = await session.positions_snapshot()
         seen: dict[int, int] = {}
         for p in raw if isinstance(raw, list) else []:
             if int(p.get("accountId") or 0) != account_id:
@@ -741,18 +741,7 @@ class GroupRunner:
     async def _run_ws(self, session: Any, account_id: int) -> None:
         import websockets  # lazy: only groups on the WebSocket feed need it
         token = await session._get_token()
-        user_id = 0
-        try:
-            me = await session._request("GET", "/auth/me") or {}
-            user_id = int(me.get("userId") or me.get("id") or 0)
-        except Exception:  # noqa: BLE001
-            pass
-        if not user_id:
-            try:
-                users = await session._request("GET", "/user/list") or []
-                user_id = int((users[0] or {}).get("id") or 0) if isinstance(users, list) and users else 0
-            except Exception:  # noqa: BLE001
-                user_id = 0
+        user_id = await session.user_id()
         self.diag.update({"user_id": user_id, "leader_account_id": account_id, "sync": None})
         url = WS_URLS["live" if session.environment == "live" else "demo"]
         async with websockets.connect(url, ping_interval=None, open_timeout=15, close_timeout=5) as ws:
@@ -867,7 +856,7 @@ class GroupRunner:
         self._poll_n += 1
         if self._poll_n % ORDERS_EVERY_N == 1 or ORDERS_EVERY_N == 1:
             await self.orders.poll(session, account_id)
-        raw = await session._request("GET", "/position/list") or []
+        raw = await session.positions_snapshot()
         self.last_frame = time.monotonic()
         seen: set[int] = set()
         changed = 0
@@ -1023,7 +1012,7 @@ class GroupRunner:
         if not int(getattr(ex, "id", 0) or 0):
             return None
         try:
-            raw = await ex.session._request("GET", "/position/list") or []
+            raw = await ex.session.positions_snapshot()
         except Exception:  # noqa: BLE001
             return None
         if not isinstance(raw, list):
@@ -1071,7 +1060,7 @@ class GroupRunner:
             if not fs:
                 continue
             try:
-                raw = await s._request("GET", "/position/list") or []
+                raw = await s.positions_snapshot()
             except Exception:  # noqa: BLE001
                 continue
             if not isinstance(raw, list):

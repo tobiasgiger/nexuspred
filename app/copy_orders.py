@@ -148,7 +148,7 @@ class OrderMirror:
     async def snapshot(self, session: Any, account_id: int) -> tuple[dict[int, dict[str, Any]], dict[int, str]]:
         """The leader's working orders with their latest version, plus the status
         of every order of the account (working, in transition or final)."""
-        raw = await session._request("GET", "/order/list") or []
+        raw = await session.orders_snapshot()
         mine = [o for o in raw if isinstance(o, dict) and int(o.get("accountId") or 0) == account_id and o.get("id")]
         statuses = {int(o["id"]): str(o.get("ordStatus") or "") for o in mine}
         orders = [o for o in mine if statuses[int(o["id"])] in WORKING]

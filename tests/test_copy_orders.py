@@ -6,10 +6,10 @@ import asyncio
 import pytest
 
 from app import alerts, config, context, copy as cp, db, tradovate
-from tests.helpers import FakeExecutor
+from tests.helpers import BrokerFeed, FakeExecutor
 
 
-class Sess:
+class Sess(BrokerFeed):
     """Leader login: positions, working orders and their versions under test control."""
     def __init__(self):
         self.idx, self.name, self.environment, self.enabled, self.agent_id = 0, "L", "demo", True, 0
@@ -52,7 +52,7 @@ class Sess:
         self.orders = [o for o in self.orders if o["id"] != oid]
 
 
-class FollowerSess:
+class FollowerSess(BrokerFeed):
     """Follower login whose /position/list the test controls (broker truth)."""
     def __init__(self):
         self.idx, self.name, self.environment, self.enabled, self.agent_id = 1, "F", "demo", True, 0

@@ -208,11 +208,11 @@ async def _exact_dates(area_id: int, contracts: list[str]) -> dict[str, date]:
     sess = sessions[0]
     for name in contracts:
         try:
-            found = await sess._request("GET", "/contract/find", params={"name": name})
+            found = await sess.contract_find(name)
             mid = (found or {}).get("contractMaturityId")
             if not mid:
                 continue
-            mat = await sess._request("GET", "/contractMaturity/item", params={"id": mid})
+            mat = await sess.contract_maturity(int(mid))
             exp = (mat or {}).get("expirationDate")
             if exp:
                 out[name.upper()] = datetime.fromisoformat(str(exp).replace("Z", "+00:00")).date()
@@ -240,7 +240,7 @@ async def _broker_next(area_id: int, warnings: list[dict[str, Any]]) -> None:
             continue
         root, month, year = cur
         try:
-            listed = await sess._request("GET", "/contract/suggest", params={"t": root, "l": 30}) or []
+            listed = await sess.contract_suggest(root, 30)
         except Exception:  # noqa: BLE001 - the estimate stands
             continue
         cands: list[tuple[tuple[int, int], str, Any]] = []
@@ -255,7 +255,7 @@ async def _broker_next(area_id: int, warnings: list[dict[str, Any]]) -> None:
         w["next"], w["next_source"] = name, "broker"
         if mid:
             try:
-                mat = await sess._request("GET", "/contractMaturity/item", params={"id": mid})
+                mat = await sess.contract_maturity(int(mid))
                 exp = (mat or {}).get("expirationDate")
                 if exp:
                     w["next_expiry"] = datetime.fromisoformat(str(exp).replace("Z", "+00:00")).date().isoformat()

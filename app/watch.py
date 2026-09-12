@@ -71,7 +71,7 @@ async def _symbol(session: Any, area_id: int, cid: int) -> str:
     if name:
         return name
     try:
-        item = await session._request("GET", "/contract/item", params={"id": cid})
+        item = await session.contract_info(cid)
         name = str((item or {}).get("name") or cid)
     except Exception:  # noqa: BLE001 - the id is still a usable label
         name = str(cid)
@@ -96,7 +96,7 @@ async def _current_positions(area_id: int, sessions: list[Any],
                 continue
         else:
             try:
-                raw = await s._request("GET", "/position/list") or []
+                raw = await s.positions_snapshot()
             except Exception:  # noqa: BLE001 - an unreachable login must not look like "everything closed"
                 continue
         polled.update(ids)

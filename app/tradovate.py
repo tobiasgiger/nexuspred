@@ -14,7 +14,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from . import alerts, config, context, http, risk, sizing, state
+from . import alerts, broker, config, context, http, risk, sizing, state
 
 REQUEST_SPACING_S = 0.2   # minimum gap between two requests of one login (5/s)
 PRIORITY_SPACING_S = 0.06  # orders / cancels / liquidations: a small gap of their own, never behind polls
@@ -351,6 +351,63 @@ class TradovateSession:
             await self._renew()
 
     # ----------------------------------------------------------------- account
+    # ---- broker feed surface (see app.broker.BrokerSession) ------------------
+    kind = "tradovate"
+
+    async def positions_snapshot(self) -> list[dict[str, Any]]:
+        raw = await self._request("GET", "/position/list") or []
+        return raw if isinstance(raw, list) else []
+
+    async def orders_snapshot(self) -> list[dict[str, Any]]:
+        raw = await self._request("GET", "/order/list") or []
+        return raw if isinstance(raw, list) else []
+
+    async def account_list(self) -> list[dict[str, Any]]:
+        raw = await self._request("GET", "/account/list") or []
+        return raw if isinstance(raw, list) else []
+
+    async def cash_snapshot(self, account_id: int) -> dict[str, Any]:
+        data = await self._request("POST", "/cashBalance/getcashbalancesnapshot", json={"accountId": int(account_id)})
+        return data if isinstance(data, dict) else {}
+
+    async def auto_liq_rules(self) -> list[dict[str, Any]]:
+        raw = await self._request("GET", "/userAccountAutoLiq/list") or []
+        return raw if isinstance(raw, list) else []
+
+    async def user_id(self) -> int:
+        try:
+            me = await self._request("GET", "/auth/me") or {}
+            uid = int(me.get("userId") or me.get("id") or 0)
+            if uid:
+                return uid
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            users = await self._request("GET", "/user/list") or []
+            return int((users[0] or {}).get("id") or 0) if isinstance(users, list) and users else 0
+        except Exception:  # noqa: BLE001
+            return 0
+
+    async def contract_info(self, contract_id: int) -> dict[str, Any]:
+        item = await self._request("GET", "/contract/item", params={"id": int(contract_id)})
+        return item if isinstance(item, dict) else {}
+
+    async def contract_find(self, name: str) -> dict[str, Any]:
+        found = await self._request("GET", "/contract/find", params={"name": name})
+        return found if isinstance(found, dict) else {}
+
+    async def contract_suggest(self, root: str, limit: int = 30) -> list[dict[str, Any]]:
+        raw = await self._request("GET", "/contract/suggest", params={"t": root, "l": int(limit)}) or []
+        return raw if isinstance(raw, list) else []
+
+    async def contract_maturity(self, maturity_id: int) -> dict[str, Any]:
+        mat = await self._request("GET", "/contractMaturity/item", params={"id": int(maturity_id)})
+        return mat if isinstance(mat, dict) else {}
+
+    async def raw_get(self, path: str, *, params: dict[str, Any] | None = None) -> Any:
+        """Tradovate-specific report endpoints (journal importer)."""
+        return await self._request("GET", path, params=params) if params else await self._request("GET", path)
+
     async def list_accounts(self) -> list[dict[str, Any]]:
         return await self._request("GET", "/account/list") or []
 
@@ -769,6 +826,12 @@ class SessionManager:
         prev = self._sessions or []
         fresh: list[TradovateSession] = []
         for i, e in enumerate(entries):
+            if broker.broker_of(e) not in broker.BROKERS:
+                # a login for a broker this build does not ship never trades by accident:
+                # it gets a disabled placeholder session that reports why
+                e = {**e, "enabled": False, "access_token": ""}
+                state.set_session_status(e.get("name") or f"account {i + 1}", connected=False,
+                                         last_error=f"broker '{broker.broker_of(e)}' is not supported by this version")
             old = prev[i] if i < len(prev) else None
             if old is not None and old.fingerprint == _fingerprint(e):
                 old.adopt_credentials(e)

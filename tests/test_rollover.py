@@ -6,6 +6,7 @@ from datetime import date
 import pytest
 
 from app import alerts, config, context, db, rollover, state
+from tests.helpers import BrokerFeed
 
 
 @pytest.mark.parametrize("name, expect", [
@@ -110,7 +111,7 @@ async def test_status_and_manual_check(client, monkeypatch):
     assert s["rollover_warn_days"] == 5 and "X" not in s["rollover_notified"]
 
 
-class _Sess:
+class _Sess(BrokerFeed):
     """A connected login whose contract listing the test controls."""
     def __init__(self, listing):
         self.name, self.listing = "L1", listing

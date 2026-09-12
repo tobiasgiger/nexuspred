@@ -4,6 +4,17 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.57
+- **Broker interface (step 1 of the Rithmic plan, no behaviour change).** `app/broker.py`
+  defines the surface the bridge may use — `BrokerSession` (login, feeds, contracts) and
+  `BrokerExecutor` (orders) — and the Tradovate session implements it with named methods
+  (`positions_snapshot`, `orders_snapshot`, `cash_snapshot`, `contract_info`, …). The copy
+  engine, P&L, position watch, journal importer and rollover no longer call Tradovate
+  endpoints directly; every request still goes through the same paced, prioritised
+  Tradovate request path as before. A login whose `broker` is not shipped by this version
+  gets a disabled placeholder session and a clear status, so it can never trade by
+  accident. Test fakes share one feed mixin.
+
 ## 5.0.0-alpha.56
 - **Copy groups on the marketplace.** A copy group can be published like a webhook (drawer
   → *Marketplace*: title, description, visibility). Other users see it on the Marketplace

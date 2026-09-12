@@ -8,11 +8,11 @@ import time
 import pytest
 
 from app import alerts, config, context, copy as cp, db, tradovate
-from tests.helpers import FakeExecutor, settle
+from tests.helpers import BrokerFeed, FakeExecutor, settle
 
 
 # ------------------------------------------------------------------ fakes
-class Sess:
+class Sess(BrokerFeed):
     def __init__(self, idx, name, accounts, *, positions=None, agent_id=0, enabled=True, environment="demo"):
         self.idx, self.name, self.environment, self.enabled = idx, name, environment, enabled
         self.accounts = accounts
@@ -42,7 +42,7 @@ class Sess:
         if path == "/auth/me":
             return {"userId": 77, "name": "leader"}
         if path == "/account/list":
-            return getattr(self, "account_list", None) or [{"id": a.get("id"), "name": a["spec"]} for a in self.accounts]
+            return getattr(self, "account_rows", None) or [{"id": a.get("id"), "name": a["spec"]} for a in self.accounts]
         raise AssertionError(path)
 
 
@@ -595,10 +595,10 @@ async def test_reconcile_fills_a_follower_that_was_never_mirrored(world):
 async def test_leader_account_id_falls_back_to_the_account_list(world):
     lead = world["leader"]
     lead.accounts = [{"spec": "LEAD"}]             # discovered without an id
-    lead.account_list = [{"id": 1, "name": "LEAD"}]
+    lead.account_rows = [{"id": 1, "name": "LEAD"}]
     r = cp.GroupRunner(1, _group(leader={"token_idx": 0, "spec": "LEAD", "account_id": 0}))
     assert await r._leader_account_id(lead) == 1
-    lead.accounts, lead.account_list = [], []
+    lead.accounts, lead.account_rows = [], []
     assert await r._leader_account_id(lead) == 0
 
 

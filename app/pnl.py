@@ -37,9 +37,8 @@ def _num(v: Any) -> float:
 
 async def snapshot_account(session: Any, account: dict[str, Any]) -> dict[str, Any]:
     """One account's live figures (raises on transport / API errors)."""
-    data = await session._request("POST", "/cashBalance/getcashbalancesnapshot",
-                                  json={"accountId": int(account["id"])})
-    if not isinstance(data, dict):
+    data = await session.cash_snapshot(int(account["id"]))
+    if not isinstance(data, dict) or not data:
         raise tradovate.TradovateError("unexpected snapshot answer")
     if data.get("errorText"):
         raise tradovate.TradovateError(str(data["errorText"]))
@@ -85,7 +84,7 @@ async def risk_settings_cached(area_id: int, session: Any) -> dict[int, dict[str
 async def leader_positions(session: Any) -> Optional[list[dict[str, Any]]]:
     """``/position/list`` of a login (None when unreachable)."""
     try:
-        raw = await session._request("GET", "/position/list") or []
+        raw = await session.positions_snapshot()
     except Exception:  # noqa: BLE001
         return None
     return raw if isinstance(raw, list) else None      # an error object is not "no positions"
@@ -99,7 +98,7 @@ async def risk_settings(session: Any) -> dict[int, dict[str, Any]]:
     (``EOD`` or ``RealTime`` = intraday). Never raises — an account without a
     readable record simply shows no drawdown."""
     try:
-        rows = await session._request("GET", "/userAccountAutoLiq/list") or []
+        rows = await session.auto_liq_rules()
     except Exception:  # noqa: BLE001
         return {}
     out: dict[int, dict[str, Any]] = {}

@@ -7,12 +7,13 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app import config, context, db, journal, tradovate
+from tests.helpers import BrokerFeed
 
 ZH = ZoneInfo("Europe/Zurich")
 
 
 # ------------------------------------------------------------ fake broker
-class FakeSession:
+class FakeSession(BrokerFeed):
     """Mimics TradovateSession for the importer: ``_request`` serves canned
     Tradovate entity lists, shaped like the real API responses."""
 

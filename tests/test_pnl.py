@@ -5,9 +5,10 @@ import asyncio
 from datetime import timezone
 
 from app import config, context, db, pnl, state, tradovate
+from tests.helpers import BrokerFeed
 
 
-class Sess:
+class Sess(BrokerFeed):
     def __init__(self, name="L", accounts=None, *, connected=True, fail=False, snap=None):
         self.name, self.environment, self.enabled = name, "demo", True
         self.accounts = accounts or [{"id": 11, "spec": "DEMO11"}, {"id": 12, "spec": "DEMO12"}]
