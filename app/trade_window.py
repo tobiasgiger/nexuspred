@@ -73,16 +73,22 @@ def _zone(name: str, fallback: str) -> ZoneInfo:
 
 
 def is_open(window: Any, *, now: Optional[datetime] = None, default_tz: str = "") -> tuple[bool, str]:
-    """``(True, "")`` when entries may run now, else ``(False, reason)``. A
-    missing or disabled window is always open; a malformed one is treated as
-    open too (a broken setting must not silently stop a strategy) — the API
-    never stores a malformed one."""
-    if not isinstance(window, dict) or not window.get("enabled"):
+    """Return whether entries may run now.
+
+    A missing or explicitly disabled window is open. A configured but malformed
+    window fails closed: configuration corruption must never silently widen the
+    period in which new financial risk may be opened.
+    """
+    if window in (None, "", False):
+        return True, ""
+    if not isinstance(window, dict):
+        return False, "invalid trading window configuration"
+    if not window.get("enabled"):
         return True, ""
     try:
         w = normalize(window)
-    except ValueError:
-        return True, ""
+    except ValueError as exc:
+        return False, f"invalid trading window configuration: {exc}"
     zone = _zone(w["tz"], default_tz)
     local = (now or datetime.now(zone)).astimezone(zone)
     hm = local.strftime("%H:%M")
