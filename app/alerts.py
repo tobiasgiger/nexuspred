@@ -131,25 +131,33 @@ async def send_email_to(to_addr: str, subject: str, body: str) -> bool:
 BROKER_LABELS = {"tradovate": "Tradovate", "rithmic": "Rithmic", "projectx": "ProjectX"}
 
 
+def _tr(settings: dict[str, Any]):
+    """The workspace's alert translator (see app.i18n.alert_translator)."""
+    from . import i18n
+    return i18n.alert_translator(settings)
+
+
 async def connection_lost(account: str, environment: str, error: str, broker: str = "tradovate") -> None:
     s = config.load_settings()
     if not s.get("alert_on_connection_lost", True):
         return
+    tr = _tr(s)
     detail = f" — {error}" if error else ""
-    message = f"🔴 **Connection lost** — login `{account}` ({environment}, {BROKER_LABELS.get(broker, broker)}){detail}"
+    message = tr("🔴 **Connection lost** — login `{account}` ({environment}, {broker}){detail}", account=account, environment=environment, broker=BROKER_LABELS.get(broker, broker), detail=detail)
     await asyncio.gather(_send_discord(message),
-                         _send_email(f"Fluxbridge: connection lost ({account})", message),
-                         _send_push(f"Connection lost: {account}", message, url="/#/accounts"))
+                         _send_email(tr("Fluxbridge: connection lost ({account})", account=account), message),
+                         _send_push(tr("Connection lost: {account}", account=account), message, url="/#/accounts"))
 
 
 async def connection_restored(account: str, environment: str, broker: str = "tradovate") -> None:
     s = config.load_settings()
     if not s.get("alert_on_connection_restored", True):
         return
-    message = f"🟢 **Connection restored** — login `{account}` ({environment}, {BROKER_LABELS.get(broker, broker)})"
+    tr = _tr(s)
+    message = tr("🟢 **Connection restored** — login `{account}` ({environment}, {broker})", account=account, environment=environment, broker=BROKER_LABELS.get(broker, broker))
     await asyncio.gather(_send_discord(message),
-                         _send_email(f"Fluxbridge: connection restored ({account})", message),
-                         _send_push(f"Connection restored: {account}", message, url="/#/accounts"))
+                         _send_email(tr("Fluxbridge: connection restored ({account})", account=account), message),
+                         _send_push(tr("Connection restored: {account}", account=account), message, url="/#/accounts"))
 
 
 async def trade_executed(
@@ -164,13 +172,11 @@ async def trade_executed(
     accounts = alert_accounts(accounts, s)
     if not accounts:
         return  # none of the traded accounts is on the alert list
+    tr = _tr(s)
     accts = ", ".join(accounts)
-    message = (
-        f"⚡ **Trade executed** — strategy `{webhook_name}`: {action.upper()} "
-        f"{contract} on {accts}"
-    )
+    message = tr("⚡ **Trade executed** — strategy `{webhook}`: {action} {contract} on {accounts}", webhook=webhook_name, action=action.upper(), contract=contract, accounts=accts)
     await asyncio.gather(_send_discord(message, settings=s),
-                         _send_push(f"Trade executed: {action.upper()} {contract}", message, url="/#/orders", settings=s))
+                         _send_push(tr("Trade executed: {action} {contract}", action=action.upper(), contract=contract), message, url="/#/orders", settings=s))
 
 
 def _money(v: Any) -> str:
@@ -191,20 +197,22 @@ async def trade_opened(account: str, symbol: str, direction: str, qty: float, pr
     s = config.load_settings()
     if not s.get("alert_on_trade_opened", True):
         return
+    tr = _tr(s)
     q = f"{qty:g}"
     at = f" @ {_price(price)}" if isinstance(price, (int, float)) and price else ""
-    message = f"🟢 **Opened** {direction} {q} × {symbol}{at} · `{account}`"
+    message = tr("🟢 **Opened** {direction} {qty} × {symbol}{at} · `{account}`", direction=direction, qty=q, symbol=symbol, at=at, account=account)
     await asyncio.gather(_send_discord(message),
-                         _send_push(f"Opened {direction} {symbol} · {account}", f"{q} contract{'s' if qty != 1 else ''}{at}", url="/#/"))
+                         _send_push(tr("Opened {direction} {symbol} · {account}", direction=direction, symbol=symbol, account=account), tr("{qty} contracts{at}" if qty != 1 else "{qty} contract{at}", qty=q, at=at), url="/#/"))
 
 
 async def position_added(account: str, symbol: str, direction: str, added: float, total: float) -> None:
     s = config.load_settings()
     if not s.get("alert_on_trade_opened", True):
         return
-    message = f"➕ **Added** {added:g} × {symbol} → {direction} {total:g} · `{account}`"
+    tr = _tr(s)
+    message = tr("➕ **Added** {added} × {symbol} → {direction} {total} · `{account}`", added=f"{added:g}", symbol=symbol, direction=direction, total=f"{total:g}", account=account)
     await asyncio.gather(_send_discord(message),
-                         _send_push(f"Added {added:g} {symbol} · {account}", f"Now {direction} {total:g}", url="/#/"))
+                         _send_push(tr("Added {added} {symbol} · {account}", added=f"{added:g}", symbol=symbol, account=account), tr("Now {direction} {total}", direction=direction, total=f"{total:g}"), url="/#/"))
 
 
 async def trade_closed(account: str, symbol: str, direction: str, qty: float, pnl: Any, duration: str = "",
@@ -214,41 +222,43 @@ async def trade_closed(account: str, symbol: str, direction: str, qty: float, pn
     s = config.load_settings()
     if not s.get("alert_on_trade_closed", True):
         return
-    pnl_txt = _money(pnl) if pnl is not None else "P&L n/a"
+    tr = _tr(s)
+    pnl_txt = _money(pnl) if pnl is not None else tr("P&L n/a")
     tail = f" ({duration})" if duration else ""
     if remaining:
         icon = "🟡"
-        head = f"**Reduced** {direction} {symbol} by {qty:g} → {remaining:g} left"
-        title = f"Reduced {direction} {symbol} · {account}"
+        head = tr("**Reduced** {direction} {symbol} by {qty} → {remaining} left", direction=direction, symbol=symbol, qty=f"{qty:g}", remaining=f"{remaining:g}")
+        title = tr("Reduced {direction} {symbol} · {account}", direction=direction, symbol=symbol, account=account)
     else:
         icon = "✅" if (isinstance(pnl, (int, float)) and pnl >= 0) else ("❌" if isinstance(pnl, (int, float)) else "⚪")
-        head = f"**Closed** {direction} {qty:g} × {symbol}"
-        title = f"Closed {direction} {symbol} · {account}"
+        head = tr("**Closed** {direction} {qty} × {symbol}", direction=direction, qty=f"{qty:g}", symbol=symbol)
+        title = tr("Closed {direction} {symbol} · {account}", direction=direction, symbol=symbol, account=account)
     message = f"{icon} {head} · `{account}` · **{pnl_txt}**{tail}"
     await asyncio.gather(_send_discord(message),
-                         _send_push(title, f"{pnl_txt}{tail} · {qty:g} contract{'s' if qty != 1 else ''}", url="/#/journal"))
+                         _send_push(title, tr("{pnl}{tail} · {qty} contracts" if qty != 1 else "{pnl}{tail} · {qty} contract", pnl=pnl_txt, tail=tail, qty=f"{qty:g}"), url="/#/journal"))
 
 
 async def agent_lost(name: str, last_ip: str = "") -> None:
     s = config.load_settings()
     if not s.get("alert_on_agent_lost", True):
         return
-    where = f" (last seen from {last_ip})" if last_ip else ""
-    message = (f"🔴 **Execution agent offline** — `{name}` stopped polling{where}. "
-               f"Logins assigned to it cannot trade until it is back.")
+    tr = _tr(s)
+    where = tr(" (last seen from {ip})", ip=last_ip) if last_ip else ""
+    message = tr("🔴 **Execution agent offline** — `{name}` stopped polling{where}. Logins assigned to it cannot trade until it is back.", name=name, where=where)
     await asyncio.gather(_send_discord(message),
-                         _send_email(f"Fluxbridge: execution agent offline ({name})", message),
-                         _send_push(f"Agent offline: {name}", message, url="/#/settings/agents"))
+                         _send_email(tr("Fluxbridge: execution agent offline ({name})", name=name), message),
+                         _send_push(tr("Agent offline: {name}", name=name), message, url="/#/settings/agents"))
 
 
 async def agent_restored(name: str) -> None:
     s = config.load_settings()
     if not s.get("alert_on_agent_restored", True):
         return
-    message = f"🟢 **Execution agent online** — `{name}` is polling again"
+    tr = _tr(s)
+    message = tr("🟢 **Execution agent online** — `{name}` is polling again", name=name)
     await asyncio.gather(_send_discord(message),
-                         _send_email(f"Fluxbridge: execution agent online ({name})", message),
-                         _send_push(f"Agent online: {name}", message, url="/#/settings/agents"))
+                         _send_email(tr("Fluxbridge: execution agent online ({name})", name=name), message),
+                         _send_push(tr("Agent online: {name}", name=name), message, url="/#/settings/agents"))
 
 
 async def risk_triggered(spec: str, kind: str, reason: str, pnl: float, errors: list[str]) -> None:
@@ -256,19 +266,21 @@ async def risk_triggered(spec: str, kind: str, reason: str, pnl: float, errors: 
     s = config.load_settings()
     if not s.get("alert_on_risk", True):
         return
+    tr = _tr(s)
     icon = {"loss": "🛑", "profit": "🎯", "time": "⏰"}.get(kind, "🔒")
-    message = (f"{icon} **Risk guard** — `{spec}` flattened and locked for today: {reason}."
-               + (f" Errors: {'; '.join(errors)}" if errors else ""))
+    message = tr("{icon} **Risk guard** — `{spec}` flattened and locked for today: {reason}.{errors}", icon=icon, spec=spec, reason=reason,
+                 errors=tr(" Errors: {errors}", errors="; ".join(errors)) if errors else "")
     await asyncio.gather(_send_discord(message),
-                         _send_email(f"Fluxbridge: risk guard {spec} ({kind})", message),
-                         _send_push(f"Risk guard: {spec}", message, url="/#/settings/accounts"))
+                         _send_email(tr("Fluxbridge: risk guard {spec} ({kind})", spec=spec, kind=kind), message),
+                         _send_push(tr("Risk guard: {spec}", spec=spec), message, url="/#/settings/accounts"))
 
 
 async def execution_problem(title: str, message: str) -> None:
     """Something the operator must look at now: a position without its stop, an
     order whose outcome is unknown, working orders left behind by a close.
     Always sent (no switch), to every channel."""
-    body = f"🚨 **{title}** — {message}"
+    tr = _tr(config.load_settings())
+    body = tr("🚨 **{title}** — {message}", title=title, message=message)
     await asyncio.gather(_send_discord(body), _send_email(f"Fluxbridge: {title}", body),
                          _send_push(title, message, url="/#/"))
 
@@ -276,10 +288,11 @@ async def execution_problem(title: str, message: str) -> None:
 async def news_lock(title: str, currency: str, until: str, *, flatten: bool = False) -> None:
     """A news-lock window opened: no new entries until ``until`` (and, with
     ``flatten``, open positions are being closed)."""
+    tr = _tr(config.load_settings())
     what = f"{title}{' (' + currency + ')' if currency else ''}"
-    message = f"{what}: no new entries until {until}" + (" — open positions are being flattened" if flatten else "")
-    body = f"📰 **News lock** — {message}"
-    await asyncio.gather(_send_discord(body), _send_push("News lock", message, url="/#/settings/news"))
+    message = tr("{what}: no new entries until {until}", what=what, until=until) + (tr(" — open positions are being flattened") if flatten else "")
+    body = tr("📰 **News lock** — {message}", message=message)
+    await asyncio.gather(_send_discord(body), _send_push(tr("News lock"), message, url="/#/settings/news"))
 
 
 async def copy_alert(title: str, message: str, *, email: bool = False) -> None:
@@ -287,7 +300,7 @@ async def copy_alert(title: str, message: str, *, email: bool = False) -> None:
     s = config.load_settings()
     if not s.get("alert_on_copy", True):
         return
-    body = f"📋 **Copy trading** — {message}"
+    body = _tr(s)("📋 **Copy trading** — {message}", message=message)
     sends = [_send_discord(body), _send_push(title, message, url="/#/copy")]
     if email:
         sends.append(_send_email(f"Fluxbridge: {title}", body))
@@ -301,51 +314,52 @@ async def daily_summary(pnl: dict[str, Any], closes: list[dict[str, Any]], day: 
         return
     accounts = [a for a in (pnl.get("accounts") or []) if account_alerts_on(a.get("spec") or a.get("account_id"), s)]
     closes = [c for c in closes if account_alerts_on(c.get("account", ""), s)]
-    per = ", ".join(f"{a.get('spec') or a.get('account_id')} {_money(a.get('realized'))}" for a in accounts) or "no accounts polled"
+    tr = _tr(s)
+    per = ", ".join(f"{a.get('spec') or a.get('account_id')} {_money(a.get('realized'))}" for a in accounts) or tr("no accounts polled")
     wins = sum(1 for c in closes if isinstance(c.get("pnl"), (int, float)) and c["pnl"] > 0)
     losses = sum(1 for c in closes if isinstance(c.get("pnl"), (int, float)) and c["pnl"] < 0)
-    trades = f"{len(closes)} trade{'s' if len(closes) != 1 else ''} closed" + (f" ({wins} win, {losses} loss)" if closes else "")
+    trades = tr("{n} trades closed" if len(closes) != 1 else "{n} trade closed", n=len(closes)) + (tr(" ({wins} win, {losses} loss)", wins=wins, losses=losses) if closes else "")
     total = _money(sum(float(a.get("realized") or 0) for a in accounts))
     open_pnl = _money(sum(float(a.get("open") or 0) for a in accounts))
-    message = f"📊 **Daily summary {day}** — realised **{total}** ({per}) · {trades} · open {open_pnl}"
+    message = tr("📊 **Daily summary {day}** — realised **{total}** ({per}) · {trades} · open {open}", day=day, total=total, per=per, trades=trades, open=open_pnl)
     await asyncio.gather(_send_discord(message),
-                         _send_email(f"Fluxbridge: daily summary {day} ({total})", message),
-                         _send_push(f"Daily P&L {total}", f"{trades} · {per}", url="/#/journal"))
+                         _send_email(tr("Fluxbridge: daily summary {day} ({total})", day=day, total=total), message),
+                         _send_push(tr("Daily P&L {total}", total=total), f"{trades} · {per}", url="/#/journal"))
 
 
 async def discord_listener_lost(error: str = "") -> None:
     s = config.load_settings()
     if not s.get("alert_on_discord_lost", True):
         return
+    tr = _tr(s)
     detail = f" — {error}" if error else ""
-    message = f"🔴 **Discord listener offline** — the signal listener lost its Gateway connection{detail}"
+    message = tr("🔴 **Discord listener offline** — the signal listener lost its Gateway connection{detail}", detail=detail)
     await asyncio.gather(_send_discord(message),
-                         _send_email("Fluxbridge: Discord listener offline", message),
-                         _send_push("Discord listener offline", message, url="/#/discord"))
+                         _send_email(tr("Fluxbridge: Discord listener offline"), message),
+                         _send_push(tr("Discord listener offline"), message, url="/#/discord"))
 
 
 async def discord_listener_restored(user: str = "") -> None:
     s = config.load_settings()
     if not s.get("alert_on_discord_restored", True):
         return
-    who = f" (as `{user}`)" if user else ""
-    message = f"🟢 **Discord listener online** — the signal listener reconnected to the Gateway{who}"
+    tr = _tr(s)
+    who = tr(" (as `{user}`)", user=user) if user else ""
+    message = tr("🟢 **Discord listener online** — the signal listener reconnected to the Gateway{who}", who=who)
     await asyncio.gather(_send_discord(message),
-                         _send_email("Fluxbridge: Discord listener online", message),
-                         _send_push("Discord listener online", message, url="/#/discord"))
+                         _send_email(tr("Fluxbridge: Discord listener online"), message),
+                         _send_push(tr("Discord listener online"), message, url="/#/discord"))
 
 
 async def webhook_failed(webhook_name: str, reason: str) -> None:
     s = config.load_settings()
     if not s.get("alert_on_webhook_failed", True):
         return
-    message = (
-        f"⚠️ **Signal not executed** — webhook `{webhook_name}` received a signal but "
-        f"execution failed: {reason}"
-    )
+    tr = _tr(s)
+    message = tr("⚠️ **Signal not executed** — webhook `{webhook}` received a signal but execution failed: {reason}", webhook=webhook_name, reason=reason)
     await asyncio.gather(_send_discord(message),
-                         _send_email(f"Fluxbridge: signal not executed ({webhook_name})", message),
-                         _send_push(f"Signal not executed: {webhook_name}", message, url="/#/events"))
+                         _send_email(tr("Fluxbridge: signal not executed ({webhook})", webhook=webhook_name), message),
+                         _send_push(tr("Signal not executed: {webhook}", webhook=webhook_name), message, url="/#/events"))
 
 
 async def contract_rollover(message: str) -> None:
@@ -353,15 +367,16 @@ async def contract_rollover(message: str) -> None:
     s = config.load_settings()
     if not s.get("alert_on_rollover", True):
         return
+    tr = _tr(s)
     await asyncio.gather(_send_discord(message),
-                         _send_email("Fluxbridge: contract rollover due", message),
-                         _send_push("Contract rollover due", message, url="/#/settings/symbols"))
+                         _send_email(tr("Fluxbridge: contract rollover due"), message),
+                         _send_push(tr("Contract rollover due"), message, url="/#/settings/symbols"))
 
 
 async def test_alert() -> dict[str, Any]:
     """Send a test notification on every enabled channel; report what was tried."""
     s = config.load_settings()
-    message = "🔔 **Test alert** — Fluxbridge notifications are configured correctly."
+    message = _tr(s)("🔔 **Test alert** — Fluxbridge notifications are configured correctly.")
     channels = {"discord": bool(s.get("alert_discord_enabled") and s.get("alert_discord_webhook_url")),
                 "email": bool(s.get("alert_email_enabled") and s.get("alert_email_to")
                               and s.get("alert_smtp_username") and s.get("alert_smtp_password")),

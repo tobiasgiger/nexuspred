@@ -65,7 +65,7 @@ export function getValues(form, specs) {
  * → { el, form, specs, setValues(values), dirty }
  * Renders a sticky "unsaved changes" bar with Save / Discard.
  */
-export function settingsForm({ sections, values, onSave, saveLabel = "Save changes", grid = true }) {
+export function settingsForm({ sections, values, onSave, saveLabel = t("Save changes"), grid = true }) {
   const specs = sections.flatMap((s) => s.fields || []);
   const form = h("form", { novalidate: true });
   const cards = sections.map((sec) => h("div", { class: "card" },

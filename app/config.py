@@ -189,6 +189,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # --- Auto-updater ---------------------------------------------------------
     "auto_check_updates": True,
     "ui_language": "auto",           # dashboard language: auto (browser), de, en
+    "ui_language_seen": "",
+    "heartbeat_url": "",             # external watchdog: GET this URL every heartbeat_interval seconds (app/watchdog.py)
+    "heartbeat_interval": 60,          # the language the dashboard last resolved (alerts follow it when ui_language is auto)
 
     # --- Connection health ----------------------------------------------------
     # How often (seconds) the bridge verifies the Tradovate session is alive and

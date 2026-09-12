@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 
-from .. import alerts, config, context, db, news, pnl, rollover, security, signals, state, tradovate
+from .. import alerts, config, context, db, news, pnl, rollover, security, signals, state, tradovate, watchdog
 from ..tradovate import TradovateError
 from ..web import BASE_DIR, render
 from .accounts import trade_accounts_overview
@@ -60,6 +60,7 @@ async def api_status() -> dict[str, Any]:
         "rollover": state.rollover_warnings(),
         "pnl": state.pnl(),
         "news_lock": news.status(),
+        "heartbeat": watchdog.status(context.get_area()),
     }
 
 
@@ -108,23 +109,26 @@ async def api_get_settings(request: Request) -> dict[str, Any]:
     return s
 
 
-@router.post("/api/settings")
-async def api_save_settings(request: Request) -> dict[str, Any]:
-    updates = await request.json()
-    if not isinstance(updates, dict):
-        raise HTTPException(status_code=400, detail="Settings must be a JSON object")
-    # Drop masked secret fields so we don't overwrite stored secrets with "********".
-    for field in config.SECRET_FIELDS:
-        if updates.get(field) == "********":
-            updates.pop(field, None)
-    # Webhooks, token accounts and the Discord listener have their own validating
-    # endpoints; the generic form must not be able to write them.
-    for field in config.SETTINGS_PROTECTED_KEYS:
-        updates.pop(field, None)
+async def validate_settings(updates: dict[str, Any]) -> None:
+    """Coerce and check the generic settings keys in place (raises 400). Shared
+    by the settings form and the settings import."""
     if "ui_language" in updates:
         if str(updates.get("ui_language") or "auto") not in ("auto", "de", "en"):
             raise HTTPException(status_code=400, detail="ui_language must be auto, de or en")
         updates["ui_language"] = str(updates.get("ui_language") or "auto")
+    if "heartbeat_url" in updates:
+        url = str(updates.get("heartbeat_url") or "").strip()
+        if url:
+            problem = await asyncio.to_thread(security.check_outbound_url, url)
+            if problem:
+                raise HTTPException(status_code=400, detail=f"Heartbeat URL rejected: {problem}")
+        updates["heartbeat_url"] = url[:500]
+        watchdog.reset()                                  # ping the new target on the next tick
+    if "heartbeat_interval" in updates:
+        updates["heartbeat_interval"] = watchdog.normalize_interval(updates.get("heartbeat_interval"))
+    if "ui_language_seen" in updates:
+        if str(updates.get("ui_language_seen") or "") not in ("", "de", "en"):
+            raise HTTPException(status_code=400, detail="ui_language_seen must be de or en")
     if "journal_import_time" in updates:
         raw = str(updates.get("journal_import_time") or "23:30").strip()
         parts = raw.split(":")
@@ -174,6 +178,22 @@ async def api_save_settings(request: Request) -> dict[str, Any]:
                 raise HTTPException(status_code=400, detail=f"SMTP host: {problem}")
         updates["alert_smtp_host"] = host
         updates["alert_smtp_port"] = port
+
+
+@router.post("/api/settings")
+async def api_save_settings(request: Request) -> dict[str, Any]:
+    updates = await request.json()
+    if not isinstance(updates, dict):
+        raise HTTPException(status_code=400, detail="Settings must be a JSON object")
+    # Drop masked secret fields so we don't overwrite stored secrets with "********".
+    for field in config.SECRET_FIELDS:
+        if updates.get(field) == "********":
+            updates.pop(field, None)
+    # Webhooks, token accounts and the Discord listener have their own validating
+    # endpoints; the generic form must not be able to write them.
+    for field in config.SETTINGS_PROTECTED_KEYS:
+        updates.pop(field, None)
+    await validate_settings(updates)
     config.save_settings(updates)
     state.log_event("info", "Settings updated")
     return config.public_settings()

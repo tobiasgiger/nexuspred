@@ -2,6 +2,30 @@
    Placeholders {name} must appear in both. A key missing here shows the English text;
    the key list is every t("…") in static/js (tests/test_i18n.py checks coverage). */
 export const DE = {
+  // external watchdog + settings file
+  "External watchdog": "Externer Watchdog",
+  "The bridge pings a URL you monitor elsewhere (healthchecks.io, Uptime Kuma push monitor, cronitor …). That service alerts you when the pings stop — the one failure the bridge cannot report itself: process gone, host asleep, network down.": "Die Bridge pingt eine URL, die du anderswo überwachst (healthchecks.io, Uptime-Kuma-Push-Monitor, cronitor …). Dieser Dienst alarmiert dich, wenn die Pings ausbleiben — der eine Ausfall, den die Bridge selbst nicht melden kann: Prozess weg, Host eingeschlafen, Netz down.",
+  "Heartbeat URL": "Heartbeat-URL",
+  "Empty = off. Called with a plain GET; anything below HTTP 400 counts as delivered.": "Leer = aus. Wird per einfachem GET aufgerufen; alles unter HTTP 400 zählt als zugestellt.",
+  "Ping interval (seconds)": "Ping-Intervall (Sekunden)",
+  "30–3600 s. Set the monitor's grace period to about twice this.": "30–3600 s. Stell die Toleranz des Monitors auf etwa das Doppelte.",
+  "No heartbeat configured.": "Kein Heartbeat eingerichtet.",
+  "Waiting for the first ping…": "Warte auf den ersten Ping…",
+  "delivered": "zugestellt",
+  "failed": "fehlgeschlagen",
+  "Last ping {when}": "Letzter Ping {when}",
+  "Settings file": "Einstellungsdatei",
+  "The workspace configuration as one JSON file: webhooks with routing, symbol map, trading rules, alert preferences, news-lock rules. No secrets travel (broker tokens, passwords, API keys). Use it as a configuration backup or to move a workspace to another bridge — the database backup above is the full copy.": "Die Konfiguration des Arbeitsbereichs als eine JSON-Datei: Webhooks mit Routing, Symbol-Mapping, Handelsregeln, Alert-Einstellungen, News-Lock-Regeln. Keine Geheimnisse reisen mit (Broker-Tokens, Passwörter, API-Keys). Nutze sie als Konfigurations-Backup oder um einen Arbeitsbereich auf eine andere Bridge zu ziehen — das Datenbank-Backup oben ist die vollständige Kopie.",
+  "Export failed: {error}": "Export fehlgeschlagen: {error}",
+  "Export settings": "Einstellungen exportieren",
+  "Not a JSON file": "Keine JSON-Datei",
+  "Not a Fluxbridge settings export": "Kein Fluxbridge-Einstellungsexport",
+  "Import settings?": "Einstellungen importieren?",
+  "Import": "Importieren",
+  "{n} setting(s) from {file} (exported {when}) replace the current values, including {w} webhook(s) — the current webhook list is overwritten. Broker logins and secrets are not touched.": "{n} Einstellung(en) aus {file} (exportiert {when}) ersetzen die aktuellen Werte, inklusive {w} Webhook(s) — die aktuelle Webhook-Liste wird überschrieben. Broker-Logins und Geheimnisse bleiben unberührt.",
+  "Settings imported ({n} keys)": "Einstellungen importiert ({n} Schlüssel)",
+  "Import failed: {error}": "Import fehlgeschlagen: {error}",
+  "Import settings…": "Einstellungen importieren…",
   // two-factor authentication
   "Two-factor authentication": "Zwei-Faktor-Authentifizierung",
   "A code from your authenticator app is asked for at every sign-in, in addition to the password. Ten single-use backup codes cover a lost phone.": "Bei jeder Anmeldung wird zusätzlich zum Passwort ein Code aus deiner Authenticator-App verlangt. Zehn einmalige Backup-Codes decken ein verlorenes Telefon ab.",

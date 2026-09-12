@@ -3,7 +3,7 @@ import { api } from "./api.js";
 import { store, can } from "./store.js";
 import { toast } from "./ui.js";
 import { setPublicOrigin } from "./templates.js";
-import { adopt as adoptLanguage } from "./i18n.js";
+import { adopt as adoptLanguage, lang as currentLanguage } from "./i18n.js";
 
 const quiet = async (fn) => { try { return await fn(); } catch (e) { return undefined; } };
 
@@ -17,6 +17,8 @@ export const actions = {
     const s = await api.get("/api/settings");
     store.set("settings", s);
     if (adoptLanguage(s.ui_language)) window.location.reload();   // the workspace's language differs from the cached one
+    // alerts (Discord / e-mail / push) follow the dashboard's language: tell the server once what it resolved
+    if (s.ui_language_seen !== currentLanguage()) quiet(async () => { store.set("settings", await api.post("/api/settings", { ui_language_seen: currentLanguage() })); });
     return s;
   },
   async saveSettings(updates) {

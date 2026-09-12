@@ -98,7 +98,8 @@ export const updates = {
       onSave: (v) => actions.saveSettings(v),
       sections: [{ title: t("Self-updater"), fields: [
         { name: "auto_check_updates", type: "switch", label: t("Auto-check for updates") },
-      ], after: h("div", null, status, h("div", { class: "form-actions" }, checkBtn, applyBtn, backupLink), hosting) }],
+      ], after: h("div", null, status, h("div", { class: "form-actions" }, checkBtn, applyBtn, backupLink), hosting) },
+      { title: t("Settings file"), hint: t("The workspace configuration as one JSON file: webhooks with routing, symbol map, trading rules, alert preferences, news-lock rules. No secrets travel (broker tokens, passwords, API keys). Use it as a configuration backup or to move a workspace to another bridge — the database backup above is the full copy."), after: settingsFilePanel() }],
     });
     root.append(pageHead(t("Updates"), t("Version status of this bridge and the one-click updater (self-hosted installs).")), form.el);
     const unsubs = [
@@ -175,6 +176,63 @@ function alertAccountsPanel() {
 }
 
 /* "Push notifications" block: this device's subscription + every registered device. */
+/* Last heartbeat outcome, from /api/status (refreshed with the status poll). */
+function heartbeatPanel() {
+  const el = h("p", { class: "hint", "data-heartbeat": "" });
+  const paint = (st) => {
+    const hb = st && st.heartbeat;
+    if (!hb || !hb.url) { el.textContent = t("No heartbeat configured."); return; }
+    if (hb.at == null) { el.textContent = t("Waiting for the first ping…"); return; }
+    el.replaceChildren(hb.ok ? tag(t("delivered"), "ok") : tag(t("failed"), "error"), " ",
+      t("Last ping {when}", { when: fmtDateTime(hb.at) }), hb.error ? " — " + hb.error : "");
+  };
+  el.cleanup = store.subscribe("status", paint, { immediate: true });
+  return el;
+}
+
+/* Settings export (download via fetch → object URL) and import (file picker → confirm → POST). */
+function settingsFilePanel() {
+  const hint = h("span", { class: "save-hint" });
+  const exportBtn = h("button", { type: "button", class: "btn btn-secondary", onClick: async () => {
+    exportBtn.disabled = true;
+    try {
+      const res = await fetch("/api/settings/export", { credentials: "same-origin" });
+      if (!res.ok) throw new Error(res.statusText);
+      const blob = await res.blob();
+      const name = (res.headers.get("Content-Disposition") || "").match(/filename="([^"]+)"/);
+      const a = h("a", { href: URL.createObjectURL(blob), download: name ? name[1] : "fluxbridge-settings.json" });
+      document.body.append(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    } catch (e) { toast(t("Export failed: {error}", { error: e.message }), "error"); }
+    exportBtn.disabled = false;
+  } }, icon("download"), t("Export settings"));
+  const file = h("input", { type: "file", accept: "application/json,.json", hidden: true });
+  file.addEventListener("change", async () => {
+    const f = file.files && file.files[0];
+    file.value = "";
+    if (!f) return;
+    let doc;
+    try { doc = JSON.parse(await f.text()); } catch { toast(t("Not a JSON file"), "error"); return; }
+    const keys = doc && doc.settings && typeof doc.settings === "object" ? Object.keys(doc.settings) : [];
+    if (doc?.fluxbridge_settings !== 1 || !keys.length) { toast(t("Not a Fluxbridge settings export"), "error"); return; }
+    const whs = Array.isArray(doc.settings.webhooks) ? doc.settings.webhooks.length : 0;
+    const ok = await confirmDialog({ title: t("Import settings?"), danger: true, confirmText: t("Import"),
+      body: t("{n} setting(s) from {file} (exported {when}) replace the current values, including {w} webhook(s) — the current webhook list is overwritten. Broker logins and secrets are not touched.",
+        { n: keys.length, file: f.name, when: doc.exported_at ? fmtDateTime(doc.exported_at) : "?", w: whs }) });
+    if (!ok) return;
+    hint.textContent = t("Importing…");
+    try {
+      const r = await api.post("/api/settings/import", doc);
+      toast(t("Settings imported ({n} keys)", { n: r.keys.length }), "success");
+      hint.textContent = "";
+      await actions.loadSettings();
+      actions.refreshStatus();
+    } catch (e) { hint.textContent = ""; toast(t("Import failed: {error}", { error: e.message }), "error"); }
+  });
+  const importBtn = h("button", { type: "button", class: "btn btn-ghost", onClick: () => file.click() }, icon("inbox"), t("Import settings…"));
+  return h("div", { class: "form-actions" }, exportBtn, importBtn, file, hint);
+}
+
 function pushPanel() {
   const status = h("p", { class: "hint" }, t("Checking this device…"));
   const enableBtn = h("button", { type: "button", class: "btn btn-primary", disabled: true }, icon("bell"), t("Enable on this device"));
@@ -321,11 +379,15 @@ export const alerts = {
           { name: "rollover_warn_days", type: "number", label: t("Rollover warning lead time (days)"), min: 0, max: 60, placeholder: "10", width: "200px", hint: t("Warn this many days before the estimated expiry / first-notice date.") },
           { name: "discord_health_grace", type: "number", label: t("Discord health grace period (seconds)"), min: 15, step: 5, placeholder: "90", width: "200px", hint: t("How long the listener may be down before an outage alert fires (avoids alerting on transient reconnects).") },
         ], after: h("div", { class: "form-actions", style: "margin-top:12px" }, testBtn, testHint) },
+        { title: t("External watchdog"), hint: t("The bridge pings a URL you monitor elsewhere (healthchecks.io, Uptime Kuma push monitor, cronitor …). That service alerts you when the pings stop — the one failure the bridge cannot report itself: process gone, host asleep, network down."), fields: [
+          { name: "heartbeat_url", type: "text", label: t("Heartbeat URL"), placeholder: "https://hc-ping.com/…", hint: t("Empty = off. Called with a plain GET; anything below HTTP 400 counts as delivered.") },
+          { name: "heartbeat_interval", type: "number", label: t("Ping interval (seconds)"), min: 30, max: 3600, step: 10, placeholder: "60", width: "200px", hint: t("30–3600 s. Set the monitor's grace period to about twice this.") },
+        ], after: heartbeatPanel() },
       ],
     });
     root.append(pageHead(t("Alerts"), t("Notify a Discord channel, an email address and/or your phone when something happens. ") + lead()), form.el);
     const unsub = store.subscribe("settings", (s) => { if (!form.isDirty()) form.setValues(s); });
-    return () => { unsub(); if (accountsPanel.cleanup) accountsPanel.cleanup(); };
+    return () => { unsub(); if (accountsPanel.cleanup) accountsPanel.cleanup(); root.querySelectorAll("[data-heartbeat]").forEach((p) => p.cleanup && p.cleanup()); };
   },
 };
 

@@ -4,6 +4,27 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.70
+- **Alerts in German.** Discord messages, email subjects and bodies, push titles and the
+  daily summary follow the workspace language: the forced setting under Display → Language,
+  otherwise the language the dashboard last ran in (reported on load). English stays the
+  default for a workspace that never opened the dashboard; log events and API errors stay
+  English.
+- **External watchdog.** Settings → Alerts → *External watchdog*: a heartbeat GET to a URL
+  you monitor elsewhere (healthchecks.io, Uptime Kuma push monitor, cronitor …) every 30–3600
+  seconds, so that service alerts you when the bridge itself is gone. The last outcome is
+  shown under the fields and in `/api/status` (`heartbeat`); the URL passes the outbound
+  address check and is never exported.
+- **Settings export / import.** Settings → Updates → *Settings file*: the workspace
+  configuration as one JSON file (webhooks with routing, symbol map, trading rules, alert
+  preferences, news-lock rules …) without any secret or runtime state, and an import that
+  replaces those keys after a confirmation. Webhook ids and tokens travel so TradingView
+  alerts keep working after a move; a token in use by another workspace is replaced,
+  routing survives only for logins present on the target. Imports run through the same
+  validation as the settings form; both actions are audited.
+- The generic settings validation is one shared coroutine (`validate_settings`) used by the
+  settings form and the import.
+
 ## 5.0.0-alpha.69
 - **Five fixes by andrasmining merged** (PRs #13–#17). A TS-Hunter entry whose trade id is
   already tracked is skipped instead of overwriting the first position's stop tracking;

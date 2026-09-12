@@ -75,6 +75,90 @@ DE = {
 }
 DICTS: dict[str, dict[str, str]] = {"de": DE, "en": {}}
 
+# Alerts (Discord / e-mail / push) follow the workspace's Language setting. "auto"
+# has no browser to ask, so the dashboard reports the language it resolved
+# (ui_language_seen) and the alerts use that; English until it did.
+ALERT_DE = {
+    "🔴 **Connection lost** — login `{account}` ({environment}, {broker}){detail}": "🔴 **Verbindung verloren** — Login `{account}` ({environment}, {broker}){detail}",
+    "Fluxbridge: connection lost ({account})": "Fluxbridge: Verbindung verloren ({account})",
+    "Connection lost: {account}": "Verbindung verloren: {account}",
+    "🟢 **Connection restored** — login `{account}` ({environment}, {broker})": "🟢 **Verbindung wiederhergestellt** — Login `{account}` ({environment}, {broker})",
+    "Fluxbridge: connection restored ({account})": "Fluxbridge: Verbindung wiederhergestellt ({account})",
+    "Connection restored: {account}": "Verbindung wiederhergestellt: {account}",
+    "⚡ **Trade executed** — strategy `{webhook}`: {action} {contract} on {accounts}": "⚡ **Trade ausgeführt** — Strategie `{webhook}`: {action} {contract} auf {accounts}",
+    "Trade executed: {action} {contract}": "Trade ausgeführt: {action} {contract}",
+    "🟢 **Opened** {direction} {qty} × {symbol}{at} · `{account}`": "🟢 **Eröffnet** {direction} {qty} × {symbol}{at} · `{account}`",
+    "Opened {direction} {symbol} · {account}": "Eröffnet {direction} {symbol} · {account}",
+    "{qty} contract{at}": "{qty} Kontrakt{at}",
+    "{qty} contracts{at}": "{qty} Kontrakte{at}",
+    "➕ **Added** {added} × {symbol} → {direction} {total} · `{account}`": "➕ **Aufgestockt** {added} × {symbol} → {direction} {total} · `{account}`",
+    "Added {added} {symbol} · {account}": "Aufgestockt {added} {symbol} · {account}",
+    "Now {direction} {total}": "Jetzt {direction} {total}",
+    "P&L n/a": "P&L n/v",
+    "**Reduced** {direction} {symbol} by {qty} → {remaining} left": "**Reduziert** {direction} {symbol} um {qty} → {remaining} übrig",
+    "Reduced {direction} {symbol} · {account}": "Reduziert {direction} {symbol} · {account}",
+    "**Closed** {direction} {qty} × {symbol}": "**Geschlossen** {direction} {qty} × {symbol}",
+    "Closed {direction} {symbol} · {account}": "Geschlossen {direction} {symbol} · {account}",
+    "{pnl}{tail} · {qty} contract": "{pnl}{tail} · {qty} Kontrakt",
+    "{pnl}{tail} · {qty} contracts": "{pnl}{tail} · {qty} Kontrakte",
+    " (last seen from {ip})": " (zuletzt gesehen von {ip})",
+    "🔴 **Execution agent offline** — `{name}` stopped polling{where}. Logins assigned to it cannot trade until it is back.": "🔴 **Ausführungs-Agent offline** — `{name}` fragt nicht mehr ab{where}. Ihm zugewiesene Logins können nicht handeln, bis er zurück ist.",
+    "Fluxbridge: execution agent offline ({name})": "Fluxbridge: Ausführungs-Agent offline ({name})",
+    "Agent offline: {name}": "Agent offline: {name}",
+    "🟢 **Execution agent online** — `{name}` is polling again": "🟢 **Ausführungs-Agent online** — `{name}` fragt wieder ab",
+    "Fluxbridge: execution agent online ({name})": "Fluxbridge: Ausführungs-Agent online ({name})",
+    "Agent online: {name}": "Agent online: {name}",
+    "{icon} **Risk guard** — `{spec}` flattened and locked for today: {reason}.{errors}": "{icon} **Risk Guard** — `{spec}` glattgestellt und für heute gesperrt: {reason}.{errors}",
+    " Errors: {errors}": " Fehler: {errors}",
+    "Fluxbridge: risk guard {spec} ({kind})": "Fluxbridge: Risk Guard {spec} ({kind})",
+    "Risk guard: {spec}": "Risk Guard: {spec}",
+    "📰 **News lock** — {message}": "📰 **News-Sperre** — {message}",
+    "{what}: no new entries until {until}": "{what}: keine neuen Einstiege bis {until}",
+    " — open positions are being flattened": " — offene Positionen werden glattgestellt",
+    "News lock": "News-Sperre",
+    "📋 **Copy trading** — {message}": "📋 **Copy Trading** — {message}",
+    "no accounts polled": "keine Konten abgefragt",
+    "{n} trade closed": "{n} Trade geschlossen",
+    "{n} trades closed": "{n} Trades geschlossen",
+    " ({wins} win, {losses} loss)": " ({wins} Gewinner, {losses} Verlierer)",
+    "📊 **Daily summary {day}** — realised **{total}** ({per}) · {trades} · open {open}": "📊 **Tageszusammenfassung {day}** — realisiert **{total}** ({per}) · {trades} · offen {open}",
+    "Fluxbridge: daily summary {day} ({total})": "Fluxbridge: Tageszusammenfassung {day} ({total})",
+    "Daily P&L {total}": "Tages-P&L {total}",
+    "🔴 **Discord listener offline** — the signal listener lost its Gateway connection{detail}": "🔴 **Discord-Listener offline** — der Signal-Listener hat die Gateway-Verbindung verloren{detail}",
+    "Fluxbridge: Discord listener offline": "Fluxbridge: Discord-Listener offline",
+    "Discord listener offline": "Discord-Listener offline",
+    "🟢 **Discord listener online** — the signal listener reconnected to the Gateway{who}": "🟢 **Discord-Listener online** — der Signal-Listener ist wieder mit dem Gateway verbunden{who}",
+    " (as `{user}`)": " (als `{user}`)",
+    "Fluxbridge: Discord listener online": "Fluxbridge: Discord-Listener online",
+    "Discord listener online": "Discord-Listener online",
+    "⚠️ **Signal not executed** — webhook `{webhook}` received a signal but execution failed: {reason}": "⚠️ **Signal nicht ausgeführt** — Webhook `{webhook}` hat ein Signal erhalten, die Ausführung schlug fehl: {reason}",
+    "Fluxbridge: signal not executed ({webhook})": "Fluxbridge: Signal nicht ausgeführt ({webhook})",
+    "Signal not executed: {webhook}": "Signal nicht ausgeführt: {webhook}",
+    "Fluxbridge: contract rollover due": "Fluxbridge: Kontrakt-Rollover fällig",
+    "Contract rollover due": "Kontrakt-Rollover fällig",
+    "🔔 **Test alert** — Fluxbridge notifications are configured correctly.": "🔔 **Testbenachrichtigung** — die Fluxbridge-Benachrichtigungen sind korrekt konfiguriert.",
+    "🚨 **{title}** — {message}": "🚨 **{title}** — {message}",
+}
+
+
+def alert_language(settings: dict[str, Any]) -> str:
+    pref = str(settings.get("ui_language") or "auto")
+    if pref in ("de", "en"):
+        return pref
+    seen = str(settings.get("ui_language_seen") or "")
+    return seen if seen in ("de", "en") else "en"
+
+
+def alert_translator(settings: dict[str, Any]):
+    """``tr(template, **params)``: the template in the workspace's alert language,
+    placeholders filled in. Unknown templates pass through in English."""
+    d = ALERT_DE if alert_language(settings) == "de" else {}
+
+    def tr(template: str, **params: Any) -> str:
+        text = d.get(template, template)
+        return text.format(**params) if params else text
+    return tr
+
 
 def language_of(request: Any) -> str:
     """``fb_lang`` cookie first (what the dashboard resolved), else the browser's Accept-Language."""

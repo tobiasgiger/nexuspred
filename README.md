@@ -397,8 +397,13 @@ The dashboard speaks German and English. By default it follows the browser's lan
 How it works: English is the source language in the code (`t("Save logins")`); the
 German dictionary lives in `static/js/locales/de.js` (English text → German) and
 `app/i18n.py` for the server-rendered auth pages. A missing entry falls back to English,
-`tests/test_i18n.py` fails when a sentence-like UI string has no German entry. Log events,
-alerts and API error texts stay English (they are also read by tooling and support).
+`tests/test_i18n.py` fails when a sentence-like UI string has no German entry. Log events
+and API error texts stay English (they are also read by tooling and support).
+
+**Alerts** (Discord, email, push, daily summary) are sent in the workspace's language:
+the forced setting when one is chosen, otherwise the language the dashboard last ran in
+(the browser default the dashboard reports on load). A workspace that has never opened
+the dashboard alerts in English.
 
 ## Simulator
 
@@ -538,6 +543,16 @@ observation of a session, and never twice in a row for the same state) — so yo
 alert when it drops and one when it comes back, not a repeat every health check. A failed
 Discord POST or SMTP send is logged as a warning and never blocks a health check or a
 trade.
+
+**External watchdog** (Settings → Alerts → *External watchdog*): the bridge sends a plain
+GET to a URL you monitor elsewhere — a healthchecks.io check, an Uptime Kuma *push*
+monitor, cronitor — every *Ping interval* seconds (30–3600, default 60). That service alerts
+*you* when the pings stop: the one failure the bridge cannot report itself (process gone,
+host asleep, network down, Render instance stuck). Anything below HTTP 400 counts as
+delivered; the last outcome (time, delivered / failed, error) is shown under the fields and
+in `/api/status` (`heartbeat`). Set the monitor's grace period to about twice the interval.
+The URL goes through the same outbound-address check as the Discord webhook (no private
+or loopback targets) and never leaves the server in a settings export.
 
 ## Discord signal listener
 
@@ -802,6 +817,20 @@ To cut a new release, bump `VERSION` (and optionally tag it `vX.Y.Z`). While the
 no GitHub releases, the updater compares against the `VERSION` file on the tracked
 branch, so every push to `main` that bumps `VERSION` shows up as an update.
 
+**Settings file** (Settings → Updates → *Settings file*): **Export settings** downloads the
+workspace configuration as one JSON file — webhooks with their routing and sizing, symbol
+map, trading rules, alert preferences and triggers, news-lock rules, journal and display
+settings. No secret travels: broker logins and tokens, passwords, API keys, the webhook
+passphrase, the Discord user token and the heartbeat URL stay behind, as does runtime state
+(risk locks, drawdown trackers, copy groups). **Import settings…** replaces those keys with
+the file's values after a confirmation (keys absent from the file are left alone). Webhook
+ids and tokens travel with the file, so TradingView alerts pointing at the old bridge keep
+working on the new one; a token already used by another workspace on the target bridge gets
+a fresh one. Routing is kept only for logins that exist on the target (matched by login id) —
+re-route the webhook after moving to a bridge with different logins. Every value passes the
+same validation as the settings form; both actions are recorded in the audit log. The
+database backup above is the full copy including secrets.
+
 ### "Not a git checkout" — connecting a ZIP download
 
 The Update button needs the install folder to be a Git checkout. If you downloaded a
@@ -823,6 +852,7 @@ the dashboard **Update** button works.
 | `POST` | `/webhook/{token}` | Receive a TradingView alert for a specific webhook (202 accepted, processed in the background) |
 | `GET`  | `/api/status` | Connection + trading status, trade accounts, active trades |
 | `GET/POST` | `/api/settings` | Read / update settings (secrets masked; only the keys you send change) |
+| `GET`  | `/api/settings/export` | The workspace configuration as a JSON file (no secrets) · `POST /api/settings/import` applies one |
 | `GET`  | `/api/orders` `/api/signals` `/api/events` | Rolling logs |
 | `POST` | `/api/agent/pair` | Exchange a one-time pairing code for an agent token (unauthenticated, rate-limited) |
 | `GET`  | `/api/agent/jobs` | Agent long-poll for relay jobs (agent token) · `POST /api/agent/jobs/{id}/result` delivers the answer |
