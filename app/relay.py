@@ -188,6 +188,10 @@ async def next_jobs(agent_id: int, wait: float, max_jobs: int = 8) -> list[dict[
     return out
 
 
+MAX_RESULT_TEXT = 2_000_000       # a broker response relayed by an agent (position/order lists are ~100 KB)
+MAX_RESULT_ERROR = 500
+
+
 def deliver(agent_id: int, job_id: str, status_code: int, text: str, error: str = "") -> bool:
     """Complete a job with the agent's answer. False when the job is unknown
     (timed out / belongs to another agent)."""

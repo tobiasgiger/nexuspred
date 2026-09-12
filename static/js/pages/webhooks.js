@@ -146,7 +146,7 @@ function webhookDrawer(wh, { navigate }) {
     const subsTable = dataTable({ empty: "No subscribers yet.", compact: true, columns: [
       { label: "Subscriber", render: (s) => s.email },
       { label: "Status", render: (s) => s.enabled ? tag("on", "on") : tag("off", "off") },
-      { label: "Accounts", className: "num", render: (s) => String((s.accounts || []).filter((a) => a.enabled).length) },
+      { label: "Accounts", className: "num", render: (s) => String(Array.isArray(s.accounts) ? s.accounts.filter((a) => a.enabled).length : (s.accounts || 0)) },
       { label: "Since", render: (s) => fmtDateTime(s.created_at) },
       { label: "", render: (s) => h("button", { type: "button", class: "btn btn-ghost btn-sm", onClick: async () => {
         if (!(await confirmDialog({ title: `Remove ${s.email}?`, body: "They stop receiving this signal immediately and can subscribe again unless you restrict visibility.", confirmText: "Remove", danger: true }))) return;

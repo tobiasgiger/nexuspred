@@ -84,15 +84,16 @@ chmod 750 "$DATA_DIR" "$BACKUP_DIR"
 # --- checkout ---------------------------------------------------------------
 if [[ -d "$APP_DIR/.git" ]]; then
   say "Updating checkout in $APP_DIR (branch $BRANCH)"
-  git -C "$APP_DIR" fetch --quiet --all --tags --prune
-  git -C "$APP_DIR" checkout --quiet "$BRANCH" 2>/dev/null || git -C "$APP_DIR" checkout --quiet -b "$BRANCH" "origin/$BRANCH"
-  git -C "$APP_DIR" reset --quiet --hard "origin/$BRANCH"
+  # as the service user: the checkout is theirs (and writable by the web process), so git never runs as root in it
+  chown -R "$SVC_USER:$SVC_USER" "$APP_DIR"
+  sudo -u "$SVC_USER" -H git -C "$APP_DIR" fetch --quiet --all --tags --prune
+  sudo -u "$SVC_USER" -H git -C "$APP_DIR" checkout --quiet "$BRANCH" 2>/dev/null || sudo -u "$SVC_USER" -H git -C "$APP_DIR" checkout --quiet -b "$BRANCH" "origin/$BRANCH"
+  sudo -u "$SVC_USER" -H git -C "$APP_DIR" reset --quiet --hard "origin/$BRANCH"
 else
   say "Cloning $REPO_URL (branch $BRANCH) into $APP_DIR"
   git clone --quiet --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
 fi
 chown -R "$SVC_USER:$SVC_USER" "$APP_DIR"
-git config --system --add safe.directory "$APP_DIR" >/dev/null 2>&1 || true
 
 say "Installing Python dependencies"
 sudo -u "$SVC_USER" -H bash -c "cd '$APP_DIR' && python3 -m venv .venv && .venv/bin/python -m pip install --quiet --upgrade pip && .venv/bin/python -m pip install --quiet -r requirements.txt"

@@ -54,13 +54,18 @@ PYEOF
 
 cmd_update() {
   need_root update
-  git -C "$APP_DIR" fetch --quiet --all --tags --prune
-  git -C "$APP_DIR" reset --quiet --hard "origin/${NEXUSPRED_BRANCH:-main}"
-  chown -R fluxbridge:fluxbridge "$APP_DIR"
+  # git runs as the service user, never as root: the checkout is writable by the
+  # web process (self-updates), so a hook or config planted there must not be
+  # able to run with root rights.
+  sudo -u fluxbridge -H git -C "$APP_DIR" fetch --quiet --all --tags --prune
+  sudo -u fluxbridge -H git -C "$APP_DIR" reset --quiet --hard "origin/${NEXUSPRED_BRANCH:-main}"
   sudo -u fluxbridge -H "$APP_DIR/.venv/bin/python" -m pip install --quiet -r "$APP_DIR/requirements.txt"
-  install -m 755 "$APP_DIR/deploy/fluxbridge" /usr/local/bin/fluxbridge
   systemctl restart fluxbridge
   echo "updated to v$(cat "$APP_DIR/VERSION") and restarted"
+  if ! cmp -s "$APP_DIR/deploy/fluxbridge" /usr/local/bin/fluxbridge; then
+    # the root-owned helper is never replaced automatically from the service-writable checkout
+    echo "note: deploy/fluxbridge changed — review it, then: install -m 755 $APP_DIR/deploy/fluxbridge /usr/local/bin/fluxbridge"
+  fi
 }
 
 cmd_domain() {

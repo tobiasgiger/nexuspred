@@ -132,6 +132,33 @@ async def api_change_password(request: Request) -> JSONResponse:
     return resp
 
 
+@router.post("/account/sessions/revoke")
+async def api_revoke_own_sessions(request: Request) -> JSONResponse:
+    """Sign out every other device of the caller: the fingerprint in the session
+    cookies is rotated (cookies are stateless), this session gets a fresh one."""
+    user = request.state.user
+    db.revoke_sessions(user["id"])
+    db.log_action(user["id"], user["email"], "sessions_revoke", user["email"], "self")
+    resp = JSONResponse({"status": "ok"})
+    set_session_cookie(resp, request, user["id"])
+    return resp
+
+
+@router.post("/users/{user_id}/sessions/revoke")
+async def api_revoke_user_sessions(request: Request, user_id: int) -> dict[str, Any]:
+    """Admin: sign a user out everywhere (lost phone, leaked cookie)."""
+    admin = require_admin(request)
+    target = db.get_user(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="No such user")
+    if target.get("is_admin") and target["id"] != admin["id"] and admin["id"] != 1:
+        raise HTTPException(status_code=403, detail="Only the bootstrap admin can sign out another administrator")
+    db.revoke_sessions(user_id)
+    db.log_action(admin["id"], admin["email"], "sessions_revoke", target["email"])
+    state.log_event("info", f"All sessions of {target['email']} were signed out by {admin['email']}")
+    return {"status": "ok", "user_id": user_id}
+
+
 @router.post("/users/{user_id}/reset")
 async def api_create_reset(request: Request, user_id: int) -> dict[str, Any]:
     """Admin generates a one-time password-reset link for a user."""
@@ -139,6 +166,10 @@ async def api_create_reset(request: Request, user_id: int) -> dict[str, Any]:
     target = db.get_user(user_id)
     if not target:
         raise HTTPException(status_code=404, detail="No such user")
+    if target.get("is_admin") and target["id"] != admin["id"] and admin["id"] != 1:
+        # A reset link signs the user in: one admin must not take over another
+        # admin's workspace. The bootstrap admin (user 1) can still recover any account.
+        raise HTTPException(status_code=403, detail="Only the bootstrap admin can reset another administrator")
     token = db.create_password_reset(user_id)
     db.log_action(admin["id"], admin["email"], "password_reset", target["email"])
     url = f"{base_url(request)}/reset?token={token}"
@@ -147,4 +178,6 @@ async def api_create_reset(request: Request, user_id: int) -> dict[str, Any]:
         f"An administrator started a password reset for your Fluxbridge account.\n\n"
         f"Set a new password here (single-use, expires in 24 hours):\n\n{url}\n\n"
         "If you didn't expect this, contact your administrator.")
-    return {"user_id": user_id, "url": url, "emailed": emailed, "smtp_configured": alerts.smtp_configured()}
+    # The link is a login: hand it to the admin only when it could not be mailed
+    # to the user (no SMTP) and they have to pass it on out of band.
+    return {"user_id": user_id, "url": "" if emailed else url, "emailed": emailed, "smtp_configured": alerts.smtp_configured()}

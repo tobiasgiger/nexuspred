@@ -61,8 +61,11 @@ async def api_push_subscribe(request: Request) -> dict[str, Any]:
             db.meta_set("push_origin_host", host)
         push.reset()  # re-sign future pushes with the corrected sub
     user = request.state.user
-    rec = db.upsert_push_subscription(context.get_area(), user["id"], endpoint, str(keys["p256dh"]), str(keys["auth"]),
-                                      device=str((body or {}).get("device") or "")[:120])
+    try:
+        rec = db.upsert_push_subscription(context.get_area(), user["id"], endpoint, str(keys["p256dh"]), str(keys["auth"]),
+                                          device=str((body or {}).get("device") or "")[:120])
+    except ValueError as exc:                    # the endpoint belongs to another workspace
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"id": rec["id"], "device": rec["device"], "devices": len(db.list_push_subscriptions(context.get_area()))}
 
 

@@ -28,9 +28,14 @@ async def _parse_payload(request: Request) -> dict[str, Any]:
     if not raw:
         raise HTTPException(status_code=400, detail="Empty body")
     try:
-        return json.loads(raw.decode("utf-8"))
+        payload = json.loads(raw.decode("utf-8"))
+    except RecursionError:
+        raise HTTPException(status_code=400, detail="Invalid JSON: nested too deeply") from None
     except (ValueError, UnicodeDecodeError) as exc:
         raise HTTPException(status_code=400, detail=f"Invalid JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="JSON object expected")
+    return payload
 
 
 @router.post("/webhook/{token}")
@@ -191,7 +196,11 @@ async def api_update_sharing(webhook_id: str, request: Request) -> dict[str, Any
 async def api_list_subscribers(webhook_id: str, request: Request) -> list[dict[str, Any]]:
     require_admin(request)
     _webhook_or_404(webhook_id)
-    return db.list_subscribers(context.get_area(), webhook_id)
+    # The subscriber's routing (account specs, sizing) is theirs: the publisher
+    # gets who, since when and how many enabled accounts — like copy groups.
+    return [{"id": s["id"], "email": s["email"], "enabled": s["enabled"], "created_at": s["created_at"],
+             "accounts": len([a for a in s.get("accounts") or [] if isinstance(a, dict) and a.get("enabled", True)])}
+            for s in db.list_subscribers(context.get_area(), webhook_id)]
 
 
 @router.delete("/api/webhooks/{webhook_id}/subscribers/{sub_id}")

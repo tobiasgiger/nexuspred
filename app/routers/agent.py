@@ -103,8 +103,17 @@ async def api_agent_result(job_id: str, request: Request) -> dict[str, Any]:
     body = await request.json()
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="JSON object expected")
-    ok = relay.deliver(agent["id"], job_id, int(body.get("status_code") or 0),
-                       str(body.get("text") or ""), str(body.get("error") or ""))
+    try:
+        status = int(body.get("status_code") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="status_code must be an integer") from None
+    if status and not 100 <= status <= 599:
+        raise HTTPException(status_code=400, detail="status_code out of range")
+    # The agent relays broker responses: bounded so a rogue agent cannot bloat
+    # memory, the event stream or the persisted signal results.
+    text = str(body.get("text") or "")[:relay.MAX_RESULT_TEXT]
+    error = str(body.get("error") or "")[:relay.MAX_RESULT_ERROR]
+    ok = relay.deliver(agent["id"], job_id, status, text, error)
     return {"accepted": ok}
 
 

@@ -100,7 +100,7 @@ async def test_login_logout(admin, anon_client):
     assert r.headers["location"] == "/" and auth.read_session(r.cookies[auth.COOKIE]) == admin["id"]
     login_as(anon_client, r.cookies[auth.COOKIE])
     assert (await anon_client.get("/login")).headers["location"] == "/"
-    r = await anon_client.get("/logout")
+    r = await anon_client.post("/logout")
     assert r.headers["location"] == "/login" and "fb_session=" in r.headers["set-cookie"]
 
 

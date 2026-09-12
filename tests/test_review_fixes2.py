@@ -114,10 +114,11 @@ def test_login_brake_is_keyed_by_a_hash_of_the_address(admin):
     assert "victim@example.com" not in security.LOGIN_FAILS_PER_EMAIL._hits
 
 
-async def test_logout_get_ignores_cross_site_requests(client, admin):
-    r = await client.get("/logout", headers={"sec-fetch-site": "cross-site"})
-    assert r.status_code == 302 and r.headers["location"] == "/" and "set-cookie" not in r.headers
-    r = await client.get("/logout")
+async def test_logout_is_post_only(client, admin):
+    for hdrs in ({"sec-fetch-site": "cross-site"}, {}):
+        r = await client.get("/logout", headers=hdrs)
+        assert r.status_code == 302 and r.headers["location"] == "/" and "set-cookie" not in r.headers
+    r = await client.post("/logout")
     assert r.headers["location"] == "/login" and "fb_session=" in r.headers.get("set-cookie", "")
 
 

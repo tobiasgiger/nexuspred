@@ -70,12 +70,20 @@ export default {
         h("button", { type: "button", class: "btn btn-ghost btn-sm", onClick: async () => {
           try {
             const r = await api.post(`/api/users/${u.id}/reset`);
-            resetLink.show(r.url, `Password-reset link for ${u.email} — single use, expires in 24 h`);
-            copyText(r.url);
-            toast(r.emailed ? `Reset link emailed to ${u.email}` : "Reset link created and copied", "success");
+            if (r.emailed) {
+              toast(`Reset link emailed to ${u.email}`, "success");
+            } else {
+              resetLink.show(r.url, `Password-reset link for ${u.email} — single use, expires in 24 h`);
+              copyText(r.url);
+              toast("Reset link created and copied", "success");
+            }
             loadAudit();
           } catch (e) { toast(e.message, "error"); }
         } }, icon("key"), "Reset password"),
+        h("button", { type: "button", class: "btn btn-ghost btn-sm", title: "Log this user out of every browser and phone (lost device, leaked cookie).", onClick: async () => {
+          if (!(await confirmDialog({ title: `Sign ${u.email} out everywhere?`, body: "Every session of this user is ended immediately; they sign in again with their password.", confirmText: "Sign out everywhere" }))) return;
+          try { await api.post(`/api/users/${u.id}/sessions/revoke`); toast("Sessions revoked", "success"); loadAudit(); } catch (e) { toast(e.message, "error"); }
+        } }, icon("logout"), "Sign out everywhere"),
         u.id === me.id ? null : h("button", { type: "button", class: "btn btn-ghost btn-sm", onClick: async () => {
           if (!(await confirmDialog({ title: `Delete ${u.email}?`, body: "Their area and all its data (webhooks, tokens, logs) are removed. This cannot be undone.", confirmText: "Delete user", danger: true }))) return;
           try { await api.del(`/api/users/${u.id}`); toast("User deleted", "success"); loadUsers(); loadAudit(); } catch (e) { toast(e.message, "error"); }

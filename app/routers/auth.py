@@ -35,12 +35,25 @@ async def login_page(request: Request, error: str = "") -> HTMLResponse:
     return render(request, "login.html", {"error": msgs.get(error, "")})
 
 
+def _known_address(email: str, ip: str) -> bool:
+    """Whether ``ip`` is the address the account last signed in from."""
+    if not ip:
+        return False
+    user = db.get_user_by_email(email)
+    return bool(user and user.get("last_login_ip") and user["last_login_ip"] == ip)
+
+
 @router.post("/login")
 async def login_submit(request: Request):
     form = await request.form()
     email = str(form.get("email", "")).strip().lower()
-    if not security.login_allowed(email):
-        db.log_action(None, email[:200], "login_blocked", client_ip(request), "too many failed logins for this account")
+    ip = client_ip(request)
+    if not security.login_allowed(email) and not _known_address(email, ip):
+        # The per-account / global brakes count failures from *any* address, so
+        # a stranger could otherwise lock the owner out of the kill switch by
+        # guessing at their (public) marketplace email. The address the account
+        # last signed in from stays subject only to the per-IP limiter.
+        db.log_action(None, email[:200], "login_blocked", ip, "too many failed logins for this account")
         return RedirectResponse("/login?error=rate", status_code=302, headers={"Retry-After": "600"})
     user = await db.authenticate_async(email, str(form.get("password", "")))
     if not user:
@@ -54,10 +67,15 @@ async def login_submit(request: Request):
 
 
 @router.get("/logout")
+async def logout_get() -> RedirectResponse:
+    """Signing out is a POST (see the topbar); a bare link or a cross-site
+    ``<img src="/logout">`` changes nothing, whatever the browser's Fetch
+    Metadata support."""
+    return RedirectResponse("/", status_code=302)
+
+
 @router.post("/logout")
 async def logout(request: Request) -> RedirectResponse:
-    if request.method == "GET" and request.headers.get("sec-fetch-site", "").lower() == "cross-site":
-        return RedirectResponse("/", status_code=302)    # an <img src="/logout"> on another site signs nobody out
     resp = RedirectResponse("/login", status_code=302)
     resp.delete_cookie(auth.COOKIE, path="/")
     return resp

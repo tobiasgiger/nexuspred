@@ -383,6 +383,8 @@ def init() -> None:
             if "last_login_at" not in user_cols:
                 c.execute("ALTER TABLE users ADD COLUMN last_login_at TEXT")
                 c.execute("ALTER TABLE users ADD COLUMN last_login_ip TEXT")
+            if "session_salt" not in user_cols:
+                c.execute("ALTER TABLE users ADD COLUMN session_salt TEXT NOT NULL DEFAULT ''")
             imp_cols = {r["name"] for r in c.execute("PRAGMA table_info(journal_imports)").fetchall()}
             if imp_cols and "history_new" not in imp_cols:
                 c.execute("ALTER TABLE journal_imports ADD COLUMN history_new INTEGER NOT NULL DEFAULT 0")
@@ -553,20 +555,30 @@ def set_password(user_id: int, new_password: str) -> None:
 
 
 def password_version(user_id: int) -> str:
-    """A short, stable fingerprint of the user's current password hash — baked
-    into session cookies so changing the password logs every other session
+    """A short, stable fingerprint of the user's current password hash and
+    session salt — baked into session cookies so changing the password, or
+    revoking the sessions (:func:`revoke_sessions`), logs every other session
     out. Empty for an unknown user (which never matches a cookie). Cached."""
     cached = _pw_versions.get(user_id)
     if cached is not None:
         return cached
     init()
     with _connect() as c:
-        row = c.execute("SELECT password_hash FROM users WHERE id=?", (user_id,)).fetchone()
+        row = c.execute("SELECT password_hash, session_salt FROM users WHERE id=?", (user_id,)).fetchone()
     if not row:
         return ""
-    version = hashlib.sha256(str(row["password_hash"]).encode()).hexdigest()[:16]
+    version = hashlib.sha256(f"{row['password_hash']}|{row['session_salt'] or ''}".encode()).hexdigest()[:16]
     _pw_versions[user_id] = version
     return version
+
+
+def revoke_sessions(user_id: int) -> None:
+    """Invalidate every session cookie of the user (sign out everywhere): the
+    cookies are stateless, so the fingerprint they carry is rotated instead."""
+    init()
+    with _connect() as c:
+        c.execute("UPDATE users SET session_salt=? WHERE id=?", (secrets.token_hex(8), user_id))
+    _pw_versions.pop(user_id, None)
 
 
 # Async wrappers: PBKDF2 (200k rounds) takes ~100 ms of CPU; run it in a
@@ -1626,6 +1638,8 @@ def upsert_push_subscription(area_id: int, user_id: int, endpoint: str, p256dh: 
     init()
     with _connect() as c:
         row = c.execute("SELECT * FROM push_subscriptions WHERE endpoint=?", (endpoint,)).fetchone()
+        if row and row["area_id"] != area_id:
+            raise ValueError("this push endpoint is registered to another workspace")
         if row:
             c.execute("UPDATE push_subscriptions SET area_id=?, user_id=?, p256dh=?, auth=?, device=?, "
                       "failures=0, last_error='' WHERE id=?",

@@ -131,14 +131,37 @@ def _claims() -> dict[str, Any]:
     return {"sub": f"mailto:admin@{_sub_host()}", "exp": int(time.time()) + 12 * 3600}
 
 
+_http_session = None
+
+
+def _no_redirect_session():
+    """A ``requests`` session that never follows redirects: the endpoint URL was
+    checked against private networks when the device registered, and a push
+    service has no reason to redirect — a 3xx to an internal address would
+    otherwise be fetched from the bridge's own network."""
+    global _http_session
+    if _http_session is None:
+        import requests
+
+        class _Session(requests.Session):
+            def request(self, *args, **kwargs):  # type: ignore[override]
+                kwargs["allow_redirects"] = False
+                return super().request(*args, **kwargs)
+        _http_session = _Session()
+        _http_session.max_redirects = 0
+    return _http_session
+
+
 def _send_one(sub: dict[str, Any], payload: dict[str, Any]) -> tuple[bool, int, str]:
     """Deliver one push (blocking). Returns (ok, status, error)."""
     from pywebpush import WebPushException, webpush
     info = {"endpoint": sub["endpoint"], "keys": {"p256dh": sub["p256dh"], "auth": sub["auth"]}}
     try:
         resp = webpush(subscription_info=info, data=json.dumps(payload), vapid_private_key=_load(),
-                       vapid_claims=dict(_claims()), ttl=600, timeout=15)
+                       vapid_claims=dict(_claims()), ttl=600, timeout=15, requests_session=_no_redirect_session())
         status = getattr(resp, "status_code", 201)
+        if 300 <= status < 400:
+            return False, status, f"{status}: push service redirected (not followed)"
         return status < 300, status, "" if status < 300 else getattr(resp, "text", "")[:200]
     except WebPushException as exc:
         resp = getattr(exc, "response", None)

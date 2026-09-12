@@ -100,7 +100,12 @@ export function renderTopbar(root, { navigate, onHamburger, onPrivacy }) {
     h("a", { href: "#/settings/account", onClick: (e) => { e.preventDefault(); userMenu.classList.remove("open"); navigate("/settings/account"); } }, icon("user"), "Account"),
     themeMenuItem,
     privacyMenuItem,
-    h("a", { href: "/logout" }, icon("logout"), "Sign out"));
+    h("a", { href: "/logout", onClick: async (e) => {
+      // signing out is a POST: a plain link (or a cross-site <img>) must never end a session
+      e.preventDefault();
+      try { await fetch("/logout", { method: "POST", credentials: "same-origin", redirect: "manual" }); } catch { /* cookie is cleared server-side; fall through */ }
+      window.location.href = "/login";
+    } }, icon("logout"), "Sign out"));
   const userMenu = h("div", { class: "user-menu" }, avatar, menu);
   avatar.addEventListener("click", (e) => { e.stopPropagation(); userMenu.classList.toggle("open"); });
   document.addEventListener("click", () => userMenu.classList.remove("open"));

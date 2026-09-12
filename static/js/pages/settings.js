@@ -437,7 +437,15 @@ export const account = {
         card({ title: "Your account" },
           h("dl", { class: "kv" }, h("dt", null, "Email"), h("dd", null, me.email || "—"), h("dt", null, "Role"), h("dd", null, me.is_admin ? "Administrator" : "User"),
             h("dt", null, "Discord Signals"), h("dd", null, (me.features || {}).discord_signals === false ? "not enabled" : "enabled")),
-          h("div", { class: "form-actions", style: "margin-top:14px" }, h("a", { class: "btn btn-ghost", href: "/logout" }, icon("logout"), "Sign out"))),
+          h("div", { class: "form-actions", style: "margin-top:14px" },
+            h("button", { type: "button", class: "btn btn-ghost", onClick: async () => {
+              try { await fetch("/logout", { method: "POST", credentials: "same-origin", redirect: "manual" }); } catch { /* cookie cleared server-side */ }
+              window.location.href = "/login";
+            } }, icon("logout"), "Sign out"),
+            h("button", { type: "button", class: "btn btn-ghost", title: "Every other browser and phone signed in to this account is logged out; this one stays.", onClick: async () => {
+              if (!(await confirmDialog({ title: "Sign out other devices?", body: "Every other browser or phone signed in to your account is logged out immediately. This device stays signed in.", confirmText: "Sign out others" }))) return;
+              try { await api.post("/api/account/sessions/revoke"); toast("Other devices signed out", "success"); } catch (err) { toast(err.message, "error"); }
+            } }, "Sign out other devices"))),
         card({ title: "Change password" }, form)),
     );
     return () => {};
