@@ -129,7 +129,7 @@ async def _close_contract(ex: Any, tag: str, contract: str) -> int:
     """Cancel the contract's working orders, then liquidate the position, then
     retry any cancel that failed — a stop or target left working on a flat
     position would open a new trade. Failures that survive the retry are
-    reported at error level and alerted. Returns how many orders were cancelled."""
+    reported, alerted, and raised so callers cannot treat the close as clean."""
     from .. import alerts
     errors: list[str] = []
     cancelled = await _cancel_working(ex, tag, errors, contract=contract)
@@ -138,11 +138,13 @@ async def _close_contract(ex: Any, tag: str, contract: str) -> int:
         retry_errors: list[str] = []
         cancelled += await _cancel_working(ex, tag, retry_errors, contract=contract)
         if retry_errors:
+            detail = "; ".join(retry_errors)
             state.log_event("error", f"{tag}{ex.name}: working orders on {contract} could not be cancelled after the close: "
-                                     f"{'; '.join(retry_errors)} — cancel them by hand")
+                                     f"{detail} — cancel them by hand")
             from ..tradovate import _fire
             _fire(alerts.execution_problem(f"Orders left working on {ex.name}",
-                                           f"{contract} was closed but {len(retry_errors)} working order(s) could not be cancelled: {'; '.join(retry_errors)[:300]}"))
+                                           f"{contract} was closed but {len(retry_errors)} working order(s) could not be cancelled: {detail[:300]}"))
+            raise TradovateError(f"working orders remain after closing {contract}: {detail}")
     return cancelled
 
 
