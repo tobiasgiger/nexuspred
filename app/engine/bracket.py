@@ -8,7 +8,7 @@ import asyncio
 from typing import Any
 
 from .. import alerts, config, state
-from ..tradovate import TradovateError, _fire
+from ..tradovate import OrderOutcomeUnknown, TradovateError, _fire
 from .common import _place_stop_with_retry, SignalError, _lock, _opposite, _tp_index_from_event, _trade_key
 from ..sizing import account_qty
 
@@ -72,6 +72,7 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
                     order_type=s.get("tp_order_type", "Limit"), price=price)))
         tp_ids: list[int] = []
         sl_id = None
+        protection_error = ""
         if bracket:
             kinds = [k for k, _ in bracket]
             results = await asyncio.gather(*(c for _, c in bracket), return_exceptions=True)
@@ -83,10 +84,16 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
                 if kind == "tp" and res.get("order_id"):
                     tp_ids.append(res["order_id"])
         if sl_price is not None:
-            # the protective stop is placed on its own, with a retry and a loud
-            # alert when it fails: the entry is live by now
-            sl = await _place_stop_with_retry(ex, symbol=contract, action=exit_side, qty=entry_qty,
-                                              order_type=sl_type, stop_price=sl_price, tag=tag)
+            # the entry is already live. A known failed stop is retried once. If
+            # the broker answer is lost, do NOT retry, but also do NOT forget the
+            # confirmed entry: keep it tracked for reconciliation/full_close.
+            try:
+                sl = await _place_stop_with_retry(ex, symbol=contract, action=exit_side, qty=entry_qty,
+                                                  order_type=sl_type, stop_price=sl_price, tag=tag)
+            except OrderOutcomeUnknown as exc:
+                sl = None
+                protection_error = str(exc)
+                state.log_event("error", f"{tag}{ex.name}: protective stop outcome unknown after confirmed entry: {exc}")
             if sl is not None:
                 acc_orders.append(sl)
                 sl_id = sl.get("order_id")
@@ -97,7 +104,9 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
             "sl_order_id": sl_id, "sl_type": sl_type, "sl_stop": sl_price,
             "tp_order_ids": tp_ids,
         }
-        return ex.name, info, acc_orders, contract
+        if protection_error:
+            info["protection_outcome_unknown"] = True
+        return ex.name, info, acc_orders, contract, protection_error
 
     # All enabled accounts execute simultaneously.
     results = await asyncio.gather(*(place_for(ex) for ex in executors), return_exceptions=True)
@@ -112,10 +121,12 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
             failed.append(ex.name)
             state.log_event("error", f"{tag}Entry failed for {ex.name}: {res}")
             continue
-        name, info, acc_orders, contract = res
+        name, info, acc_orders, contract, protection_error = res
         acct_state[name] = info
         orders.extend(acc_orders)
         summary.append({"account": name, "qty": info["entry_qty"]})
+        if protection_error:
+            failed.append(name)
 
     if acct_state:
         key = _trade_key(webhook["id"], root)
@@ -132,6 +143,7 @@ async def handle_entry(payload, action, root, target, executors, active_map, tag
     )
     if acct_state and not tag:
         _fire(alerts.trade_executed(webhook.get("name", "?"), action, contract, list(acct_state), settings=s))   # never wait for SMTP
+    failed = list(dict.fromkeys(failed))
     out = {"status": "error" if failed else "ok", "action": action, "contract": contract,
            "accounts": summary, "orders": orders, "simulated": tag != ""}
     if failed:
