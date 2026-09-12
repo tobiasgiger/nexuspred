@@ -8,7 +8,7 @@ import asyncio
 from typing import Any
 
 from .. import alerts, config, state
-from ..tradovate import _fire
+from ..tradovate import TradovateError, _fire
 from .common import _place_stop_with_retry, SignalError, _lock, _opposite, _tp_index_from_event, _trade_key
 from ..sizing import account_qty
 
@@ -214,11 +214,11 @@ async def handle_trail_active(payload, root, executors, active_map, tag, webhook
         if not info or not info.get("sl_order_id"):
             return False
         qty = _remaining_qty(info, tp_index)
-        info["qty"] = qty
         await ex.modify_order(
             info["sl_order_id"], qty=qty,
             order_type=info.get("sl_type", "Stop"), stop_price=info.get("sl_stop"),
         )
+        info["qty"] = qty                       # state follows the broker, never precedes it
         return True
 
     results = await asyncio.gather(
