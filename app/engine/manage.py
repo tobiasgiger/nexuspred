@@ -172,6 +172,11 @@ async def handle_set_sl_tp(payload, root, target, executors, active_map, tag, we
     if new_tp is not None:
         parts.append(f"TP {new_tp}")
     if applied == 0:
+        if acct_state:
+            state.log_event("error", f"{tag}[{webhook.get('name', '?')}] {' & '.join(parts) or 'SL/TP'} "
+                            f"could not be applied to the open position for {root}")
+            return {"status": "error", "reason": "protection_update_failed", "action": "set_sl_tp",
+                    "accounts": 0, "sl": new_sl, "tp": new_tp, "simulated": tag != ""}
         state.log_event("info", f"{tag}[{webhook.get('name', '?')}] {' & '.join(parts) or 'SL/TP'} "
                         f"— no open position to protect for {root}")
         return {"status": "skipped", "reason": "no_open_position", "action": "set_sl_tp"}
