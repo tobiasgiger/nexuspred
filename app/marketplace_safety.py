@@ -1,9 +1,10 @@
-"""Execution-time safety for marketplace copy subscriptions.
+"""Execution-time safety for marketplace and local copy followers.
 
-Publishing ACLs and follower identity are live security/safety constraints.  A
-subscription that was valid yesterday must stop participating after the publisher
-revokes it, and two follower accounts with the same textual broker spec must not
-be allowed into a runner whose legacy runtime state is keyed by that spec.
+Copy's legacy runtime state is keyed by broker account ``spec``. Until that
+internal state is migrated to a composite identity, a group must never contain
+two enabled followers with the same spec, even when they belong to different
+logins/workspaces. Marketplace ACLs are also live authorization: revocation must
+stop future mirroring rather than merely hiding the listing in the UI.
 """
 from __future__ import annotations
 
@@ -11,18 +12,40 @@ from typing import Any
 
 from . import copy, db, marketplace, state
 
+_installed = False
+_original_validate_group = None
+_original_external_followers = None
+
 
 def _enabled_specs(accounts: Any) -> set[str]:
     return {str(a.get("spec") or "") for a in (accounts or [])
             if isinstance(a, dict) and a.get("spec") and a.get("enabled", True)}
 
 
+def validate_group_specs(group: dict[str, Any]) -> None:
+    """Reject identities that would collide in GroupRunner's spec-keyed maps."""
+    leader = str((group.get("leader") or {}).get("spec") or "")
+    seen: set[str] = set()
+    for follower in group.get("followers") or []:
+        if not isinstance(follower, dict) or not follower.get("enabled", True):
+            continue
+        spec = str(follower.get("spec") or "")
+        if not spec:
+            continue
+        if spec == leader:
+            raise ValueError("The leader and a follower cannot share the same broker account spec")
+        if spec in seen:
+            raise ValueError(f"Follower {spec} is ambiguous — account specs must be unique inside one copy group")
+        seen.add(spec)
+
+
 def validate_copy_accounts(publisher_area_id: int, group_id: str,
                            accounts: list[dict[str, Any]], *, exclude_sub_id: int | None = None) -> None:
-    """Reject runtime follower-spec collisions before a subscription is saved."""
+    """Reject a subscription that would collide with any follower already in the group."""
     group, _sharing = copy.find_published(publisher_area_id, group_id)
     if not group:
         raise ValueError("copy group is not published")
+    validate_group_specs(group)
     taken = _enabled_specs(group.get("followers"))
     leader_spec = str((group.get("leader") or {}).get("spec") or "")
     if leader_spec:
@@ -34,18 +57,68 @@ def validate_copy_accounts(publisher_area_id: int, group_id: str,
     clash = sorted(_enabled_specs(accounts) & taken)
     if clash:
         raise ValueError(
-            "This copy group already contains a follower with the same broker account spec. "
-            "Follower account specs must be unique inside a published group."
+            f"Follower {clash[0]} is already present in this copy group. "
+            "Broker account specs must be unique inside one published group."
         )
+
+
+def _safe_external_followers(area_id: int, group_id: str, *, group: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Filter the normal external-follower list by the publisher's current ACL."""
+    assert _original_external_followers is not None
+    followers = _original_external_followers(area_id, group_id, group=group)
+    current = group
+    if current is None:
+        current, _ = copy.find_published(area_id, group_id)
+    if not current:
+        return []
+    allowed = {
+        int(sub["id"]) for sub in db.active_subscriptions(area_id, f"copy:{group_id}")
+        if marketplace.subscription_allowed(current, sub)
+    }
+    return [f for f in followers if int(f.get("sub_id") or 0) in allowed]
+
+
+def install() -> None:
+    """Install fail-closed checks at the existing copy chokepoints (idempotent)."""
+    global _installed, _original_validate_group, _original_external_followers
+    if _installed:
+        return
+    _original_validate_group = copy.validate_group
+    _original_external_followers = copy.external_followers
+
+    def validate(group: dict[str, Any], all_groups: list[dict[str, Any]], accounts: list[dict[str, Any]]) -> None:
+        assert _original_validate_group is not None
+        _original_validate_group(group, all_groups, accounts)
+        validate_group_specs(group)
+
+    copy.validate_group = validate  # type: ignore[assignment]
+    copy.external_followers = _safe_external_followers  # type: ignore[assignment]
+    _installed = True
+
+
+def repair_own_groups(area_id: int) -> int:
+    """Disable pre-existing ambiguous groups rather than running them unsafely."""
+    groups = copy.load_groups(area_id)
+    changed = 0
+    for group in groups:
+        if not group.get("enabled"):
+            continue
+        try:
+            validate_group_specs(group)
+        except ValueError as exc:
+            group["enabled"] = False
+            changed += 1
+            state.log_event("error", f"Copy group '{group.get('name', '?')}' disabled: {exc}")
+    if changed:
+        copy.save_groups(groups, area_id)
+    return changed
 
 
 async def reconcile_copy_group(publisher_area_id: int, group_id: str, *, sync: bool = True) -> int:
     """Disable subscriptions/accounts no longer safe for one published group.
 
-    ACLs are re-evaluated against the publisher's current sharing configuration.
-    Ambiguous duplicate follower specs are disabled rather than letting one
-    tenant's state overwrite another tenant's runtime tracking. Mirrored working
-    orders are cancelled before a follower is removed; positions are untouched.
+    Mirrored working orders are cancelled before a live follower is removed;
+    positions are deliberately not touched.
     """
     group, _sharing = copy.find_published(publisher_area_id, group_id)
     if not group:
@@ -94,9 +167,11 @@ async def reconcile_copy_group(publisher_area_id: int, group_id: str, *, sync: b
 
 
 async def reconcile_all(*, sync: bool = True) -> int:
-    """Repair stale marketplace-copy authorization; optionally before runners start."""
+    """Repair old copy config/subscriptions; safe to call before runners start."""
+    install()
     changed = 0
     for area_id in db.all_area_ids():
+        changed += repair_own_groups(area_id)
         for group in copy.load_groups(area_id):
             if marketplace.sharing_of(group).get("enabled"):
                 changed += await reconcile_copy_group(area_id, str(group.get("id") or ""), sync=sync)
