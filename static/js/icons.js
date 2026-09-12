@@ -24,6 +24,7 @@ const PATHS = {
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
   users: '<circle cx="9" cy="8" r="3.5"/><path d="M2 20a7 7 0 0 1 14 0M16 4a3.5 3.5 0 0 1 0 7M22 20a6 6 0 0 0-5-6"/>',
   terminal: '<path d="M4 17l6-5-6-5M12 19h8"/>',
+  calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
   logout: '<path d="M10 17l5-5-5-5M15 12H3M13 3h6v18h-6"/>',
   alert: '<path d="M12 3l10 18H2zM12 9v5M12 17v1"/>',
   activity: '<path d="M3 12h4l3-8 4 16 3-8h4"/>',

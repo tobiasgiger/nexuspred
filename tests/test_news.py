@@ -113,3 +113,42 @@ def test_feed_normalization_dedupes_and_orders():
     b = {"title": "NFP", "country": "USD", "impact": "High", "date": "2026-09-11T08:30:00-04:00"}
     ev = news._normalize_feed([a, dict(a), b, {"title": "", "date": "x"}])
     assert [e["title"] for e in ev] == ["NFP", "CPI"] and ev[1]["at"] == "2026-09-14T12:30:00+00:00" and ev[1]["currency"] == "USD"
+
+
+async def test_calendar_page_api_lists_everything_with_filters(client, admin, monkeypatch):
+    now = datetime.now(timezone.utc)
+
+    async def fake_refresh(force=False):
+        _prime([_feed(now, in_min=60), _feed(now, in_min=120, title="Unemployment Claims", impact="Medium"),
+                _feed(now, in_min=180, title="ECB Rate", country="EUR"), _feed(now, in_min=60 * 24 * 10, title="Far away")])
+        return {"events": 4, "error": "", "cached": False}
+    monkeypatch.setattr(news, "refresh", fake_refresh)
+    await client.put("/api/news/settings", json={"enabled": True, "currencies": ["USD"], "impacts": ["High"], "before": 5, "after": 5,
+                                                 "manual": [{"title": "Powell", "at": (now + timedelta(hours=5)).isoformat()}]})
+    body = (await client.get("/api/news/calendar")).json()                      # default: next 7 days, everything
+    assert [e["title"] for e in body["events"]] == ["CPI m/m", "Unemployment Claims", "ECB Rate", "Powell"]
+    assert [e["relevant"] for e in body["events"]] == [True, False, False, True]  # USD/High and manual count for the lock
+    assert body["events"][0]["lock_from"] and body["events"][1]["lock_from"] is None
+    assert body["currencies"] == ["EUR", "USD"] and body["range"]["end"] > body["range"]["start"]
+    body = (await client.get("/api/news/calendar?days=14")).json()
+    assert "Far away" in [e["title"] for e in body["events"]]
+    body = (await client.get("/api/news/calendar?relevant=true")).json()
+    assert [e["title"] for e in body["events"]] == ["CPI m/m", "Powell"]
+    body = (await client.get("/api/news/calendar?currencies=eur")).json()
+    assert [e["title"] for e in body["events"]] == ["ECB Rate", "Powell"]         # manual events always shown
+    body = (await client.get("/api/news/calendar?impacts=medium&q=claims")).json()
+    assert [e["title"] for e in body["events"]] == ["Unemployment Claims"]              # the text filter applies to manual events too
+    assert (await client.get("/api/news/calendar?start=nope")).status_code == 400
+
+
+def test_feed_weeks_accumulate_and_a_redelivered_week_replaces_itself():
+    now = datetime(2026, 9, 14, 12, 0, tzinfo=timezone.utc)
+    old = news._normalize_feed([_feed(now, in_min=-7 * 24 * 60, title="Last week NFP"), _feed(now, in_min=60 * 24 * 100, title="ancient")])
+    old[1]["at"] = (now - timedelta(days=100)).isoformat()                       # older than KEEP_DAYS
+    new = news._normalize_feed([_feed(now, in_min=60, title="CPI"), _feed(now, in_min=120, title="Retail")])
+    merged = news._merge(old, new)
+    assert [e["title"] for e in merged] == ["Last week NFP", "CPI", "Retail"]
+    # the same week again with one event dropped and one moved → replaced, not duplicated
+    again = news._normalize_feed([_feed(now, in_min=90, title="CPI")])
+    merged2 = news._merge(merged, again)
+    assert [e["title"] for e in merged2] == ["Last week NFP", "CPI"] and merged2[1]["at"] == (now + timedelta(minutes=90)).isoformat()

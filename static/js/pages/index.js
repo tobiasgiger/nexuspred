@@ -14,6 +14,7 @@ import discordSettings from "./discordSettings.js";
 import users from "./users.js";
 import agents from "./agents.js";
 import news from "./news.js";
+import calendar from "./calendar.js";
 import { general, security, updates, alerts, symbols, account } from "./settings.js";
 
 export const ROUTES = [
@@ -21,6 +22,7 @@ export const ROUTES = [
   { path: "/discord", page: discord },
   { path: "/logs", page: logs },
   { path: "/journal", page: journal },
+  { path: "/calendar", page: calendar },
   { path: "/webhooks", page: webhooks },
   { path: "/webhooks/:id", page: webhooks },
   { path: "/marketplace", page: marketplace },

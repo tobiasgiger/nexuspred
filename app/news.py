@@ -34,6 +34,7 @@ log = logging.getLogger(__name__)
 
 FEED_URLS = ("https://nfs.faireconomy.media/ff_calendar_thisweek.json",)   # the only public weekly file
 REFRESH_S = 6 * 3600
+KEEP_DAYS = 90               # the feed carries the current week only: past weeks are kept locally
 LOOP_TICK_S = 30.0
 IMPACTS = ("High", "Medium", "Low", "Holiday")
 DEFAULTS: dict[str, Any] = {"enabled": False, "currencies": ["USD"], "impacts": ["High"], "before": 5, "after": 5,
@@ -147,6 +148,9 @@ async def refresh(force: bool = False) -> dict[str, Any]:
             errors.append(f"{url.rsplit('/', 1)[-1]}: {type(exc).__name__}: {exc}"[:160])
     events = _normalize_feed(raw)
     if events:
+        if not _events:
+            _load_cached()
+        events = _merge(_events, events)
         _events, _fetched_at, _feed_error = events, time.monotonic(), "; ".join(errors)
         try:
             await asyncio.to_thread(db.meta_set, "news_events", json.dumps({"fetched": datetime.now(timezone.utc).isoformat(), "events": events}))
@@ -158,6 +162,20 @@ async def refresh(force: bool = False) -> dict[str, Any]:
             _load_cached()
         _fetched_at = time.monotonic() - REFRESH_S + 600     # retry in ten minutes, not every tick
     return {"events": len(_events), "error": _feed_error, "cached": False}
+
+
+def _merge(old: list[dict[str, Any]], new: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The feed only ever carries the current week: new rows replace same-keyed
+    old ones, older weeks stay (up to KEEP_DAYS) so the calendar keeps a history."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=KEEP_DAYS)).isoformat()
+    by_key = {_key(e): e for e in old if e["at"] >= cutoff}
+    # a week the feed re-delivers replaces its whole span (events get rescheduled / removed)
+    if new:
+        lo, hi = new[0]["at"][:10], new[-1]["at"][:10]
+        by_key = {k: e for k, e in by_key.items() if not (lo <= e["at"][:10] <= hi)}
+    for e in new:
+        by_key[_key(e)] = e
+    return sorted(by_key.values(), key=lambda x: x["at"])
 
 
 def _load_cached() -> None:
@@ -209,6 +227,52 @@ def windows(area_id: int, *, hours: float = 72.0, now: Optional[datetime] = None
     return out
 
 
+def calendar(area_id: int, *, start: datetime, end: datetime, currencies: Optional[set[str]] = None,
+             impacts: Optional[set[str]] = None, query: str = "", relevant_only: bool = False,
+             now: Optional[datetime] = None) -> list[dict[str, Any]]:
+    """Every calendar entry between ``start`` and ``end`` (feed + this workspace's
+    manual events), each flagged ``relevant`` when the lock settings would count
+    it, with its lock window when so. Filters narrow the list; ``relevant_only``
+    keeps only entries the lock would act on."""
+    s = settings_for(area_id)
+    now = now or datetime.now(timezone.utc)
+    if not _events:
+        _load_cached()
+    before, after = timedelta(minutes=s["before"]), timedelta(minutes=s["after"])
+    q = query.strip().lower()
+    out = []
+    rows = [dict(e, source="feed") for e in _events]
+    rows += [{"title": m["title"], "currency": "", "impact": "Manual", "at": m["at"], "forecast": "", "previous": "", "source": "manual"} for m in s["manual"]]
+    for e in rows:
+        at = _parse_ts(e["at"])
+        if at is None or not (start <= at <= end):
+            continue
+        relevant = e["source"] == "manual" or (e["currency"] in s["currencies"] and e["impact"] in s["impacts"])
+        if relevant_only and not relevant:
+            continue
+        if currencies and e["currency"] not in currencies and e["source"] != "manual":
+            continue
+        if impacts and e["impact"] not in impacts and e["source"] != "manual":
+            continue
+        if q and q not in e["title"].lower() and q not in e["currency"].lower():
+            continue
+        row = {**e, "at": at.isoformat(), "relevant": relevant, "key": _key(e)}
+        if relevant:
+            lock_from, lock_until = at - before, at + after
+            row.update({"lock_from": lock_from.isoformat(), "lock_until": lock_until.isoformat(), "active": s["enabled"] and lock_from <= now <= lock_until})
+        else:
+            row.update({"lock_from": None, "lock_until": None, "active": False})
+        out.append(row)
+    out.sort(key=lambda x: x["at"])
+    return out
+
+
+def feed_currencies() -> list[str]:
+    if not _events:
+        _load_cached()
+    return sorted({e["currency"] for e in _events if e["currency"]})
+
+
 def active_lock(area_id: Optional[int] = None, *, now: Optional[datetime] = None) -> Optional[dict[str, Any]]:
     """The event locking new entries right now for this workspace, else None."""
     aid = area_id if area_id is not None else context.get_area()
@@ -228,6 +292,7 @@ def status(area_id: Optional[int] = None) -> dict[str, Any]:
     nxt = next((w for w in windows(aid, hours=48, settings=s) if _parse_ts(w["lock_from"]) > datetime.now(timezone.utc)), None) if s["enabled"] else None
     return {"enabled": s["enabled"], "action": s["action"], "active": lock, "next": nxt,
             "feed_events": len(_events), "feed_error": _feed_error,
+            "feed_from": _events[0]["at"] if _events else None, "feed_to": _events[-1]["at"] if _events else None,
             "feed_age_s": int(time.monotonic() - _fetched_at) if _fetched_at else None}
 
 

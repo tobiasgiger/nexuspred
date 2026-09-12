@@ -3,7 +3,6 @@
 import { h, card, tag, toast, pageHead, clear } from "../ui.js";
 import { icon } from "../icons.js";
 import { api } from "../api.js";
-import { dataTable } from "../components/table.js";
 
 const fmtTime = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }); };
 const fmtClock = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? "—" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); };
@@ -42,15 +41,6 @@ export default {
       before: Number(before.value) || 0, after: Number(after.value) || 0, action: action.value, alert: alertSw.checked, manual: manual.filter((m) => m.title && m.at) });
 
     const statusBox = h("div", { class: "callout" }, "Loading…");
-    const table = dataTable({ empty: "No events in the selected window for these currencies / impacts.", compact: true, columns: [
-      { label: "When", render: (e) => fmtTime(e.at) },
-      { label: "Event", render: (e) => [h("strong", null, e.title), e.source === "manual" ? [" ", tag("manual", "accent")] : null] },
-      { label: "Cur.", render: (e) => e.currency || "—" },
-      { label: "Impact", render: (e) => tag(e.impact, e.impact === "High" ? "error" : e.impact === "Medium" ? "warn" : "") },
-      { label: "Forecast / prev.", render: (e) => e.forecast || e.previous ? `${e.forecast || "—"} / ${e.previous || "—"}` : "—" },
-      { label: "Lock window", render: (e) => `${fmtClock(e.lock_from)} – ${fmtClock(e.lock_until)}` },
-      { label: "", render: (e) => e.active ? tag("locked now", "error") : null },
-    ] });
     function paintStatus(st) {
       clear(statusBox);
       statusBox.className = "callout " + (st.active ? "danger" : st.enabled ? "ok" : "");
@@ -65,7 +55,7 @@ export default {
       try {
         const r = await api.get("/api/news?hours=168");
         if (!settings) fill(r.settings);
-        paintStatus(r.status); table.update(r.events);
+        paintStatus(r.status);
       } catch (e) { toast(e.message, "error"); }
     }
     const saveBtn = h("button", { type: "button", class: "btn btn-primary", onClick: async () => {
@@ -79,7 +69,7 @@ export default {
 
     const row = (label, ctrl, hint) => h("div", { class: "field" }, h("label", null, label), ctrl, hint ? h("small", null, hint) : null);
     root.append(
-      pageHead("News & Calendar", "No new entries around high-impact releases (FOMC, CPI, NFP …). Closes, stop moves and the copy mirror always run — a position is never left unmanaged. The calendar comes from ForexFactory's weekly feed and is refreshed every six hours."),
+      pageHead("News & Calendar", "No new entries around high-impact releases (FOMC, CPI, NFP …). Closes, stop moves and the copy mirror always run — a position is never left unmanaged. The calendar comes from ForexFactory's weekly feed and is refreshed every six hours; the list of events is on the Calendar page (Monitoring)."),
       card({ title: "News lock", hint: "Applies to every webhook, Discord signal and marketplace subscription of this workspace. The Simulator is never blocked." },
         h("div", { class: "stack" },
           h("label", { class: "switch-row" }, h("span", null, "News lock enabled", h("small", null, "Off = the calendar is informational only.")), enabled),
@@ -90,7 +80,7 @@ export default {
           h("label", { class: "switch-row" }, h("span", null, "Alert when a window opens", h("small", null, "Discord and push.")), alertSw),
           h("h3", null, "Manual events"), h("p", { class: "hint" }, "Speeches, earnings, anything the feed does not carry. Same before / after window."), manualBox,
           h("div", { class: "form-actions" }, saveBtn, refreshBtn))),
-      card({ title: "Upcoming events (next 7 days)", hint: "Times in your browser's timezone. Only events matching the currencies and impact levels above are listed." }, statusBox, table.el),
+      card({ title: "Status" }, statusBox, h("p", { class: "hint", style: "margin-top:10px" }, "The full calendar with filters (range, currency, impact, search) is on the ", h("a", { href: "#/calendar" }, "Calendar page"), ".")),
     );
     load();
     const timer = setInterval(load, 60000);

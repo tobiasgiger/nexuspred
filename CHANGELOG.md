@@ -4,6 +4,15 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.60
+- **Calendar page.** The economic calendar has its own page under Monitoring (next to
+  Journal): every entry of the feed plus your manual events, grouped by day, with filters
+  for range (default next 7 days; today, 3 / 14 / 30 days, past 7 days), currency, impact,
+  free text and *lock-relevant only*. Each row shows whether the news lock counts it and
+  its lock window. The feed publishes one week at a time; the bridge now keeps past weeks
+  for 90 days and shows the covered span. Settings → News & Calendar keeps only the lock
+  rules and status.
+
 ## 5.0.0-alpha.59
 - **ProjectX broker adapter (beta, untested with a real key).** Logins for TopstepX,
   Bulenox, Alpha Futures, Blusky, E8X, Tradeify and the other ProjectX firms (Settings →

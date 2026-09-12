@@ -9,6 +9,7 @@ export const NAV = [
     { path: "/discord", label: "Discord", icon: "discord", gate: "discord" },
     { path: "/logs", label: "Logs", icon: "logs" },
     { path: "/journal", label: "Journal", icon: "activity" },
+    { path: "/calendar", label: "Calendar", icon: "calendar" },
   ] },
   { group: "Routing", items: [
     { path: "/webhooks", label: "Webhooks", icon: "webhook" },
