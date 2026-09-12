@@ -29,7 +29,7 @@ import asyncio
 import time
 from typing import TYPE_CHECKING, Any, Optional
 
-from . import context, db
+from . import config, context, db
 from .tradovate import RateLimited, TradovateError
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -134,7 +134,7 @@ class OrderMirror:
     async def _follower_working(self) -> dict[str, set[int]]:
         """spec → ids of the follower's working orders (specs whose login failed are absent)."""
         out: dict[str, set[int]] = {}
-        for f in self.r.group["followers"]:
+        for f in self.r.followers:
             ex = self.r._executor(f)
             if ex is None:
                 continue
@@ -334,7 +334,7 @@ class OrderMirror:
             if o["order_type"] not in MIRRORED_TYPES or (partner is not None and partner["order_type"] not in MIRRORED_TYPES):
                 self._record("order_skip", symbol=name, detail=f"leader {o['action']} {o['qty']} {o['order_type']}: order type not mirrored")
                 continue
-            res = await asyncio.gather(*(self._create_for(f, o, partner, name) for f in self.r.group["followers"] if f.get("enabled", True)),
+            res = await asyncio.gather(*(self._create_for(f, o, partner, name) for f in self.r.followers if f.get("enabled", True)),
                                        return_exceptions=True)
             created += sum(r for r in res if isinstance(r, int))
         return created
@@ -369,6 +369,10 @@ class OrderMirror:
                              detail=f"leader OCO legs size to {qty} and {pq} contracts: mirrored as two independent orders")
                 n = await self._create_for(f, o, None, name)
                 return n + await self._create_for(f, partner, None, name)
+        farea = self.r._area_of(f)
+        if farea != self.r.area_id and not config.load_settings(area_id=farea).get("trading_enabled"):
+            self._record("order_skip", follower=spec, symbol=name, detail=f"leader {o['action']} {o['qty']} {o['order_type']}: trading switch is off in the follower's workspace")
+            return 0
         ex = self.r._executor(f)
         if ex is None:
             self._record("order_reject", follower=spec, symbol=name, detail="login disabled or account gone")
@@ -377,7 +381,7 @@ class OrderMirror:
         async with lock:
             if self._twin_key(spec, o["id"]) in self.twins:
                 return 0                            # placed by a concurrent pass while we waited
-            with context.use_area(self.r.area_id):
+            with context.use_area(farea):
                 try:
                     if partner is None:
                         res = await ex.place_order(symbol=name, action=o["action"], qty=qty, order_type=o["order_type"],
@@ -417,7 +421,7 @@ class OrderMirror:
 
     async def _modify(self, o: dict[str, Any]) -> None:
         name = self.r.contract_names.get(o["contract_id"], str(o["contract_id"]))
-        for f in self.r.group["followers"]:
+        for f in self.r.followers:
             spec = f["spec"]
             t = self.twins.get(self._twin_key(spec, o["id"]))
             if t is None:
@@ -429,7 +433,7 @@ class OrderMirror:
             ex = self.r._executor(f)
             if ex is None:
                 continue
-            with context.use_area(self.r.area_id):
+            with context.use_area(self.r._area_of(f)):
                 try:
                     await ex.modify_order(t["follower_order_id"], qty=qty, order_type=o["order_type"], price=o["price"], stop_price=o["stop_price"])
                 except asyncio.CancelledError:
@@ -447,7 +451,7 @@ class OrderMirror:
     async def cancel_twins(self, leader_order_id: int, *, reason: str, spec_only: Optional[str] = None) -> int:
         """Cancel every follower twin of one leader order. Returns cancels sent."""
         n = 0
-        for f in self.r.group["followers"]:
+        for f in self.r.followers:
             spec = f["spec"]
             if spec_only and spec != spec_only:
                 continue
@@ -459,7 +463,7 @@ class OrderMirror:
                 self._record("order_reject", follower=spec, symbol=t["symbol"],
                              detail=f"{t['action']} {t['qty']} {t['order_type']}: login disabled — the twin stays at the broker until the login is back")
                 continue
-            with context.use_area(self.r.area_id):
+            with context.use_area(self.r._area_of(f)):
                 try:
                     await ex.cancel_order(t["follower_order_id"])
                     n += 1
@@ -523,7 +527,7 @@ class OrderMirror:
                 actions += await self.cancel_twins(key[1], reason="orphan: leader order gone", spec_only=spec)
         missing = [o for o in self.leader_orders.values()
                    if any(self._twin_key(f["spec"], o["id"]) not in self.twins and not self._held_back(f["spec"], o["id"])
-                          for f in self.r.group["followers"] if f.get("enabled", True))]
+                          for f in self.r.followers if f.get("enabled", True))]
         if missing:
             actions += await self._create(session, missing)
         return actions

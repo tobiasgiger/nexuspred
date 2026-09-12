@@ -5,7 +5,8 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
-from .. import config, context, copy, db, state
+from .. import config, context, copy, db, marketplace, state
+from ..web import require_admin
 from .accounts import trade_accounts_overview
 
 router = APIRouter(prefix="/api/copy", tags=["copy"])
@@ -56,7 +57,58 @@ def _with_status(g: dict[str, Any], st: dict[str, dict[str, Any]]) -> dict[str, 
 @router.get("/groups")
 async def api_list_groups() -> list[dict[str, Any]]:
     st = copy.statuses(context.get_area())
-    return [_with_status(g, st) for g in copy.load_groups()]
+    counts = db.subscriber_counts(context.get_area())
+    return [{**_with_status(g, st), "subscriber_count": counts.get(f"copy:{g['id']}", 0)} for g in copy.load_groups()]
+
+
+@router.get("/following")
+async def api_following() -> list[dict[str, Any]]:
+    """Copy groups this workspace follows through the marketplace, with the live
+    picture of its own accounts."""
+    return copy.following_status(context.get_area())
+
+
+@router.put("/groups/{group_id}/sharing")
+async def api_group_sharing(group_id: str, request: Request) -> dict[str, Any]:
+    """Publish / unpublish a copy group on the marketplace (admins only)."""
+    user = require_admin(request)
+    body = await request.json()
+    groups, i = _group_or_404(group_id)
+    g = dict(groups[i])
+    before = marketplace.sharing_of(g)
+    g["sharing"] = marketplace.normalize_sharing(body, g.get("sharing"))
+    groups[i] = g
+    copy.save_groups(groups)
+    after = g["sharing"]
+    if before["enabled"] != after["enabled"]:
+        db.log_action(user["id"], user["email"], "copy_share", after["title"] or g.get("name", ""), "published" if after["enabled"] else "unpublished")
+        state.log_event("info", f"Copy group '{g.get('name')}' {'published on' if after['enabled'] else 'removed from'} the marketplace")
+    await copy.sync_area(context.get_area())          # unpublished → subscribers' accounts leave the mirror
+    return {**_with_status(g, copy.statuses(context.get_area())), "subscriber_count": db.subscriber_counts(context.get_area()).get(f"copy:{group_id}", 0)}
+
+
+@router.get("/groups/{group_id}/subscribers")
+async def api_group_subscribers(group_id: str, request: Request) -> list[dict[str, Any]]:
+    require_admin(request)
+    _group_or_404(group_id)
+    return [{"id": s["id"], "email": s["email"], "enabled": s["enabled"], "created_at": s["created_at"],
+             "accounts": len([a for a in s.get("accounts") or [] if isinstance(a, dict) and a.get("enabled", True)])}
+            for s in db.list_subscribers(context.get_area(), f"copy:{group_id}")]
+
+
+@router.delete("/groups/{group_id}/subscribers/{sub_id}")
+async def api_group_remove_subscriber(group_id: str, sub_id: int, request: Request) -> dict[str, Any]:
+    """Publisher removes a follower ("kick"); the follower keeps their positions."""
+    user = require_admin(request)
+    _group_or_404(group_id)
+    removed = db.delete_subscription(sub_id, publisher_area_id=context.get_area())
+    if not removed or removed["webhook_id"] != f"copy:{group_id}":
+        raise HTTPException(status_code=404, detail="Subscriber not found")
+    email = db.area_owner_email(removed["area_id"]) or str(removed["area_id"])
+    db.log_action(user["id"], user["email"], "subscriber_remove", email, f"copy group {group_id}")
+    state.log_event("info", f"Subscriber {email} removed from copy group {group_id}")
+    await copy.sync_area(context.get_area())
+    return {"status": "deleted", "id": sub_id}
 
 
 @router.post("/groups")
@@ -106,7 +158,8 @@ async def api_delete_group(group_id: str) -> dict[str, Any]:
     await copy.sync_area(context.get_area())
     db.delete_copy_state(context.get_area(), group_id)
     db.delete_copy_twins(context.get_area(), group_id)
-    state.log_event("info", f"Copy group '{removed.get('name')}' deleted")
+    dropped = db.delete_subscriptions_for_webhook(context.get_area(), f"copy:{group_id}")
+    state.log_event("info", f"Copy group '{removed.get('name')}' deleted" + (f" ({dropped} subscription(s) removed)" if dropped else ""))
     return {"status": "deleted", "id": group_id}
 
 

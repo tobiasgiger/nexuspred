@@ -7,10 +7,11 @@ import { h, card, tag, toast, confirmDialog, pageHead, clear, fmtDateTime, fmtTi
 import { maskAccount } from "../privacy.js";
 import { icon } from "../icons.js";
 import { api } from "../api.js";
-import { store } from "../store.js";
+import { store, can } from "../store.js";
 import { actions } from "../actions.js";
 import { dataTable } from "../components/table.js";
 import { openDrawer, closeDrawer } from "../components/drawer.js";
+import { openCopySubscriptionDrawer } from "./marketplace.js";
 
 const accountKey = (idx, spec) => `${idx}::${spec}`;
 const CONTRACT_RE = /^([A-Z]{1,4})[FGHJKMNQUVXZ]\d{1,2}$/;
@@ -203,6 +204,61 @@ function groupDrawer(group, { reload, onClose = null }) {
     catch (e) { toast(e.message, "error"); }
   } }, icon("trash"), "Delete");
 
+  // --- Marketplace (admins, saved groups): publish the group as a product
+  let sharingPane = null;
+  const me = store.get("me");
+  if (!isNew && can(me, "admin")) {
+    const sh = { enabled: false, title: "", description: "", visibility: "all", allowed_user_ids: [], ...(g.sharing || {}) };
+    const pubSw = h("input", { type: "checkbox", class: "switch", checked: !!sh.enabled });
+    const titleInp = h("input", { value: sh.title || "", placeholder: g.name, maxlength: 80 });
+    const descTa = h("textarea", { rows: 3, maxlength: 1000, placeholder: "What the leader trades, typical size, session…", style: "font-family:inherit" }, sh.description || "");
+    const visSel = h("select", null, h("option", { value: "all", selected: sh.visibility !== "selected" }, "Every registered user"), h("option", { value: "selected", selected: sh.visibility === "selected" }, "Only selected users"));
+    const userList = h("div", { class: "check-list" }, h("span", { class: "muted" }, "Loading users…"));
+    const userBox = h("div", { class: `field ${sh.visibility === "selected" ? "" : "hidden"}` }, h("label", null, "Allowed users"), userList);
+    visSel.addEventListener("change", () => userBox.classList.toggle("hidden", visSel.value !== "selected"));
+    api.get("/api/users").then((r) => {
+      const users = (r.users || r).filter((u) => u.id !== me.id);
+      clear(userList);
+      if (!users.length) userList.append(h("span", { class: "muted" }, "No other users yet — invite them under Settings → Users."));
+      userList.append(users.map((u) => h("label", null, h("input", { type: "checkbox", class: "allow-user", value: String(u.id), checked: (sh.allowed_user_ids || []).includes(u.id) }), u.email)));
+    }).catch(() => { clear(userList); userList.append(h("span", { class: "muted" }, "Could not load users.")); });
+    const subsTable = dataTable({ empty: "No followers from the marketplace yet.", compact: true, columns: [
+      { label: "Follower", render: (s) => s.email },
+      { label: "Status", render: (s) => s.enabled ? tag("on", "on") : tag("off", "off") },
+      { label: "Accounts", className: "num", render: (s) => String(s.accounts) },
+      { label: "Since", render: (s) => fmtDateTime(s.created_at) },
+      { label: "", render: (s) => h("button", { type: "button", class: "btn btn-ghost btn-sm", onClick: async () => {
+        if (!(await confirmDialog({ title: `Remove ${s.email}?`, body: "Their accounts leave the mirror immediately (positions are not closed). They can follow again unless you restrict visibility.", confirmText: "Remove", danger: true }))) return;
+        try { await api.del(`/api/copy/groups/${g.id}/subscribers/${s.id}`); toast("Follower removed", "success"); loadSubs(); }
+        catch (e) { toast(e.message, "error"); }
+      } }, icon("trash"), "Remove") },
+    ] });
+    const loadSubs = () => api.get(`/api/copy/groups/${g.id}/subscribers`).then((list) => subsTable.update(list)).catch(() => subsTable.update([]));
+    loadSubs();
+    const shareBtn = h("button", { type: "button", class: "btn btn-primary", onClick: async () => {
+      shareBtn.disabled = true;
+      try {
+        const updated = await api.put(`/api/copy/groups/${g.id}/sharing`, {
+          enabled: pubSw.checked, title: titleInp.value.trim(), description: descTa.value.trim(), visibility: visSel.value,
+          allowed_user_ids: [...userList.querySelectorAll(".allow-user:checked")].map((c) => Number(c.value)),
+        });
+        g = { ...g, sharing: updated.sharing };
+        toast(pubSw.checked ? "Published on the marketplace" : "Sharing saved", "success");
+        reload();
+      } catch (e) { toast(e.message, "error"); } finally { shareBtn.disabled = false; }
+    } }, icon("share"), "Save sharing");
+    sharingPane = h("div", null,
+      h("h3", null, "Marketplace"),
+      h("label", { class: "switch-row" }, h("span", null, "Publish this leader on the marketplace", h("small", null, "Other users can follow with their own accounts — mirrored by this group, on their logins, under their trading switch and risk locks. They never see your accounts; you never see theirs (followers appear as “subscriber #n”). Unpublishing removes their accounts from the mirror.")), pubSw),
+      h("div", { class: "grid grid-2", style: "margin-top:14px" },
+        h("div", { class: "field" }, h("label", null, "Title shown to followers"), titleInp),
+        h("div", { class: "field" }, h("label", null, "Visibility"), visSel)),
+      h("div", { class: "field" }, h("label", null, "Description"), descTa),
+      userBox,
+      h("div", { class: "form-actions" }, shareBtn),
+      h("h3", null, "Followers from the marketplace"), subsTable.el);
+  }
+
   let timer = null;
   if (!isNew) {
     timer = setInterval(async () => {
@@ -235,6 +291,7 @@ function groupDrawer(group, { reload, onClose = null }) {
       h("div", { class: "callout", style: "margin-top:10px" }, "Positions the leader already holds when the group starts are not copied (baseline). Mirroring of such a contract begins once the leader is flat again — or right away with Sync now."),
       h("h3", null, "Live"),
       liveBox, actionRow,
+      sharingPane,
     ],
     foot: [saveBtn, h("button", { type: "button", class: "btn btn-ghost", onClick: () => closeDrawer() }, "Close"), h("span", { style: "flex:1" }), delBtn],
   });
@@ -255,7 +312,8 @@ export default {
         { label: "Name", render: (g) => h("span", { class: "wh-name" }, g.name) },
         { label: "Leader", render: (g) => h("code", null, g.leader && g.leader.spec ? maskAccount(g.leader.spec) : "—") },
         { label: "Symbols", render: (g) => (g.symbols || []).length ? g.symbols.join(", ") : h("span", { class: "muted" }, "all") },
-        { label: "Followers", className: "num", render: (g) => String((g.followers || []).filter((f) => f.enabled).length) },
+        { label: "Followers", className: "num", render: (g) => [String((g.followers || []).filter((f) => f.enabled).length), g.subscriber_count ? h("small", { class: "muted" }, ` +${g.subscriber_count} mkt`) : null] },
+        { label: "Shared", render: (g) => (g.sharing && g.sharing.enabled) ? tag(`published · ${g.subscriber_count || 0}`, "accent") : h("span", { class: "muted" }, "—") },
         { label: "Feed", render: feedTag },
         { label: "Latency", className: "num", render: (g) => latencyText(g.status) },
         { label: "Note", render: (g) => { const s = g.status || {}; const t = s.pause_reason || s.error || ""; return h("span", { class: "muted cp-note", title: t }, t); } },
@@ -275,6 +333,37 @@ export default {
         { label: "Latency", className: "num", render: (e) => e.latency_ms != null ? `${e.latency_ms} ms` : "—" },
       ],
     });
+
+    // --- Following: leaders this workspace follows through the marketplace
+    const following = dataTable({
+      compact: true,
+      empty: "You follow no leader from the marketplace. Marketplace → Follow.",
+      columns: [
+        { label: "On", render: (f) => h("input", { type: "checkbox", class: "switch", checked: !!f.enabled, title: "Enable / disable", onChange: async (e) => {
+          try { await api.put(`/api/subscriptions/${f.sub_id}`, { enabled: e.target.checked }); toast(e.target.checked ? "Following enabled" : "Following disabled", "success"); loadFollowing(); }
+          catch (err) { e.target.checked = !e.target.checked; toast(err.message, "error"); }
+        } }) },
+        { label: "Leader", render: (f) => [h("span", { class: "wh-name" }, f.title), h("small", { class: "muted", style: "display:block" }, f.publisher_email)] },
+        { label: "Status", render: (f) => !f.published ? tag("unpublished", "warn") : !f.enabled ? tag("off", "off") : f.paused ? tag("paused", "warn") : f.running && f.feed_ok ? tag("live", "on") : f.running ? tag("feed lost", "off") : tag("group off", "warn") },
+        { label: "My accounts", render: (f) => h("div", null, (f.followers || []).length ? f.followers.map((a) => h("div", { class: "cp-pos" }, h("code", null, maskAccount(a.spec)),
+          a.error ? h("span", { class: "neg" }, a.error) : null,
+          ...(a.positions || []).map((p) => h("span", null, `${p.symbol} target ${signed(p.target)} · `, h("span", { class: p.actual === p.target ? "pos" : "neg" }, `actual ${signed(p.actual)}`), p.baseline ? " (baseline)" : "")),
+          !(a.positions || []).length && !a.error ? h("span", { class: "muted" }, "flat") : null)) : (f.accounts || []).map((a) => h("code", null, maskAccount(a.spec)))) },
+        { label: "Leader positions", render: (f) => (f.leader_positions || []).length ? f.leader_positions.map((p) => h("div", null, `${p.symbol} ${signed(p.net)}`)) : h("span", { class: "muted" }, "flat") },
+        { label: "Latency", className: "num", render: (f) => f.latency_ms != null ? `${f.latency_ms} ms` : "—" },
+        { label: "", render: (f) => h("button", { type: "button", class: "btn btn-ghost btn-sm", onClick: () => openCopySubscriptionDrawer({ publisher_area_id: f.publisher_area_id, group_id: f.group_id, title: f.title, publisher_email: f.publisher_email, symbols: f.symbols,
+          subscription: { id: f.sub_id, enabled: f.enabled, accounts: f.accounts } }, loadFollowing) }, "Manage", icon("chevron")) },
+      ],
+    });
+    let lastFollowingJson = "";
+    async function loadFollowing() {
+      try {
+        const fresh = await api.get("/api/copy/following");
+        const json = JSON.stringify(fresh);
+        if (json !== lastFollowingJson) { lastFollowingJson = json; following.update(fresh); }
+      } catch { /* transient */ }
+    }
+    const followingCard = card({ title: "Following (marketplace)", hint: "Leaders you follow with your own accounts. The mirror runs in the leader's workspace; your Trading switch, risk locks and logs apply to your accounts." }, following.el);
 
     let lastGroupsJson = "", lastEventsJson = "", outage = false;
     async function load() {
@@ -306,6 +395,7 @@ export default {
         h("button", { class: "btn", onClick: () => { load(); loadEvents(); } }, icon("refresh"), "Refresh"), addBtn,
       ]),
       card({ title: "Copy groups" }, table.el),
+      followingCard,
       card({ title: "Event log", hint: "Last 80 copy events (kept for 7 days): mirrored orders with their latency, rejects, drift corrections, feed changes." }, events.el),
     );
     let leaving = false, openId = null;
@@ -322,10 +412,11 @@ export default {
       if (!store.get("settings")) await actions.loadSettings().catch(() => {});
       await load();
       await loadEvents();
+      await loadFollowing();
       const want = (store.get("route") || {}).params?.id || (params && params.id);   // the deep link current now
       if (want && !leaving) openFor(want);
     })();
-    const timer = setInterval(() => { load(); loadEvents(); }, 5000);
+    const timer = setInterval(() => { load(); loadEvents(); loadFollowing(); }, 5000);
     return () => { leaving = true; clearInterval(timer); unsub(); openId = null; closeDrawer(); boot.catch(() => {}); };
   },
 };

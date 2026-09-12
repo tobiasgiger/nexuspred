@@ -4,6 +4,20 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.56
+- **Copy groups on the marketplace.** A copy group can be published like a webhook (drawer
+  → *Marketplace*: title, description, visibility). Other users see it on the Marketplace
+  page and **follow** it with their own accounts and sizing (multiplier / fixed / max /
+  direction). The mirror keeps running in the leader's workspace, but every follower account
+  trades on its owner's login, under the owner's Trading switch, risk locks, order log and
+  alerts; the copy events land in both workspaces. Privacy both ways: followers never see
+  the leader's accounts, the leader sees followers as *subscriber #n* and their e-mail in
+  the follower list (with a Remove button). Subscribers get a *Following* card on the Copy
+  Trading page with the live picture of their accounts, an on/off switch and Manage.
+  Unpublishing or unsubscribing removes the accounts from the mirror without closing
+  positions. An account may follow one leader only (own groups and subscriptions checked).
+- **Rithmic analysis** (no code): `docs/RITHMIC.md` — what a second broker would take.
+
 ## 5.0.0-alpha.55
 - **Economic calendar and news lock.** New **Settings → News & Calendar**: the weekly
   ForexFactory calendar (no key needed, refreshed every six hours) with the events that

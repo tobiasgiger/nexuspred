@@ -205,6 +205,154 @@ def parse_frames(text: str) -> list[dict[str, Any]]:
 
 
 # ----------------------------------------------------------------- runner
+# ------------------------------------------------------------ marketplace
+def sharing_of(g: dict[str, Any]) -> dict[str, Any]:
+    from . import marketplace
+    return marketplace.sharing_of(g)
+
+
+def public_view(g: dict[str, Any], area_id: int, email: Optional[str] = None) -> dict[str, Any]:
+    """What a subscriber may see of a published group: no accounts, no logins."""
+    sh = sharing_of(g)
+    lead_idx = int((g.get("leader") or {}).get("token_idx") or 0)
+    tokens = config.load_settings(area_id=area_id).get("token_accounts") or []
+    env = str(tokens[lead_idx].get("environment") or "demo") if 0 <= lead_idx < len(tokens) else "demo"
+    r = _runners.get((area_id, g["id"]))
+    return {"kind": "copy", "publisher_area_id": area_id, "group_id": g["id"],
+            "title": sh["title"] or g.get("name") or "Copy group", "description": sh["description"], "visibility": sh["visibility"],
+            "publisher_email": email if email is not None else db.area_owner_email(area_id),
+            "symbols": list(g.get("symbols") or []), "environment": env, "copy_orders": bool(g.get("copy_orders")),
+            "enabled": bool(g.get("enabled")), "running": bool(r and r.tasks), "feed_ok": bool(r and r.feed_ok), "paused": bool(r and r.paused),
+            "followers_count": len(g.get("followers") or []) + len(r.external if r else external_followers(area_id, g["id"]))}
+
+
+def published_groups(*, user_id: Optional[int] = None, exclude_area: Optional[int] = None) -> list[dict[str, Any]]:
+    from . import marketplace
+    out = []
+    for aid in db.all_area_ids():
+        if exclude_area is not None and aid == exclude_area:
+            continue
+        email = None
+        for g in load_groups(aid):
+            sh = sharing_of(g)
+            if not sh["enabled"] or (user_id is not None and not marketplace.visible_to(sh, user_id)):
+                continue
+            if email is None:
+                email = db.area_owner_email(aid) or ""
+            out.append(public_view(g, aid, email))
+    return out
+
+
+def find_published(publisher_area_id: int, group_id: str) -> tuple[Optional[dict[str, Any]], dict[str, Any]]:
+    for g in load_groups(publisher_area_id):
+        if g.get("id") == group_id:
+            sh = sharing_of(g)
+            return (g, sh) if sh["enabled"] else (None, {})
+    return None, {}
+
+
+def clean_subscriber_accounts(raw: Any, area_id: int, *, exclude_sub_id: Optional[int] = None) -> list[dict[str, Any]]:
+    """A subscriber's follower accounts (their own logins, resolved by login id),
+    validated: discovered accounts only, no account that already follows a
+    leader through an own group or another subscription. Raises ValueError."""
+    from .routers.accounts import trade_accounts_overview
+    with context.use_area(area_id):
+        known = trade_accounts_overview()
+        s = config.load_settings()
+    by_key = {(str(a.get("lid") or ""), str(a["spec"])): a for a in known}
+    by_spec = {str(a["spec"]): a for a in known}
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for a in raw or []:
+        if not isinstance(a, dict) or not a.get("spec"):
+            continue
+        lid = str(a.get("lid") or "")
+        acct = by_key.get((lid, str(a["spec"]))) if lid else by_spec.get(str(a["spec"]))
+        if acct is None:
+            raise ValueError(f"{a['spec']} is not one of your discovered trade accounts")
+        f = normalize_follower({**a, "token_idx": acct["token_idx"], "lid": acct.get("lid") or "", "account_id": acct.get("id") or 0})
+        if f["spec"] in seen:
+            raise ValueError(f"{f['spec']} is listed twice")
+        seen.add(f["spec"])
+        out.append(f)
+    taken_own = {str(f["spec"]) for g in load_groups(area_id) for f in g.get("followers") or [] if f.get("enabled", True)}
+    taken_own |= {str((g.get("leader") or {}).get("spec") or "") for g in load_groups(area_id) if g.get("enabled")}
+    taken_subs = {str(a["spec"]) for sub in db.list_subscriptions(area_id) if sub["webhook_id"].startswith("copy:") and sub["id"] != exclude_sub_id
+                  for a in sub.get("accounts") or [] if isinstance(a, dict) and a.get("enabled", True)}
+    for f in out:
+        if f["enabled"] and f["spec"] in taken_own:
+            raise ValueError(f"{f['spec']} already follows a leader in one of your own copy groups (or is a leader) — an account can follow one leader only")
+        if f["enabled"] and f["spec"] in taken_subs:
+            raise ValueError(f"{f['spec']} already follows another copy-trading subscription")
+    return out
+
+
+def following_status(area_id: int) -> list[dict[str, Any]]:
+    """The subscriber's view: every copy subscription of this workspace with the
+    live picture of *their* accounts (never the leader's account details)."""
+    out = []
+    for sub in db.list_subscriptions(area_id):
+        if not sub["webhook_id"].startswith("copy:"):
+            continue
+        gid = sub["webhook_id"][5:]
+        g, sh = find_published(sub["publisher_area_id"], gid)
+        r = _runners.get((sub["publisher_area_id"], gid)) if g else None
+        st = r.status() if r else None
+        mine = {str(a.get("spec")) for a in sub.get("accounts") or [] if isinstance(a, dict)}
+        out.append({"sub_id": sub["id"], "publisher_area_id": sub["publisher_area_id"], "group_id": gid,
+                    "enabled": sub["enabled"], "accounts": sub.get("accounts") or [], "created_at": sub["created_at"],
+                    "published": g is not None, "title": (sh.get("title") or (g or {}).get("name") or "Copy group") if g else "(no longer published)",
+                    "publisher_email": db.area_owner_email(sub["publisher_area_id"]) or "", "symbols": list((g or {}).get("symbols") or []),
+                    "running": bool(st and st["running"]), "feed_ok": bool(st and st["feed_ok"]), "paused": bool(st and st["paused"]),
+                    "pause_reason": (st or {}).get("pause_reason", ""), "latency_ms": (st or {}).get("latency_ms"),
+                    "leader_positions": (st or {}).get("leader_positions", []),
+                    "followers": [f for f in (st or {}).get("followers", []) if f.get("area_id") == area_id and f["spec"] in mine]})
+    return out
+
+
+def masked_status(st: dict[str, Any]) -> dict[str, Any]:
+    """A group's status for the publisher: subscribers' accounts are never shown."""
+    followers = []
+    for f in st.get("followers", []):
+        if f.get("external"):
+            followers.append({**f, "spec": f"subscriber #{f.get('sub_id', '?')}", "orders": [{**o} for o in f.get("orders", [])]})
+        else:
+            followers.append(f)
+    return {**st, "followers": followers}
+
+
+def external_followers(area_id: int, group_id: str) -> list[dict[str, Any]]:
+    """Followers that subscribed to this group on the marketplace: every enabled
+    account of every enabled subscription, stamped with the subscriber's area
+    (their logins, trading switch, risk locks, logs) and subscription id."""
+    out: list[dict[str, Any]] = []
+    if find_published(area_id, group_id)[0] is None:
+        return out                                   # unpublished: subscribers' accounts leave the mirror
+    for sub in db.active_subscriptions(area_id, f"copy:{group_id}"):
+        for a in sub.get("accounts") or []:
+            if not isinstance(a, dict) or not a.get("enabled", True):
+                continue
+            try:
+                f = normalize_follower(a)
+            except (TypeError, ValueError, KeyError):
+                continue
+            out.append({**f, "area_id": int(sub["area_id"]), "sub_id": int(sub["id"]), "external": True})
+    return out
+
+
+def effective_followers(area_id: int, group: dict[str, Any], external: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Own followers plus external ones — an external account that is the leader
+    or already an own follower is left out (one mirror per account)."""
+    own = [dict(f) for f in group.get("followers") or []]
+    taken = {str(f["spec"]) for f in own} | {str((group.get("leader") or {}).get("spec") or "")}
+    for f in external:
+        if str(f["spec"]) in taken:
+            continue
+        taken.add(str(f["spec"]))
+        own.append(dict(f))
+    return own
+
+
 class GroupRunner:
     """Live state and tasks of one enabled copy group."""
 
@@ -212,6 +360,9 @@ class GroupRunner:
         self.area_id = area_id
         self.group = group
         self.id = group["id"]
+        self.external = external_followers(area_id, self.id)         # marketplace subscribers' accounts
+        self.followers = effective_followers(area_id, group, self.external)
+        self._area_by_spec = {str(f["spec"]): int(f.get("area_id") or area_id) for f in self.followers}
         self.tasks: list[asyncio.Task] = []
         self.feed_kind = ""
         self.feed_ok = False
@@ -282,8 +433,12 @@ class GroupRunner:
             self.error = f"account list: {exc}"[:200]
         return 0
 
+    def _area_of(self, f: dict[str, Any]) -> int:
+        """The workspace a follower belongs to (marketplace followers: theirs)."""
+        return int(f.get("area_id") or self.area_id)
+
     def _executor(self, f: dict[str, Any]) -> Optional[AccountExecutor]:
-        mgr = tradovate.manager_for(self.area_id)
+        mgr = tradovate.manager_for(self._area_of(f))
         if f.get("lid") and hasattr(mgr, "session_for"):
             return mgr.executor_for(int(f["token_idx"]), str(f["spec"]), 1, lid=f["lid"])
         return mgr.executor_for(int(f["token_idx"]), str(f["spec"]), 1)
@@ -307,11 +462,12 @@ class GroupRunner:
         self.contract_names[cid] = name
         return name
 
-    def _alert(self, title: str, message: str, *, email: bool = False) -> None:
-        """Alerts never hold a follower lock or the socket loop: fire and forget."""
+    def _alert(self, title: str, message: str, *, email: bool = False, area_id: Optional[int] = None) -> None:
+        """Alerts never hold a follower lock or the socket loop: fire and forget.
+        ``area_id`` routes a follower's problem to the follower's own workspace."""
         async def run() -> None:
             try:
-                with context.use_area(self.area_id):
+                with context.use_area(area_id if area_id is not None else self.area_id):
                     await alerts.copy_alert(title, message, email=email)
             except Exception:  # noqa: BLE001
                 pass
@@ -319,9 +475,16 @@ class GroupRunner:
 
     def _record(self, kind: str, *, follower: str = "", symbol: str = "", detail: str = "",
                 latency_ms: Optional[int] = None) -> None:
-        db.insert_copy_event(self.area_id, {"group_id": self.id, "kind": kind, "leader": self.group["leader"]["spec"],
-                                            "follower": follower, "symbol": symbol, "detail": detail[:300],
-                                            "latency_ms": latency_ms})
+        rec = {"group_id": self.id, "kind": kind, "leader": self.group["leader"]["spec"],
+               "follower": follower, "symbol": symbol, "detail": detail[:300], "latency_ms": latency_ms}
+        farea = self._area_by_spec.get(follower, self.area_id) if follower else self.area_id
+        if farea != self.area_id:
+            # a marketplace follower's event lives in the follower's workspace, with the
+            # leader account hidden; the publisher's log keeps it without the account
+            db.insert_copy_event(farea, {**rec, "leader": "leader"})
+            db.insert_copy_event(self.area_id, {**rec, "follower": f"subscriber #{next((f.get('sub_id') for f in self.followers if f['spec'] == follower), '?')}"})
+            return
+        db.insert_copy_event(self.area_id, rec)
 
     # ---- lifecycle
     def start(self) -> None:
@@ -356,11 +519,11 @@ class GroupRunner:
         # 0.0 = never seeded: on a freshly booted host monotonic() itself can be < FOLLOWER_RESEED_S
         if not force and self._followers_seeded_at and time.monotonic() - self._followers_seeded_at < FOLLOWER_RESEED_S:
             return
-        by_session: dict[int, list[dict[str, Any]]] = {}
-        for f in self.group["followers"]:
-            by_session.setdefault(int(f["token_idx"]), []).append(f)
-        sessions = tradovate.manager_for(self.area_id).all()
-        for idx, fs in by_session.items():
+        by_session: dict[tuple[int, int], list[dict[str, Any]]] = {}
+        for f in self.followers:
+            by_session.setdefault((self._area_of(f), int(f["token_idx"])), []).append(f)
+        for (farea, idx), fs in by_session.items():
+            sessions = tradovate.manager_for(farea).all()
             if not (0 <= idx < len(sessions)):
                 continue
             s = sessions[idx]
@@ -793,8 +956,8 @@ class GroupRunner:
         unit = self.unit.get(cid) or abs(net) or 1
         copy_adds = bool(self.group.get("copy_adds", True))
         results = await asyncio.gather(*(self._mirror_follower(f, cid, name, net, unit, copy_adds, reason, t0)
-                                         for f in self.group["followers"] if f.get("enabled", True)), return_exceptions=True)
-        for f, r in zip([f for f in self.group["followers"] if f.get("enabled", True)], results):
+                                         for f in self.followers if f.get("enabled", True)), return_exceptions=True)
+        for f, r in zip([f for f in self.followers if f.get("enabled", True)], results):
             if isinstance(r, BaseException) and not isinstance(r, asyncio.CancelledError):
                 self.follower_err[f["spec"]] = f"{type(r).__name__}: {r}"[:200]
                 self._record("reject", follower=f["spec"], symbol=name, detail=f"{reason}: {type(r).__name__}: {r}")
@@ -810,6 +973,10 @@ class GroupRunner:
                 self.follower_err[spec] = "login disabled or account gone"
                 self._record("reject", follower=spec, symbol=name, detail="login disabled or account gone")
                 return
+            farea = self._area_of(f)
+            if farea != self.area_id and not config.load_settings(area_id=farea).get("trading_enabled"):
+                self._record("skipped", follower=spec, symbol=name, detail=f"{reason}: trading switch is off in the follower's workspace")
+                return
             if self.orders.touched_recently(spec, cid):
                 # a twin on this contract may just have filled: cancel what is
                 # still working and take the broker's position, not our memory
@@ -821,7 +988,7 @@ class GroupRunner:
             delta = target - have
             if delta == 0:
                 return
-            with context.use_area(self.area_id):
+            with context.use_area(farea):
                 try:
                     res = await ex.place_order(symbol=name, action="Buy" if delta > 0 else "Sell",
                                                qty=abs(delta), order_type="Market")
@@ -832,7 +999,7 @@ class GroupRunner:
                     self.follower_err[spec] = err[:200]
                     self.follower_err_at[spec] = time.monotonic()
                     self._record("reject", follower=spec, symbol=name, detail=f"{reason}: {err}")
-                    self._alert(f"Copy reject: {spec}", f"{name} {reason}: {err}")
+                    self._alert(f"Copy reject: {spec}", f"{name} {reason}: {err}", area_id=farea)
                     return
             if not isinstance(res, dict) or res.get("status") != "submitted":
                 raw = res.get("raw") if isinstance(res, dict) else None
@@ -840,7 +1007,7 @@ class GroupRunner:
                 self.follower_err[spec] = err[:200]
                 self.follower_err_at[spec] = time.monotonic()
                 self._record("reject", follower=spec, symbol=name, detail=f"{reason}: {err}")
-                self._alert(f"Copy reject: {spec}", f"{name} {reason}: {err}")
+                self._alert(f"Copy reject: {spec}", f"{name} {reason}: {err}", area_id=farea)
                 return
             self.follower_pos[(spec, cid)] = target
             self.last_order_at[spec] = time.monotonic()
@@ -889,12 +1056,12 @@ class GroupRunner:
                 fixes += await self.orders.reconcile(session, self.leader_account_id)
             except Exception as exc:  # noqa: BLE001
                 self.orders.error = f"reconcile: {exc}"[:200]
-        by_session: dict[int, list[dict[str, Any]]] = {}
-        for f in self.group["followers"]:
+        by_session: dict[tuple[int, int], list[dict[str, Any]]] = {}
+        for f in self.followers:
             if f.get("enabled", True):
-                by_session.setdefault(int(f["token_idx"]), []).append(f)
-        sessions = tradovate.manager_for(self.area_id).all()
-        for idx, fs in by_session.items():
+                by_session.setdefault((self._area_of(f), int(f["token_idx"])), []).append(f)
+        for (farea, idx), fs in by_session.items():
+            sessions = tradovate.manager_for(farea).all()
             if not (0 <= idx < len(sessions)):
                 continue
             s = sessions[idx]
@@ -919,7 +1086,7 @@ class GroupRunner:
                 spec = f["spec"]
                 if time.monotonic() - self.follower_err_at.get(spec, -1e9) < REJECT_HOLDOFF_S:
                     continue                                    # just rejected: don't hammer the broker
-                if risk.is_locked(self.area_id, spec):
+                if risk.is_locked(farea, spec):
                     continue                                    # the risk guard closed this account for today
                 for cid, net in list(self.leader_net.items()):
                     if cid in self.baseline or not self._wanted(cid):
@@ -974,7 +1141,7 @@ class GroupRunner:
         # touched — never a follower's own, unrelated position
         contracts = {cid for cid, n in self.leader_net.items() if cid not in self.baseline}
         contracts |= {k[1] for k in self.orders.touched if k[1]} | {t["contract_id"] for t in self.orders.twins.values()}
-        for f in self.group["followers"]:
+        for f in self.followers:
             if not f.get("enabled", True):
                 continue
             ex = self._executor(f)
@@ -990,7 +1157,7 @@ class GroupRunner:
                         self.follower_pos[key] = 0
                         continue
                     name = self.contract_names.get(cid, str(cid))
-                    with context.use_area(self.area_id):
+                    with context.use_area(self._area_of(f)):
                         try:
                             res = await ex.place_order(symbol=name, action="Sell" if have > 0 else "Buy", qty=abs(have), order_type="Market")
                         except asyncio.CancelledError:
@@ -1029,7 +1196,7 @@ class GroupRunner:
 
     def status(self) -> dict[str, Any]:
         followers = []
-        for f in self.group["followers"]:
+        for f in self.followers:
             rows = []
             for cid, net in self.leader_net.items():
                 if not self._wanted(cid):
@@ -1039,7 +1206,8 @@ class GroupRunner:
                 have = self.follower_pos.get((f["spec"], cid), 0)
                 rows.append({"symbol": name, "leader": net, "target": target, "actual": have, "baseline": cid in self.baseline})
             followers.append({"spec": f["spec"], "enabled": f.get("enabled", True), "error": self.follower_err.get(f["spec"], ""),
-                              "positions": rows, "orders": self.orders.status(f["spec"])})
+                              "positions": rows, "orders": self.orders.status(f["spec"]),
+                              "area_id": self._area_of(f), "external": bool(f.get("external")), "sub_id": f.get("sub_id")})
         return {"id": self.id, "running": bool(self.tasks), "feed": self.feed_kind, "feed_ok": self.feed_ok,
                 "ws_ok": self.ws_ok, "ws_error": self.ws_error,
                 "poll_interval": self.poll_interval, "throttled": time.monotonic() < self.throttled_until,
@@ -1068,7 +1236,8 @@ async def sync_area(area_id: int) -> None:
         if key[0] != area_id:
             continue
         g = groups.get(key[1])
-        if g is None or not g.get("enabled") or json.dumps(g, sort_keys=True) != json.dumps(r.group, sort_keys=True):
+        if g is None or not g.get("enabled") or json.dumps(g, sort_keys=True) != json.dumps(r.group, sort_keys=True) \
+                or json.dumps(external_followers(area_id, key[1]), sort_keys=True) != json.dumps(r.external, sort_keys=True):
             await r.stop()
             _runners.pop(key, None)
     for gid, g in groups.items():
@@ -1083,7 +1252,7 @@ def runner(area_id: int, group_id: str) -> Optional[GroupRunner]:
 
 
 def statuses(area_id: int) -> dict[str, dict[str, Any]]:
-    return {gid: r.status() for (aid, gid), r in _runners.items() if aid == area_id}
+    return {gid: masked_status(r.status()) for (aid, gid), r in _runners.items() if aid == area_id}
 
 
 _last_loop_error: dict[str, str] = {}

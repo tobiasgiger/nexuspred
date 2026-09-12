@@ -6,14 +6,24 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
-from .. import context, db, marketplace, state
+from .. import context, copy, db, marketplace, state
 
 router = APIRouter(prefix="/api", tags=["marketplace"])
 
 
+def _is_copy(sub: dict[str, Any]) -> bool:
+    return str(sub.get("webhook_id") or "").startswith("copy:")
+
+
 def _enrich(sub: dict[str, Any]) -> dict[str, Any]:
-    """A subscription plus the public view of the webhook it follows (or a
-    'missing' marker when the publisher unpublished/deleted it)."""
+    """A subscription plus the public view of the webhook / copy group it follows
+    (or a 'missing' marker when the publisher unpublished/deleted it)."""
+    if _is_copy(sub):
+        g, sh = copy.find_published(sub["publisher_area_id"], sub["webhook_id"][5:])
+        if g is None:
+            return {**sub, "kind": "copy", "webhook": None, "copy": None, "active": False}
+        view = copy.public_view(g, sub["publisher_area_id"])
+        return {**sub, "kind": "copy", "webhook": None, "copy": view, "active": bool(sub["enabled"] and view["enabled"])}
     wh, sh = marketplace.find_published(sub["publisher_area_id"], sub["webhook_id"])
     if wh is None:
         return {**sub, "webhook": None, "active": False}
@@ -28,15 +38,44 @@ async def api_marketplace(request: Request) -> list[dict[str, Any]]:
     user = request.state.user
     area = context.get_area()
     mine = {(s["publisher_area_id"], s["webhook_id"]): s for s in db.list_subscriptions(area)}
-    items = marketplace.published_webhooks(user_id=user["id"], exclude_area=area)
+    items = [{**it, "kind": "webhook"} for it in marketplace.published_webhooks(user_id=user["id"], exclude_area=area)]
+    items += copy.published_groups(user_id=user["id"], exclude_area=area)
     counts: dict[int, dict[str, int]] = {}
     for it in items:
         pa = it["publisher_area_id"]
         if pa not in counts:
             counts[pa] = db.subscriber_counts(pa)
-        it["subscriber_count"] = counts[pa].get(it["webhook_id"], 0)
-        it["subscription"] = mine.get((pa, it["webhook_id"]))
+        key = it["webhook_id"] if it["kind"] == "webhook" else f"copy:{it['group_id']}"
+        it["subscriber_count"] = counts[pa].get(key, 0)
+        it["subscription"] = mine.get((pa, key))
     return items
+
+
+@router.post("/marketplace/{publisher_area_id}/copy/{group_id}/subscribe")
+async def api_subscribe_copy(request: Request, publisher_area_id: int, group_id: str) -> dict[str, Any]:
+    """Follow a published copy group with your own accounts (your logins, your
+    trading switch, your risk locks). The mirror runs in the publisher's workspace."""
+    user = request.state.user
+    area = context.get_area()
+    if publisher_area_id == area:
+        raise HTTPException(status_code=400, detail="You can't subscribe to your own copy group")
+    g, sh = copy.find_published(publisher_area_id, group_id)
+    if g is None:
+        raise HTTPException(status_code=404, detail="That copy group isn't published")
+    if not marketplace.visible_to(sh, user["id"]):
+        raise HTTPException(status_code=403, detail="That copy group isn't available to your account")
+    body = await request.json()
+    try:
+        accounts = copy.clean_subscriber_accounts(body.get("accounts"), area)
+    except (TypeError, ValueError, KeyError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    enabled = bool(body.get("enabled", True))
+    sub = db.upsert_subscription(area, publisher_area_id, f"copy:{group_id}", accounts, enabled)
+    title = sh.get("title") or g.get("name", "")
+    db.log_action(user["id"], user["email"], "subscribe", title, f"copy · {len([a for a in accounts if a.get('enabled')])} account(s), {'on' if enabled else 'off'}")
+    state.log_event("info", f"Following copy group '{title}' on {len(accounts)} account(s)")
+    await copy.sync_area(publisher_area_id)
+    return _enrich(sub)
 
 
 @router.post("/marketplace/{publisher_area_id}/{webhook_id}/subscribe")
@@ -69,17 +108,28 @@ async def api_subscriptions() -> list[dict[str, Any]]:
 @router.put("/subscriptions/{sub_id}")
 async def api_update_subscription(request: Request, sub_id: int) -> dict[str, Any]:
     body = await request.json()
+    current = db.get_subscription(sub_id, context.get_area())
+    if not current:
+        raise HTTPException(status_code=404, detail="Subscription not found")
     kwargs: dict[str, Any] = {}
     if "enabled" in body:
         kwargs["enabled"] = bool(body["enabled"])
     if "accounts" in body:
-        kwargs["accounts"] = marketplace.clean_accounts(body["accounts"])
+        if _is_copy(current):
+            try:
+                kwargs["accounts"] = copy.clean_subscriber_accounts(body["accounts"], context.get_area(), exclude_sub_id=sub_id)
+            except (TypeError, ValueError, KeyError) as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        else:
+            kwargs["accounts"] = marketplace.clean_accounts(body["accounts"])
     sub = db.update_subscription(sub_id, context.get_area(), **kwargs)
     if not sub:
         raise HTTPException(status_code=404, detail="Subscription not found")
     view = _enrich(sub)
-    state.log_event("info", f"Subscription '{(view.get('webhook') or {}).get('title', sub['webhook_id'])}' "
+    state.log_event("info", f"Subscription '{((view.get('webhook') or view.get('copy')) or {}).get('title', sub['webhook_id'])}' "
                     f"{'enabled' if sub['enabled'] else 'disabled'}")
+    if _is_copy(sub):
+        await copy.sync_area(sub["publisher_area_id"])
     return view
 
 
@@ -89,6 +139,13 @@ async def api_unsubscribe(request: Request, sub_id: int) -> dict[str, Any]:
     sub = db.delete_subscription(sub_id, area_id=context.get_area())
     if not sub:
         raise HTTPException(status_code=404, detail="Subscription not found")
+    if _is_copy(sub):
+        g, sh = copy.find_published(sub["publisher_area_id"], sub["webhook_id"][5:])
+        title = (sh.get("title") or (g or {}).get("name") or sub["webhook_id"]) if g else sub["webhook_id"]
+        db.log_action(user["id"], user["email"], "unsubscribe", title)
+        state.log_event("info", f"Stopped following copy group '{title}' — your positions are not touched")
+        await copy.sync_area(sub["publisher_area_id"])
+        return {"status": "deleted", "id": sub_id}
     wh, sh = marketplace.find_published(sub["publisher_area_id"], sub["webhook_id"])
     title = (sh.get("title") or (wh or {}).get("name") or sub["webhook_id"]) if wh else sub["webhook_id"]
     db.log_action(user["id"], user["email"], "unsubscribe", title)
