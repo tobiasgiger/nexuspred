@@ -420,7 +420,25 @@ def init() -> None:
                 # alpha.78: publisher controls (approval, pause) and subscriber controls
                 c.execute("ALTER TABLE subscriptions ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
                 c.execute("ALTER TABLE subscriptions ADD COLUMN controls TEXT NOT NULL DEFAULT '{}'")
+            c.execute("""CREATE TABLE IF NOT EXISTS payments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    area_id INTEGER NOT NULL,
+                    publisher_area_id INTEGER NOT NULL,
+                    webhook_id TEXT NOT NULL,
+                    stripe_customer TEXT NOT NULL DEFAULT '',
+                    stripe_subscription TEXT NOT NULL DEFAULT '',
+                    checkout_session TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    price_cents INTEGER NOT NULL DEFAULT 0,
+                    currency TEXT NOT NULL DEFAULT 'usd',
+                    current_period_end TEXT NOT NULL DEFAULT '',
+                    trial_end TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(area_id, publisher_area_id, webhook_id)
+                )""")
             for stmt in ("CREATE INDEX IF NOT EXISTS ix_journal_imports_area ON journal_imports(area_id, id)",
+                         "CREATE INDEX IF NOT EXISTS ix_payments_sub ON payments(stripe_subscription)",
                          "CREATE INDEX IF NOT EXISTS ix_signal_log_wh ON signal_log(area_id, webhook_id, id)",
                          "CREATE INDEX IF NOT EXISTS ix_copy_events_ts ON copy_events(ts)",
                          "CREATE INDEX IF NOT EXISTS ix_audit_action ON audit_log(action, id)",

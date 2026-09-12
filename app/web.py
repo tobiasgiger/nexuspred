@@ -19,7 +19,7 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 # Prefixes match whole subtrees; pages match exactly (``/loginx`` is *not* exempt).
 AUTH_EXEMPT_PREFIXES = ("/webhook/", "/static/", "/api/agent/")
 AUTH_EXEMPT_PATHS = frozenset({
-    "/healthz", "/metrics", "/guide", "/favicon.ico", "/sw.js",
+    "/healthz", "/metrics", "/guide", "/favicon.ico", "/sw.js", "/api/payments/webhook",
     "/login", "/logout", "/register", "/setup", "/reset", "/login/2fa",
 })
 # Paths a signed-in user who still has to enrol in two-factor may reach.

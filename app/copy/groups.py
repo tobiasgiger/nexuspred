@@ -165,6 +165,7 @@ def sharing_of(g: dict[str, Any]) -> dict[str, Any]:
 
 def public_view(g: dict[str, Any], area_id: int, email: Optional[str] = None) -> dict[str, Any]:
     """What a subscriber may see of a published group: no accounts, no logins."""
+    from .. import marketplace
     sh = sharing_of(g)
     lead_idx = int((g.get("leader") or {}).get("token_idx") or 0)
     tokens = config.load_settings(area_id=area_id).get("token_accounts") or []
@@ -176,6 +177,7 @@ def public_view(g: dict[str, Any], area_id: int, email: Optional[str] = None) ->
             "symbols": list(g.get("symbols") or []), "environment": env, "copy_orders": bool(g.get("copy_orders")),
             "enabled": bool(g.get("enabled")) and not sh["paused"], "running": bool(r and r.tasks), "feed_ok": bool(r and r.feed_ok), "paused": bool(r and r.paused),
             "publisher_paused": sh["paused"], "approval": sh["approval"], "max_subscribers": sh["max_subscribers"], "tags": sh["tags"], "published_at": sh["published_at"],
+            **marketplace._price_view(sh),
             "followers_count": len(g.get("followers") or []) + len(r.external if r else external_followers(area_id, g["id"]))}
 
 

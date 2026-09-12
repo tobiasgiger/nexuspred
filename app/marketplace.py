@@ -44,6 +44,11 @@ def sharing_of(webhook: dict[str, Any]) -> dict[str, Any]:
         max_subs = max(0, min(MAX_MAX_SUBSCRIBERS, int(s.get("max_subscribers") or 0)))
     except (TypeError, ValueError):
         max_subs = 0
+    try:
+        price = max(0, int(s.get("price_cents") or 0))
+        trial = max(0, int(s.get("trial_days") or 0))
+    except (TypeError, ValueError):
+        price, trial = 0, 0
     return {
         "enabled": bool(s.get("enabled")),
         "title": str(s.get("title") or "").strip(),
@@ -56,6 +61,8 @@ def sharing_of(webhook: dict[str, Any]) -> dict[str, Any]:
         "paused": bool(s.get("paused")),                # forwarding stopped for everyone, listing stays
         "tags": tags[:MAX_TAGS],
         "published_at": str(s.get("published_at") or ""),
+        "price_cents": price,                           # monthly, 0 = free (alpha.79)
+        "trial_days": trial,
     }
 
 
@@ -65,6 +72,11 @@ def normalize_sharing(body: dict[str, Any], current: Optional[dict[str, Any]] = 
     for key in ("enabled", "title", "description", "visibility", "allowed_user_ids", "max_subscribers", "approval", "paused", "tags"):
         if key in body:
             merged[key] = body[key]
+    from . import payments
+    if "price_cents" in body:
+        merged["price_cents"] = payments.normalize_price(body["price_cents"])
+    if "trial_days" in body:
+        merged["trial_days"] = payments.normalize_trial(body["trial_days"])
     if isinstance(merged.get("tags"), str):
         merged["tags"] = [x for x in merged["tags"].split(",")]
     out = sharing_of({"sharing": merged})
@@ -170,7 +182,15 @@ def public_view(webhook: dict[str, Any], publisher_area_id: int,
         "webhook_enabled": bool(webhook.get("enabled")) and not sh["paused"],
         "paused": sh["paused"], "approval": sh["approval"], "max_subscribers": sh["max_subscribers"],
         "tags": sh["tags"], "published_at": sh["published_at"],
+        **_price_view(sh),
     }
+
+
+def _price_view(sh: dict[str, Any]) -> dict[str, Any]:
+    from . import payments
+    paid = payments.is_paid_listing(sh)
+    return {"price_cents": sh["price_cents"] if paid else 0, "trial_days": sh["trial_days"] if paid else 0,
+            "currency": payments.get_config()["currency"] if paid else "", "paid": paid}
 
 
 def published_webhooks(*, user_id: Optional[int] = None,

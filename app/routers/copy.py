@@ -76,7 +76,10 @@ async def api_group_sharing(group_id: str, request: Request) -> dict[str, Any]:
     groups, i = _group_or_404(group_id)
     g = dict(groups[i])
     before = marketplace.sharing_of(g)
-    g["sharing"] = marketplace.normalize_sharing(body, g.get("sharing"))
+    try:
+        g["sharing"] = marketplace.normalize_sharing(body, g.get("sharing"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     groups[i] = g
     copy.save_groups(groups)
     after = g["sharing"]

@@ -4,6 +4,18 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.79
+Marketplace 8 — paid subscriptions (642 tests, 9 new):
+- **Stripe Checkout** for paid listings: operator config under Settings → Payments (admin
+  switch, secret key, webhook signing secret, currency, default trial; secrets encrypted at
+  rest), a monthly price and trial per listing, `unpaid` subscriptions that receive nothing
+  until Stripe confirms, the signature-verified webhook that mirrors `trialing / active /
+  past_due / canceled` onto the subscription (approval still applies after payment), the
+  customer portal, *Pay now* on cards and in the subscription journal, a payments table for
+  admins and publishers. No Stripe SDK: plain HTTPS. Switching the admin switch off makes
+  every listing free.
+- `payments` table (migration); subscription status `unpaid`.
+
 ## 5.0.0-alpha.78
 Marketplace 2 + 3 + 5 + 6 (633 tests, 10 new):
 - **Subscriber controls** per subscription: symbol roots, max contracts per signal and

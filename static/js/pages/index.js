@@ -17,6 +17,7 @@ import news from "./news.js";
 import calendar from "./calendar.js";
 import automations from "./automations.js";
 import subscriptions from "./subscriptions.js";
+import payments from "./payments.js";
 import { general, security, updates, alerts, symbols, account } from "./settings.js";
 
 export const ROUTES = [
@@ -41,6 +42,7 @@ export const ROUTES = [
   { path: "/settings/security", page: security },
   { path: "/settings/account", page: account },
   { path: "/settings/users", page: users },
+  { path: "/settings/payments", page: payments },
   { path: "/settings/agents", page: agents },
   { path: "/settings/news", page: news },
   { path: "/settings/updates", page: updates },

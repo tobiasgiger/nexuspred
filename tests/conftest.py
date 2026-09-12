@@ -27,6 +27,7 @@ import pytest  # noqa: E402
 from app import auth, config, context, crypto, db, health, history, http, push, relay, security, signals, state, tradovate, watch  # noqa: E402
 from app import copy as copy_mod  # noqa: E402
 from app import automations, events, metrics, risk, track_record  # noqa: E402
+from app import payments as payments_mod  # noqa: E402
 from app import pnl as pnl_mod  # noqa: E402
 from app import drawdown as drawdown_mod  # noqa: E402
 from app import news as news_mod  # noqa: E402
@@ -78,6 +79,7 @@ def _reset_runtime() -> None:
     risk.reset()
     automations.reset()
     track_record.reset()
+    payments_mod.reset()
     metrics.reset()
     events.reset()
     pnl_mod.reset()

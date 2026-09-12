@@ -274,7 +274,7 @@ async def security_middleware(request: Request, call_next: Callable[..., Any]) -
     """CSRF origin check → rate limits → handler → security headers."""
     request.state.csp_nonce = nonce = secrets.token_urlsafe(16)
     path = request.url.path
-    if not path.startswith("/webhook/") and cross_site(request):
+    if not (path.startswith("/webhook/") or path == "/api/payments/webhook") and cross_site(request):
         resp: Response = JSONResponse({"detail": "Cross-site request rejected"}, status_code=403)
     else:
         resp = _rate_limited(request) or await call_next(request)

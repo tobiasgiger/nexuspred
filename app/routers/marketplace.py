@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
-from .. import context, copy, db, marketplace, state, track_record
+from .. import context, copy, db, marketplace, payments, state, track_record
 
 router = APIRouter(prefix="/api", tags=["marketplace"])
 
@@ -39,6 +39,8 @@ def _admission(publisher_area_id: int, key: str, sh: dict[str, Any], area: int) 
     cap = int(sh.get("max_subscribers") or 0)
     if cap and db.subscriber_counts(publisher_area_id).get(key, 0) >= cap:
         raise HTTPException(status_code=409, detail="This publisher has reached the subscriber limit")
+    if payments.is_paid_listing(sh) and not payments.has_paid(area, publisher_area_id, key):
+        return "unpaid"
     return "pending" if sh.get("approval") else "active"
 
 

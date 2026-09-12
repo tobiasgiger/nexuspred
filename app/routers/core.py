@@ -9,7 +9,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 
-from .. import alerts, config, context, db, exposure, news, pnl, rollover, security, settings_schema, signals, state, tradovate, watchdog
+from .. import alerts, config, context, db, exposure, news, payments, pnl, rollover, security, settings_schema, signals, state, tradovate, watchdog
 from ..web import BASE_DIR, render
 from .accounts import trade_accounts_overview
 
@@ -59,6 +59,7 @@ async def api_status() -> dict[str, Any]:
         "pnl": state.pnl(),
         "news_lock": news.status(),
         "heartbeat": watchdog.status(context.get_area()),
+        "payments": {"enabled": payments.configured(), "currency": payments.get_config()["currency"]},
     }
 
 

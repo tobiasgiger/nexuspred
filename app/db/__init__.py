@@ -6,7 +6,7 @@ generation) lives in ``core`` and is reached through its functions
 (``mark_uninitialized``, ``user_count``, ``all_area_ids``, ``areas_generation``)."""
 from __future__ import annotations
 
-from . import core, users, areas, marketplace, history, copytrade, journal, agents, push, audit  # noqa: F401
+from . import core, users, areas, marketplace, history, copytrade, journal, agents, push, audit, payments  # noqa: F401
 from .core import (  # noqa: F401
     ROOT_DIR,
     DATA_DIR,
@@ -179,4 +179,11 @@ from .audit import (  # noqa: F401
     log_action,
     LOGIN_ACTIONS,
     list_audit,
+)
+from .payments import (  # noqa: E402
+    upsert_payment,
+    get_payment,
+    payment_by,
+    update_payment,
+    list_payments,
 )

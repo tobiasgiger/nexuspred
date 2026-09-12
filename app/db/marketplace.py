@@ -26,7 +26,7 @@ def _row_to_sub(r: sqlite3.Row) -> dict[str, Any]:
             "created_at": r["created_at"], "updated_at": r["updated_at"]}
 
 
-SUB_STATUSES = ("active", "pending", "paused")
+SUB_STATUSES = ("active", "pending", "paused", "unpaid")
 
 
 def upsert_subscription(area_id: int, publisher_area_id: int, webhook_id: str,

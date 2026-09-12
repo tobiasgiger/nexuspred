@@ -198,7 +198,10 @@ async def api_update_sharing(webhook_id: str, request: Request) -> dict[str, Any
         wh["sharing"] = marketplace.normalize_sharing(body, wh.get("sharing"))
         webhooks[i] = wh
         return wh
-    wh = _edit_webhook(webhook_id, apply)
+    try:
+        wh = _edit_webhook(webhook_id, apply)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     before, after = edited["before"], wh["sharing"]
     if before["enabled"] != after["enabled"]:
         db.log_action(user["id"], user["email"], "webhook_share", after["title"] or wh.get("name", ""),

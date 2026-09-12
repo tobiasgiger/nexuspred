@@ -724,6 +724,23 @@ from acceptance to the broker's answer (`signal_log.latency_ms`); the subscripti
 shows p50 / p95 per subscription and the track record shows the publisher's own execution
 latency.
 
+### Paid subscriptions (Stripe)
+
+Settings → Payments (admin) connects the **operator's** Stripe account: a secret (or
+restricted) key, the webhook signing secret, the currency and a default trial. With the
+switch on, a publisher can put a monthly price and a free trial on a listing (Sharing tab).
+A subscriber who subscribes to a paid listing is created as `unpaid` — nothing is forwarded
+— and sent to Stripe Checkout (subscription mode, the trial applied); the webhook
+(`POST /api/payments/webhook`, signature-verified, `checkout.session.completed`,
+`customer.subscription.created / updated / deleted`, `invoice.payment_failed`) flips the
+subscription to `active` (or `pending` when the publisher approves by hand) and back to
+`unpaid` when the Stripe subscription lapses, fails or is cancelled. *Manage billing* opens
+the Stripe customer portal. The admin switch off makes every listing free again. Money
+lands in the operator's Stripe account; settling with publishers happens outside the
+bridge. Stripe is called over plain HTTPS (no SDK); secrets are encrypted at rest.
+Selling trading signals may be regulated where you and your subscribers live — check the
+rules that apply before switching this on.
+
 ## Rollover with confirmation
 
 Dated contracts in the symbol map (`MNQU6`) expire. The daily check flags every mapped
@@ -1045,6 +1062,10 @@ the dashboard **Update** button works.
 | `GET`  | `/api/marketplace/{area}/{webhook_id}/record` | Full track record of a published signal · `…/copy/{group_id}/record` for a copy group · own: `GET /api/webhooks/{id}/record`, `GET /api/copy/groups/{id}/record` |
 | `GET`  | `/api/subscriptions/{id}/journal` | The subscriber's journal of one subscription: signals + outcomes (or copy events) and P&L since subscribing |
 | `PUT`  | `/api/webhooks/{id}/subscribers/{sub_id}` | Publisher sets a subscriber's status: `active` (approve / resume), `paused` · same under `/api/copy/groups/{id}/subscribers/{sub_id}` |
+| `GET/PUT` | `/api/payments/config` | Operator's Stripe connection and the paid-listings switch (admin; secrets masked) |
+| `POST` | `/api/payments/checkout` | Stripe Checkout link for a paid listing (`{publisher_area_id, key}`) · `POST /api/payments/portal` billing portal · `GET /api/payments/mine` |
+| `GET`  | `/api/payments` | Payment records: all (admin) or those of the caller's listings (publisher) |
+| `POST` | `/api/payments/webhook` | Stripe → bridge (public path; `Stripe-Signature` verified) |
 | `GET`  | `/api/scenarios` | List built-in simulator scenarios |
 | `POST` | `/api/simulate` | Run a signal in simulation (no broker) |
 | `GET`  | `/api/simulate/state` | Simulated positions & working orders |

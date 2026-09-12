@@ -7,7 +7,8 @@ import { api } from "../api.js";
 import { fmtSigned } from "../charts.js";
 import { dataTable } from "../components/table.js";
 import { STRATEGY_LABEL } from "../templates.js";
-import { openSubscriptionDrawer, openCopySubscriptionDrawer } from "./marketplace.js";
+import { openSubscriptionDrawer, openCopySubscriptionDrawer, startCheckout } from "./marketplace.js";
+import { store } from "../store.js";
 import { t } from "../i18n.js";
 
 const money = (v) => h("span", { class: `pnl ${Number(v) > 0 ? "pos" : Number(v) < 0 ? "neg" : ""}` }, fmtSigned(v, 2));
@@ -92,7 +93,7 @@ export default {
           const manage = () => (isCopy ? openCopySubscriptionDrawer({ ...(s.copy || {}), subscription: s }, load) : openSubscriptionDrawer({ ...(s.webhook || {}), subscription: s }, load));
           list.append(h("div", { class: "card mk-card" },
             h("div", { class: "mk-title" }, h("strong", null, view.title), isCopy ? tag("copy trading", "accent") : tag(STRATEGY_LABEL[view.strategy] || view.strategy || "—", view.strategy),
-              s.status === "pending" ? tag(t("awaiting approval"), "warn") : s.status === "paused" ? tag(t("paused by publisher"), "warn") : !s.active ? tag(t("inactive"), "warn") : tag(t("active"), "on")),
+              s.status === "unpaid" ? tag(t("unpaid"), "off") : s.status === "pending" ? tag(t("awaiting approval"), "warn") : s.status === "paused" ? tag(t("paused by publisher"), "warn") : !s.active ? tag(t("inactive"), "warn") : tag(t("active"), "on")),
             h("div", { class: "mk-meta" }, icon("user"), view.publisher_email || "—", "·", icon("calendar"), t("since {when}", { when: fmtDateTime(s.created_at) }),
               "·", icon("users"), t("{n} account(s)", { n: (s.accounts || []).filter((a) => a.enabled !== false).length })),
             j ? h("div", null,
@@ -107,6 +108,7 @@ export default {
               h("p", { class: "hint", style: "margin:6px 0 0" }, t("P&L = your own journal on the routed accounts since you subscribed (includes anything else those accounts traded)."))) : h("div", { class: "muted" }, t("Journal unavailable")),
             h("div", { class: "mk-foot" }, h("span"),
               h("div", { class: "inline-actions" },
+                s.status === "unpaid" && view.paid ? h("button", { type: "button", class: "btn btn-primary btn-sm", onClick: () => startCheckout({ ...view, kind: s.kind, publisher_area_id: s.publisher_area_id }) }, icon("external"), t("Pay now")) : null,
                 h("button", { type: "button", class: "btn btn-sm", onClick: () => showJournal(s, view) }, icon("logs"), isCopy ? t("Copy events") : t("Signals")),
                 h("button", { type: "button", class: "btn btn-ghost btn-sm", onClick: manage }, t("Manage"), icon("chevron"))))));
         });
@@ -114,6 +116,9 @@ export default {
     }
     root.append(
       pageHead(t("Subscription journal"), t("What each subscription did for you: the signals it delivered and how they ended, or the mirrored copy events, and your P&L on the routed accounts since you subscribed."), [
+        ((store.get("status") || {}).payments || {}).enabled ? h("button", { class: "btn btn-ghost", onClick: async () => {
+          try { const r = await api.post("/api/payments/portal"); window.location.href = r.url; } catch (e) { toast(e.message, "error"); }
+        } }, icon("external"), t("Manage billing")) : null,
         h("button", { class: "btn", onClick: load }, icon("refresh"), t("Refresh")),
       ]),
       status, list, detail);
