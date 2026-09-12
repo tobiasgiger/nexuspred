@@ -11,6 +11,7 @@ import { accountKey, routedAccountsTable } from "../components/accounts.js";
 import { STRATEGY_LABEL } from "../templates.js";
 import { sizingOf } from "../sizing.js";
 import { lineChart, fmtSigned } from "../charts.js";
+import { tradeWindowEditor } from "../components/tradeWindow.js";
 import { recordStrip } from "./subscriptions.js";
 import { t } from "../i18n.js";
 
@@ -27,9 +28,27 @@ export function openSubscriptionDrawer(item, onDone) {
   const enabledSw = h("input", { type: "checkbox", class: "switch", checked: sub ? !!sub.enabled : true });
   const accTable = routedAccountsTable({ known, selected });
   const collect = accTable.collect;
+  // --- subscriber controls (alpha.78)
+  const c = { symbols: [], trade_window: null, max_qty: 0, max_signals_per_day: 0, pause_after_errors: 0, ...((sub && sub.controls) || {}) };
+  const symIn = h("input", { type: "text", value: (c.symbols || []).join(", "), placeholder: t("empty = every symbol the publisher sends"), autocomplete: "off" });
+  const maxQty = h("input", { type: "number", min: 0, max: 1000, step: 1, value: c.max_qty || 0, style: "max-width:140px" });
+  const maxDay = h("input", { type: "number", min: 0, max: 500, step: 1, value: c.max_signals_per_day || 0, style: "max-width:140px" });
+  const pauseN = h("input", { type: "number", min: 0, max: 50, step: 1, value: c.pause_after_errors || 0, style: "max-width:140px" });
+  const win = tradeWindowEditor(c.trade_window, { hint: t("Entries from this publisher only run inside this window. Closes always run.") });
+  const controlsBlock = h("div", null,
+    h("h3", null, t("My limits for this signal")),
+    h("p", { class: "hint" }, t("Your own guard rails on top of the publisher's signal — they never change what the publisher sends.")),
+    h("div", { class: "grid grid-2" },
+      h("div", { class: "field" }, h("label", null, t("Only these symbols (roots)")), symIn),
+      h("div", { class: "field" }, h("label", null, t("Max contracts per signal and account")), maxQty, h("div", { class: "field-hint" }, t("0 = no cap. Caps the sizing above."))),
+      h("div", { class: "field" }, h("label", null, t("Max entries per day")), maxDay, h("div", { class: "field-hint" }, t("0 = unlimited. Counted per UTC day; closes are never blocked."))),
+      h("div", { class: "field" }, h("label", null, t("Switch off after consecutive errors")), pauseN, h("div", { class: "field-hint" }, t("0 = never. The subscription turns itself off and you get an alert.")))),
+    win.el);
+  const collectControls = () => ({ symbols: symIn.value.split(",").map((x) => x.trim()).filter(Boolean), max_qty: Number(maxQty.value) || 0,
+    max_signals_per_day: Number(maxDay.value) || 0, pause_after_errors: Number(pauseN.value) || 0, trade_window: win.collect() });
 
   const saveBtn = h("button", { type: "button", class: "btn btn-primary", onClick: async () => {
-    const body = { enabled: enabledSw.checked, accounts: collect() };
+    const body = { enabled: enabledSw.checked, accounts: collect(), controls: collectControls() };
     if (!body.accounts.length && enabledSw.checked) {
       if (!(await confirmDialog({ title: t("No accounts routed"), body: t("The subscription will be active but trade on no account. Save anyway?"), confirmText: t("Save") }))) return;
     }
@@ -58,6 +77,7 @@ export function openSubscriptionDrawer(item, onDone) {
       h("h3", null, t("Trade on my accounts")),
       h("p", { class: "hint" }, t("Signals execute on every routed account below, in parallel, sized per account (Same 1:1, Multiplier, or Fixed contracts with an optional Max). The publisher never sees your accounts.")),
       accTable.el,
+      controlsBlock,
     ],
     foot: [saveBtn, h("button", { type: "button", class: "btn btn-ghost", onClick: () => closeDrawer() }, t("Close")), h("span", { style: "flex:1" }), unsubBtn],
   });
@@ -175,6 +195,7 @@ export async function openRecordDrawer(item) {
         kv(t("Avg win / loss"), `${fmtSigned(rec.avg_win, 0)} / ${fmtSigned(rec.avg_loss, 0)}`), kv(t("Largest win / loss"), `${fmtSigned(rec.largest_win, 0)} / ${fmtSigned(rec.largest_loss, 0)}`),
         kv(t("Streaks (W / L)"), `${rec.longest_win_streak} / ${rec.longest_loss_streak}`),
         sig ? kv(t("Signals (all / 30 d)"), `${sig.executed} / ${(rec.signals_30d || {}).executed || 0}`) : null,
+        rec.latency ? kv(t("Execution latency p50 / p95"), `${rec.latency.p50} / ${rec.latency.p95} ms`) : null,
         kv(t("First / last trade"), `${rec.first_trade_at ? rec.first_trade_at.slice(0, 10) : "—"} → ${rec.last_trade_at ? rec.last_trade_at.slice(0, 10) : "—"}`)),
       h("h3", null, t("Equity curve")), chart,
       h("h3", null, t("By month")), months.el,
@@ -190,29 +211,67 @@ export default {
   render(root, { navigate }) {
     const grid = h("div", { class: "mk-grid" });
     const status = h("p", { class: "hint" }, t("Loading…"));
+    // --- discovery: search, sort, filters (client-side over the listing)
+    let all = [];
+    const filters = { q: "", sort: "net_30d", kind: "", verified: false, tag: "" };
+    const qIn = h("input", { type: "search", class: "input-sm", placeholder: t("Search title, publisher, tags…"), style: "min-width:220px", onInput: (e) => { filters.q = e.target.value.trim().toLowerCase(); paint(); } });
+    const sortSel = h("select", { class: "input-sm", onChange: (e) => { filters.sort = e.target.value; paint(); } },
+      [["net_30d", t("Best last 30 days")], ["net_pnl", t("Best net P&L")], ["win_rate", t("Highest win rate")], ["trades", t("Most trades")], ["subscribers", t("Most subscribers")], ["newest", t("Newest")]]
+        .map(([v, l]) => h("option", { value: v }, l)));
+    const kindSel = h("select", { class: "input-sm", onChange: (e) => { filters.kind = e.target.value; paint(); } },
+      [["", t("Signals + copy")], ["webhook", t("Signals only")], ["copy", t("Copy trading only")]].map(([v, l]) => h("option", { value: v }, l)));
+    const verifiedBox = h("input", { type: "checkbox", onChange: (e) => { filters.verified = e.target.checked; paint(); } });
+    const bar = h("div", { style: "display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px" }, qIn, sortSel, kindSel,
+      h("label", { class: "check-row", style: "padding:0;border:0" }, verifiedBox, " ", t("broker-verified only")));
+    const recOf = (it) => it.record || {};
+    const matches = (it) => {
+      if (filters.kind && it.kind !== filters.kind) return false;
+      if (filters.verified && !recOf(it).verified) return false;
+      if (filters.tag && !(it.tags || []).includes(filters.tag)) return false;
+      if (filters.q) {
+        const hay = `${it.title} ${it.description || ""} ${it.publisher_email || ""} ${(it.tags || []).join(" ")} ${it.strategy || ""}`.toLowerCase();
+        if (!hay.includes(filters.q)) return false;
+      }
+      return true;
+    };
+    const rank = (it) => {
+      const r = recOf(it);
+      switch (filters.sort) {
+        case "net_pnl": return Number(r.net_pnl) || 0;
+        case "win_rate": return r.trades ? Number(r.win_rate) || 0 : -1;
+        case "trades": return Number(r.trades) || 0;
+        case "subscribers": return Number(it.subscriber_count) || 0;
+        case "newest": return it.published_at || "";
+        default: return r.trades ? Number(r.net_30d) || 0 : -Infinity;
+      }
+    };
 
-    async function load() {
-      try {
-        const items = await api.get("/api/marketplace");
+    function paint() {
         clear(grid);
-        status.textContent = items.length ? "" : "";
+        const items = all.filter(matches).sort((a, b) => (rank(b) > rank(a) ? 1 : rank(b) < rank(a) ? -1 : String(a.title).localeCompare(String(b.title))));
         if (!items.length) {
-          grid.append(h("div", { class: "card", style: "grid-column:1/-1" }, h("div", { class: "empty-state" }, icon("store"), h("div", null, t("No signals are published for your account right now.")))));
+          grid.append(h("div", { class: "card", style: "grid-column:1/-1" }, h("div", { class: "empty-state" }, icon("store"), h("div", null, all.length ? t("Nothing matches your search.") : t("No signals are published for your account right now.")))));
           return;
         }
         for (const it of items) {
           const sub = it.subscription;
           const isCopy = it.kind === "copy";
           const live = isCopy ? (!it.enabled ? tag("group off", "warn") : it.paused ? tag("paused", "warn") : it.running && it.feed_ok ? tag("live", "on") : it.running ? tag("feed lost", "off") : tag("starting", "")) : null;
-          const state = !sub ? tag("not subscribed") : (isCopy ? !it.enabled : !it.webhook_enabled) ? tag("paused by publisher", "warn") : sub.enabled ? tag(isCopy ? t("following · on") : t("subscribed · on"), "on") : tag(isCopy ? t("following · off") : t("subscribed · off"), "off");
+          const full = it.max_subscribers && it.subscriber_count >= it.max_subscribers && !sub;
+          const state = !sub ? (full ? tag(t("full"), "warn") : tag("not subscribed")) : sub.status === "pending" ? tag(t("awaiting approval"), "warn") : sub.status === "paused" ? tag(t("paused by publisher"), "warn")
+            : (isCopy ? !it.enabled : !it.webhook_enabled) ? tag("paused by publisher", "warn") : sub.enabled ? tag(isCopy ? t("following · on") : t("subscribed · on"), "on") : tag(isCopy ? t("following · off") : t("subscribed · off"), "off");
           const open = () => (isCopy ? openCopySubscriptionDrawer(it, load) : openSubscriptionDrawer(it, load));
           grid.append(h("div", { class: "card mk-card" },
             h("div", { class: "mk-title" }, h("strong", null, it.title), isCopy ? tag("copy trading", "accent") : tag(STRATEGY_LABEL[it.strategy] || it.strategy, it.strategy),
               isCopy ? tag((it.environment || "demo").toUpperCase(), it.environment === "live" ? "live" : "demo") : null),
             h("div", { class: "mk-desc" }, it.description || (isCopy ? `Mirrors the leader's positions live${(it.symbols || []).length ? ` (${it.symbols.join(", ")})` : ""}.` : "No description.")),
-            h("div", { class: "mk-meta" }, icon("user"), it.publisher_email || "—", "·", icon("users"), `${it.subscriber_count} ${isCopy ? "follower" : "subscriber"}${it.subscriber_count === 1 ? "" : "s"}`,
+            h("div", { class: "mk-meta" }, icon("user"), it.publisher_email || "—", "·", icon("users"), `${it.subscriber_count}${it.max_subscribers ? `/${it.max_subscribers}` : ""} ${isCopy ? "follower" : "subscriber"}${it.subscriber_count === 1 ? "" : "s"}`,
               live ? ["·", live] : null,
-              it.visibility === "selected" ? ["·", tag("invite-only", "accent")] : null),
+              it.visibility === "selected" ? ["·", tag("invite-only", "accent")] : null,
+              it.approval ? ["·", tag(t("approval"), "")] : null,
+              (isCopy ? it.publisher_paused : it.paused) ? ["·", tag(t("paused"), "warn")] : null,
+              it.published_at ? ["·", t("since {when}", { when: it.published_at.slice(0, 10) })] : null),
+            (it.tags || []).length ? h("div", { class: "chips" }, it.tags.map((tg) => h("span", { class: `chip ${filters.tag === tg ? "active" : ""}`, onClick: () => { filters.tag = filters.tag === tg ? "" : tg; paint(); } }, tg))) : null,
             h("div", { class: "mk-record" }, recordStrip(it.record, { compact: true }),
               h("button", { type: "button", class: "btn btn-ghost btn-sm", onClick: () => openRecordDrawer(it) }, icon("activity"), t("Track record"))),
             h("div", { class: "mk-foot" }, state,
@@ -221,8 +280,14 @@ export default {
                   try { await api.put(`/api/subscriptions/${sub.id}`, { enabled: e.target.checked }); toast(e.target.checked ? t("Subscription enabled") : t("Subscription disabled"), "success"); load(); }
                   catch (err) { e.target.checked = !e.target.checked; toast(err.message, "error"); }
                 } }) : null,
-                h("button", { type: "button", class: `btn btn-sm ${sub ? "" : "btn-primary"}`, onClick: open }, sub ? t("Manage") : isCopy ? t("Follow") : t("Subscribe"))))));
+                h("button", { type: "button", class: `btn btn-sm ${sub ? "" : "btn-primary"}`, disabled: !!full, onClick: open }, sub ? t("Manage") : isCopy ? t("Follow") : t("Subscribe"))))));
         }
+    }
+    async function load() {
+      try {
+        all = await api.get("/api/marketplace");
+        status.textContent = "";
+        paint();
       } catch (e) {
         status.textContent = e.message;
       }
@@ -233,7 +298,7 @@ export default {
         h("button", { class: "btn", onClick: load }, icon("refresh"), t("Refresh")),
         h("button", { class: "btn btn-ghost", onClick: () => navigate("/subscriptions") }, t("Subscription journal"), icon("chevron")),
       ]),
-      status, grid,
+      bar, status, grid,
     );
     if (!(store.get("tradeAccounts") || []).length) actions.loadTradeAccounts();
     load();

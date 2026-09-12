@@ -16,26 +16,57 @@ def _row_to_sub(r: sqlite3.Row) -> dict[str, Any]:
         accounts = json.loads(r["accounts"] or "[]")
     except json.JSONDecodeError:
         accounts = []
+    try:
+        controls = json.loads(r["controls"] or "{}") if "controls" in r.keys() else {}
+    except json.JSONDecodeError:
+        controls = {}
     return {"id": r["id"], "area_id": r["area_id"], "publisher_area_id": r["publisher_area_id"],
             "webhook_id": r["webhook_id"], "enabled": bool(r["enabled"]), "accounts": accounts,
+            "status": (r["status"] if "status" in r.keys() else "active") or "active", "controls": controls if isinstance(controls, dict) else {},
             "created_at": r["created_at"], "updated_at": r["updated_at"]}
 
 
+SUB_STATUSES = ("active", "pending", "paused")
+
+
 def upsert_subscription(area_id: int, publisher_area_id: int, webhook_id: str,
-                        accounts: list[dict[str, Any]], enabled: bool = True) -> dict[str, Any]:
-    """Create or update the subscriber area's subscription to a published webhook."""
+                        accounts: list[dict[str, Any]], enabled: bool = True, *,
+                        controls: Optional[dict[str, Any]] = None, status: Optional[str] = None) -> dict[str, Any]:
+    """Create or update the subscriber area's subscription to a published webhook.
+    ``status`` applies to a *new* row only (an existing row keeps what the
+    publisher set); ``controls`` replaces the subscriber's controls when given."""
     init()
     now = _now()
     with _connect() as c:
-        c.execute(
-            "INSERT INTO subscriptions(area_id,publisher_area_id,webhook_id,enabled,accounts,created_at,updated_at) "
-            "VALUES(?,?,?,?,?,?,?) "
-            "ON CONFLICT(area_id,publisher_area_id,webhook_id) DO UPDATE SET "
-            "enabled=excluded.enabled, accounts=excluded.accounts, updated_at=excluded.updated_at",
-            (area_id, publisher_area_id, webhook_id, 1 if enabled else 0, json.dumps(accounts), now, now),
-        )
         row = c.execute("SELECT * FROM subscriptions WHERE area_id=? AND publisher_area_id=? AND webhook_id=?",
                         (area_id, publisher_area_id, webhook_id)).fetchone()
+        if row is None:
+            c.execute(
+                "INSERT INTO subscriptions(area_id,publisher_area_id,webhook_id,enabled,accounts,created_at,updated_at,status,controls) "
+                "VALUES(?,?,?,?,?,?,?,?,?)",
+                (area_id, publisher_area_id, webhook_id, 1 if enabled else 0, json.dumps(accounts), now, now,
+                 status if status in SUB_STATUSES else "active", json.dumps(controls or {})))
+        else:
+            c.execute("UPDATE subscriptions SET enabled=?, accounts=?, updated_at=?, controls=? WHERE id=?",
+                      (1 if enabled else 0, json.dumps(accounts), now,
+                       json.dumps(controls) if controls is not None else (row["controls"] if "controls" in row.keys() else "{}"), row["id"]))
+        row = c.execute("SELECT * FROM subscriptions WHERE area_id=? AND publisher_area_id=? AND webhook_id=?",
+                        (area_id, publisher_area_id, webhook_id)).fetchone()
+    _subs_changed()
+    return _row_to_sub(row)
+
+
+def set_subscription_status(sub_id: int, publisher_area_id: int, status: str) -> Optional[dict[str, Any]]:
+    """The publisher approves / pauses / resumes one subscriber."""
+    if status not in SUB_STATUSES:
+        raise ValueError(f"status must be one of {', '.join(SUB_STATUSES)}")
+    init()
+    with _connect() as c:
+        row = c.execute("SELECT * FROM subscriptions WHERE id=?", (sub_id,)).fetchone()
+        if not row or row["publisher_area_id"] != publisher_area_id:
+            return None
+        c.execute("UPDATE subscriptions SET status=?, updated_at=? WHERE id=?", (status, _now(), sub_id))
+        row = c.execute("SELECT * FROM subscriptions WHERE id=?", (sub_id,)).fetchone()
     _subs_changed()
     return _row_to_sub(row)
 
@@ -50,16 +81,18 @@ def get_subscription(sub_id: int, area_id: Optional[int] = None) -> Optional[dic
 
 
 def update_subscription(sub_id: int, area_id: int, *, enabled: Optional[bool] = None,
-                        accounts: Optional[list[dict[str, Any]]] = None) -> Optional[dict[str, Any]]:
-    """Update a subscriber's own subscription (enabled flag and/or routed accounts)."""
+                        accounts: Optional[list[dict[str, Any]]] = None,
+                        controls: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
+    """Update a subscriber's own subscription (enabled flag, routed accounts, controls)."""
     cur = get_subscription(sub_id, area_id)
     if not cur:
         return None
     init()
     with _connect() as c:
-        c.execute("UPDATE subscriptions SET enabled=?, accounts=?, updated_at=? WHERE id=?",
+        c.execute("UPDATE subscriptions SET enabled=?, accounts=?, controls=?, updated_at=? WHERE id=?",
                   (1 if (cur["enabled"] if enabled is None else enabled) else 0,
-                   json.dumps(cur["accounts"] if accounts is None else accounts), _now(), sub_id))
+                   json.dumps(cur["accounts"] if accounts is None else accounts),
+                   json.dumps(cur["controls"] if controls is None else controls), _now(), sub_id))
     _subs_changed()
     return get_subscription(sub_id, area_id)
 
@@ -136,7 +169,7 @@ def active_subscriptions(publisher_area_id: int, webhook_id: str) -> list[dict[s
         return [dict(s) for s in cached]
     init()
     with _connect() as c:
-        rows = c.execute("SELECT * FROM subscriptions WHERE publisher_area_id=? AND webhook_id=? AND enabled=1 ORDER BY id",
+        rows = c.execute("SELECT * FROM subscriptions WHERE publisher_area_id=? AND webhook_id=? AND enabled=1 AND status='active' ORDER BY id",
                          key).fetchall()
     subs = [_row_to_sub(r) for r in rows]
     _active_subs[key] = subs

@@ -12,6 +12,7 @@ import { actions } from "../actions.js";
 import { dataTable } from "../components/table.js";
 import { openDrawer, closeDrawer } from "../components/drawer.js";
 import { openCopySubscriptionDrawer } from "./marketplace.js";
+import { publisherControls, subscriberStatusTag, subscriberActions } from "../components/publisher.js";
 import { t } from "../i18n.js";
 
 const accountKey = (idx, spec) => `${idx}::${spec}`;
@@ -223,16 +224,17 @@ function groupDrawer(group, { reload, onClose = null }) {
       if (!users.length) userList.append(h("span", { class: "muted" }, t("No other users yet — invite them under Settings → Users.")));
       userList.append(users.map((u) => h("label", null, h("input", { type: "checkbox", class: "allow-user", value: String(u.id), checked: (sh.allowed_user_ids || []).includes(u.id) }), u.email)));
     }).catch(() => { clear(userList); userList.append(h("span", { class: "muted" }, t("Could not load users."))); });
+    const pub = publisherControls(sh);
     const subsTable = dataTable({ empty: t("No followers from the marketplace yet."), compact: true, columns: [
       { label: t("Follower"), render: (s) => s.email },
-      { label: t("Status"), render: (s) => s.enabled ? tag("on", "on") : tag("off", "off") },
+      { label: t("Status"), render: (s) => subscriberStatusTag(s) },
       { label: t("Accounts"), className: "num", render: (s) => String(s.accounts) },
       { label: t("Since"), render: (s) => fmtDateTime(s.created_at) },
-      { label: "", render: (s) => h("button", { type: "button", class: "btn btn-ghost btn-sm", onClick: async () => {
+      { label: "", render: (s) => h("div", { class: "inline-actions" }, subscriberActions(s, `/api/copy/groups/${g.id}/subscribers`, loadSubs), h("button", { type: "button", class: "btn btn-ghost btn-sm", onClick: async () => {
         if (!(await confirmDialog({ title: t("Remove {email}?", { email: s.email }), body: t("Their accounts leave the mirror immediately (positions are not closed). They can follow again unless you restrict visibility."), confirmText: t("Remove"), danger: true }))) return;
         try { await api.del(`/api/copy/groups/${g.id}/subscribers/${s.id}`); toast(t("Follower removed"), "success"); loadSubs(); }
         catch (e) { toast(e.message, "error"); }
-      } }, icon("trash"), t("Remove")) },
+      } }, icon("trash"), t("Remove"))) },
     ] });
     const loadSubs = () => api.get(`/api/copy/groups/${g.id}/subscribers`).then((list) => subsTable.update(list)).catch(() => subsTable.update([]));
     loadSubs();
@@ -241,7 +243,7 @@ function groupDrawer(group, { reload, onClose = null }) {
       try {
         const updated = await api.put(`/api/copy/groups/${g.id}/sharing`, {
           enabled: pubSw.checked, title: titleInp.value.trim(), description: descTa.value.trim(), visibility: visSel.value,
-          allowed_user_ids: [...userList.querySelectorAll(".allow-user:checked")].map((c) => Number(c.value)),
+          allowed_user_ids: [...userList.querySelectorAll(".allow-user:checked")].map((c) => Number(c.value)), ...pub.collect(),
         });
         g = { ...g, sharing: updated.sharing };
         toast(pubSw.checked ? t("Published on the marketplace") : t("Sharing saved"), "success");
@@ -256,6 +258,7 @@ function groupDrawer(group, { reload, onClose = null }) {
         h("div", { class: "field" }, h("label", null, t("Visibility")), visSel)),
       h("div", { class: "field" }, h("label", null, t("Description")), descTa),
       userBox,
+      pub.el,
       h("div", { class: "form-actions" }, shareBtn),
       h("h3", null, t("Followers from the marketplace")), subsTable.el);
   }

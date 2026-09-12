@@ -55,7 +55,8 @@ async def sub_client(two_areas):
 def test_sharing_normalisation_and_visibility():
     sh = marketplace.normalize_sharing({"enabled": 1, "title": " T ", "visibility": "selected",
                                         "allowed_user_ids": ["3", 4, "x", 3]})
-    assert sh == {"enabled": True, "title": "T", "description": "", "visibility": "selected", "allowed_user_ids": [3, 4]}
+    assert {k: sh[k] for k in ("enabled", "title", "description", "visibility", "allowed_user_ids")} == {"enabled": True, "title": "T", "description": "", "visibility": "selected", "allowed_user_ids": [3, 4]}
+    assert sh["max_subscribers"] == 0 and sh["approval"] is False and sh["paused"] is False and sh["tags"] == [] and sh["published_at"]
     assert marketplace.visible_to(sh, 3) and not marketplace.visible_to(sh, 5)
     assert marketplace.sharing_of({})["enabled"] is False
     assert marketplace.visible_to(marketplace.sharing_of({"sharing": {"enabled": True, "visibility": "bogus"}}), 99)

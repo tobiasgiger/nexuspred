@@ -14,6 +14,8 @@ import { accountKey, routedAccountsTable } from "../components/accounts.js";
 import { alertMessageTemplate, STRATEGY_LABEL, STRATEGY_OPTIONS, PRESETS, webhookUrl } from "../templates.js";
 import { openSubscriptionDrawer } from "./marketplace.js";
 import { sizingOf } from "../sizing.js";
+import { tradeWindowEditor } from "../components/tradeWindow.js";
+import { publisherControls, subscriberStatusTag, subscriberActions } from "../components/publisher.js";
 import { t } from "../i18n.js";
 
 
@@ -46,27 +48,9 @@ function webhookDrawer(wh, { navigate }) {
   const defQtyField = h("div", { class: "field" }, h("label", null, t("Default qty")), defQty, h("div", { class: "field-hint" }, t("Fallback when the alert payload omits qty/contracts.")));
   const tpQtyField = h("div", { class: "field" }, h("label", null, t("Contracts per take-profit")), tpQty, h("div", { class: "field-hint" }, t("Bracket only: size of each TP limit order.")));
   // --- Trading window (entries only)
-  const DAY_LABELS = [["mon", t("Mon")], ["tue", t("Tue")], ["wed", t("Wed")], ["thu", t("Thu")], ["fri", t("Fri")], ["sat", t("Sat")], ["sun", t("Sun")]];
-  const tw = { enabled: false, from: "08:00", to: "17:00", tz: "", days: ["mon", "tue", "wed", "thu", "fri"], ...(w.trade_window || {}) };
-  const twOn = h("input", { type: "checkbox", class: "switch", checked: !!tw.enabled });
-  const twFrom = h("input", { type: "time", value: tw.from, style: "width:120px" });
-  const twTo = h("input", { type: "time", value: tw.to, style: "width:120px" });
-  const twTz = h("input", { type: "text", value: tw.tz || "", placeholder: (store.get("settings") || {}).journal_timezone || "Europe/Zurich", style: "width:200px", list: "tw-tz-list" });
-  const twDays = h("div", { class: "check-list", style: "display:flex;flex-direction:row;flex-wrap:wrap;gap:6px 14px;max-height:none" },
-    DAY_LABELS.map(([k, label]) => h("label", { class: "check-item" }, h("input", { type: "checkbox", class: "tw-day", value: k, checked: tw.days.includes(k) }), " ", label)));
-  const twBody = h("div", { class: "grid grid-2", style: "margin-top:10px" },
-    h("div", { class: "field" }, h("label", null, t("From")), twFrom),
-    h("div", { class: "field" }, h("label", null, t("To")), twTo, h("div", { class: "field-hint" }, t("End before start = spans midnight (22:00 → 06:00)."))),
-    h("div", { class: "field" }, h("label", null, t("Weekdays")), twDays),
-    h("div", { class: "field" }, h("label", null, t("Timezone")), twTz, h("datalist", { id: "tw-tz-list" }, ["Europe/Zurich", "Europe/London", "America/New_York", "America/Chicago", "UTC"].map((z) => h("option", { value: z }))),
-      h("div", { class: "field-hint" }, t("Empty = the journal timezone (Settings → General)."))));
-  const syncWindow = () => twBody.classList.toggle("hidden", !twOn.checked);
-  twOn.addEventListener("change", syncWindow); syncWindow();
-  const windowBlock = h("div", { style: "margin-top:16px" },
-    h("label", { class: "switch-row" }, h("span", null, t("Trading window"), h("small", null, t("Entries (buy / sell, TS-Hunter signals) only run inside this local time range on these weekdays. Closes, stop moves and management signals always run — an open position is never trapped."))), twOn),
-    twBody);
-  const collectWindow = () => ({ enabled: twOn.checked, from: twFrom.value || "08:00", to: twTo.value || "17:00", tz: twTz.value.trim(),
-    days: [...twDays.querySelectorAll(".tw-day")].filter((c) => c.checked).map((c) => c.value) });
+  const tw = tradeWindowEditor(w.trade_window);
+  const windowBlock = tw.el;
+  const collectWindow = tw.collect;
   const STRATEGY_BLURB = {
     simple: t("executes buy/sell for the qty in the alert, no TP/SL. close_all flattens the tracked position."),
     bracket: t("market entry + TP1/TP2/TP3 limits + protective stop from the alert; move_sl / trail_active manage the stop."),
@@ -144,16 +128,17 @@ function webhookDrawer(wh, { navigate }) {
       if (!users.length) userList.append(h("span", { class: "muted" }, t("No other users yet — invite them under Settings → Users.")));
       userList.append(users.map((u) => h("label", null, h("input", { type: "checkbox", class: "allow-user", value: String(u.id), checked: sh.allowed_user_ids.includes(u.id) }), u.email)));
     }).catch(() => { clear(userList); userList.append(h("span", { class: "muted" }, t("Could not load users."))); });
+    const pub = publisherControls(sh);
     const subsTable = dataTable({ empty: t("No subscribers yet."), compact: true, columns: [
       { label: t("Subscriber"), render: (s) => s.email },
-      { label: t("Status"), render: (s) => s.enabled ? tag("on", "on") : tag("off", "off") },
+      { label: t("Status"), render: (s) => subscriberStatusTag(s) },
       { label: t("Accounts"), className: "num", render: (s) => String(Array.isArray(s.accounts) ? s.accounts.filter((a) => a.enabled).length : (s.accounts || 0)) },
       { label: t("Since"), render: (s) => fmtDateTime(s.created_at) },
-      { label: "", render: (s) => h("button", { type: "button", class: "btn btn-ghost btn-sm", onClick: async () => {
+      { label: "", render: (s) => h("div", { class: "inline-actions" }, subscriberActions(s, `/api/webhooks/${w.id}/subscribers`, loadSubs), h("button", { type: "button", class: "btn btn-ghost btn-sm", onClick: async () => {
         if (!(await confirmDialog({ title: t("Remove {email}?", { email: s.email }), body: t("They stop receiving this signal immediately and can subscribe again unless you restrict visibility."), confirmText: t("Remove"), danger: true }))) return;
         try { await api.del(`/api/webhooks/${w.id}/subscribers/${s.id}`); toast(t("Subscriber removed"), "success"); loadSubs(); }
         catch (e) { toast(e.message, "error"); }
-      } }, icon("trash"), t("Remove")) },
+      } }, icon("trash"), t("Remove"))) },
     ] });
     const loadSubs = () => api.get(`/api/webhooks/${w.id}/subscribers`).then((list) => subsTable.update(list)).catch((e) => { subsTable.update([]); const c = subsTable.tbody.querySelector("td.empty"); if (c) c.textContent = t("Could not load subscribers: ") + e.message; });
     loadSubs();
@@ -162,7 +147,7 @@ function webhookDrawer(wh, { navigate }) {
       try {
         const updated = await api.put(`/api/webhooks/${w.id}/sharing`, {
           enabled: pubSw.checked, title: titleInp.value.trim(), description: descTa.value.trim(), visibility: visSel.value,
-          allowed_user_ids: [...userList.querySelectorAll(".allow-user:checked")].map((c) => Number(c.value)),
+          allowed_user_ids: [...userList.querySelectorAll(".allow-user:checked")].map((c) => Number(c.value)), ...pub.collect(),
         });
         w = { ...w, ...updated };
         store.update("webhooks", (list) => list.map((x) => (x.id === w.id ? { ...x, ...updated } : x)));
@@ -177,6 +162,7 @@ function webhookDrawer(wh, { navigate }) {
         h("div", { class: "field" }, h("label", null, t("Visibility")), visSel)),
       h("div", { class: "field" }, h("label", null, t("Description")), descTa),
       userBox,
+      pub.el,
       h("div", { class: "form-actions" }, shareBtn),
       h("h3", null, t("Subscribers")),
       subsTable.el);

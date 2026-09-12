@@ -412,6 +412,14 @@ def init() -> None:
             if "webhook_id" not in sig_cols:
                 # alpha.77: per-webhook signal statistics (track record, subscription journal)
                 c.execute("ALTER TABLE signal_log ADD COLUMN webhook_id TEXT NOT NULL DEFAULT ''")
+            if "latency_ms" not in sig_cols:
+                # alpha.78: wall time from acceptance to the broker's answer (latency fairness)
+                c.execute("ALTER TABLE signal_log ADD COLUMN latency_ms INTEGER")
+            sub_cols = {r["name"] for r in c.execute("PRAGMA table_info(subscriptions)").fetchall()}
+            if "status" not in sub_cols:
+                # alpha.78: publisher controls (approval, pause) and subscriber controls
+                c.execute("ALTER TABLE subscriptions ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
+                c.execute("ALTER TABLE subscriptions ADD COLUMN controls TEXT NOT NULL DEFAULT '{}'")
             for stmt in ("CREATE INDEX IF NOT EXISTS ix_journal_imports_area ON journal_imports(area_id, id)",
                          "CREATE INDEX IF NOT EXISTS ix_signal_log_wh ON signal_log(area_id, webhook_id, id)",
                          "CREATE INDEX IF NOT EXISTS ix_copy_events_ts ON copy_events(ts)",

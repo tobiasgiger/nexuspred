@@ -297,6 +297,15 @@ async def automation(name: str, message: str) -> None:
                          _send_push(tr("Automation: {name}", name=name), message, url="/#/settings/automations"))
 
 
+async def subscription_paused(title: str, reason: str) -> None:
+    """A marketplace subscription switched itself off (subscriber control)."""
+    tr = _tr(config.load_settings())
+    message = tr("Subscription '{title}' switched off: {reason}", title=title, reason=reason)
+    body = tr("⏸️ **Subscription paused** — {message}", message=message)
+    await asyncio.gather(_send_discord(body), _send_email(f"Fluxbridge: {title}", body),
+                         _send_push(tr("Subscription paused"), message, url="/#/subscriptions"))
+
+
 async def news_lock(title: str, currency: str, until: str, *, flatten: bool = False) -> None:
     """A news-lock window opened: no new entries until ``until`` (and, with
     ``flatten``, open positions are being closed)."""
@@ -429,6 +438,7 @@ def _register() -> None:
     ev.subscribe("discord.restored", lambda e: discord_listener_restored(e.get("user", "")))
     ev.subscribe("signal.failed", lambda e: webhook_failed(e["webhook"], e["reason"], **({"settings": e["settings"]} if e.get("settings") is not None else {})))
     ev.subscribe("rollover.due", lambda e: contract_rollover(e["message"]))
+    ev.subscribe("subscription.paused", lambda e: subscription_paused(e["title"], e["reason"]))
 
 
 _register()

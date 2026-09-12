@@ -213,9 +213,28 @@ async def api_list_subscribers(webhook_id: str, request: Request) -> list[dict[s
     _webhook_or_404(webhook_id)
     # The subscriber's routing (account specs, sizing) is theirs: the publisher
     # gets who, since when and how many enabled accounts — like copy groups.
-    return [{"id": s["id"], "email": s["email"], "enabled": s["enabled"], "created_at": s["created_at"],
+    return [{"id": s["id"], "email": s["email"], "enabled": s["enabled"], "status": s.get("status", "active"), "created_at": s["created_at"],
              "accounts": len([a for a in s.get("accounts") or [] if isinstance(a, dict) and a.get("enabled", True)])}
             for s in db.list_subscribers(context.get_area(), webhook_id)]
+
+
+@router.put("/api/webhooks/{webhook_id}/subscribers/{sub_id}")
+async def api_set_subscriber_status(webhook_id: str, sub_id: int, request: Request) -> dict[str, Any]:
+    """Publisher approves (pending → active), pauses or resumes one subscriber."""
+    user = require_admin(request)
+    _webhook_or_404(webhook_id)
+    body = await request.json()
+    status = str(body.get("status") or "")
+    if status not in db.SUB_STATUSES:
+        raise HTTPException(status_code=400, detail=f"status must be one of {', '.join(db.SUB_STATUSES)}")
+    cur = db.get_subscription(sub_id)
+    if not cur or cur["publisher_area_id"] != context.get_area() or cur["webhook_id"] != webhook_id:
+        raise HTTPException(status_code=404, detail="Subscriber not found")
+    sub = db.set_subscription_status(sub_id, context.get_area(), status)
+    email = db.area_owner_email(cur["area_id"]) or str(cur["area_id"])
+    db.log_action(user["id"], user["email"], "subscriber_status", email, f"webhook {webhook_id}: {status}")
+    state.log_event("info", f"Subscriber {email} on webhook {webhook_id}: {status}")
+    return {"id": sub_id, "status": sub["status"] if sub else status}
 
 
 @router.delete("/api/webhooks/{webhook_id}/subscribers/{sub_id}")

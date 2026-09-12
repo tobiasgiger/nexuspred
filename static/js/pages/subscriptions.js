@@ -45,6 +45,7 @@ export default {
         { label: t("Symbol"), render: (s) => s.symbol || "—" },
         { label: t("Qty"), className: "num", render: (s) => s.qty == null ? "—" : String(s.qty) },
         { label: t("Result"), render: (s) => tag(s.result, /^error/.test(s.result) ? "rejected" : s.result === "skipped" ? "warn" : s.result === "received" ? "" : "ok") },
+        { label: t("Latency"), className: "num", render: (s) => s.latency_ms == null ? "—" : `${s.latency_ms} ms` },
       ],
     });
     const copyTable = dataTable({
@@ -91,7 +92,7 @@ export default {
           const manage = () => (isCopy ? openCopySubscriptionDrawer({ ...(s.copy || {}), subscription: s }, load) : openSubscriptionDrawer({ ...(s.webhook || {}), subscription: s }, load));
           list.append(h("div", { class: "card mk-card" },
             h("div", { class: "mk-title" }, h("strong", null, view.title), isCopy ? tag("copy trading", "accent") : tag(STRATEGY_LABEL[view.strategy] || view.strategy || "—", view.strategy),
-              !s.active ? tag(t("inactive"), "warn") : tag(t("active"), "on")),
+              s.status === "pending" ? tag(t("awaiting approval"), "warn") : s.status === "paused" ? tag(t("paused by publisher"), "warn") : !s.active ? tag(t("inactive"), "warn") : tag(t("active"), "on")),
             h("div", { class: "mk-meta" }, icon("user"), view.publisher_email || "—", "·", icon("calendar"), t("since {when}", { when: fmtDateTime(s.created_at) }),
               "·", icon("users"), t("{n} account(s)", { n: (s.accounts || []).filter((a) => a.enabled !== false).length })),
             j ? h("div", null,
@@ -101,7 +102,8 @@ export default {
                 h("span", { class: "tr-kv" }, h("span", { class: "k" }, t("Win rate")), h("span", { class: "v" }, pct(j.pnl.win_rate))),
                 h("span", { class: "tr-kv" }, h("span", { class: "k" }, t("30 d")), h("span", { class: "v" }, money(j.pnl.net_30d))),
                 sig ? h("span", { class: "tr-kv" }, h("span", { class: "k" }, t("Signals")), h("span", { class: "v" }, `${sig.executed} ✓ · ${sig.skipped} ⏭ · ${sig.errors} ✗`)) : null,
-                sig && sig.last_at ? h("span", { class: "tr-kv" }, h("span", { class: "k" }, t("Last")), h("span", { class: "v" }, fmtTime(sig.last_at))) : null),
+                sig && sig.last_at ? h("span", { class: "tr-kv" }, h("span", { class: "k" }, t("Last")), h("span", { class: "v" }, fmtTime(sig.last_at))) : null,
+                j.latency ? h("span", { class: "tr-kv", title: t("Signal acceptance → broker answer, newest {n} signals", { n: j.latency.n }) }, h("span", { class: "k" }, t("Latency p50 / p95")), h("span", { class: "v" }, `${j.latency.p50} / ${j.latency.p95} ms`)) : null),
               h("p", { class: "hint", style: "margin:6px 0 0" }, t("P&L = your own journal on the routed accounts since you subscribed (includes anything else those accounts traded)."))) : h("div", { class: "muted" }, t("Journal unavailable")),
             h("div", { class: "mk-foot" }, h("span"),
               h("div", { class: "inline-actions" },

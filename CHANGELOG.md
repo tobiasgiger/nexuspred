@@ -4,6 +4,23 @@ All notable changes to nexuspred. Versions follow [SemVer](https://semver.org/).
 Bump `VERSION` on every release — the dashboard compares it against GitHub and
 shows the **Update** button when a newer version is available.
 
+## 5.0.0-alpha.78
+Marketplace 2 + 3 + 5 + 6 (633 tests, 10 new):
+- **Subscriber controls** per subscription: symbol roots, max contracts per signal and
+  account (caps the sizing), max entries per UTC day, an own trading window, switch off
+  after N consecutive errors (failed signal, error result or an entry that reached no
+  account) with an alert. Skips are logged with their reason.
+- **Publisher controls**: pause forwarding, approval for new subscribers (pending until
+  approved), subscriber limit, tags; per-subscriber approve / pause / resume / remove for
+  webhooks and copy groups (a paused follower's accounts leave the mirror).
+- **Discovery**: search, sort (best 30 d, net, win rate, trades, subscribers, newest),
+  kind and verified-only filters, tag chips, publish date, `subscribers/limit`.
+- **Latency fairness**: random fan-out order per signal; `signal_log.latency_ms`
+  (migration) with p50 / p95 in the subscription journal and the publisher's execution
+  latency in the track record.
+- Shared `tradeWindowEditor` and `publisherControls` components; `subscriptions.status`
+  / `controls` columns (migration).
+
 ## 5.0.0-alpha.77
 Marketplace 1 + 4 (623 tests, 8 new):
 - **Verified track record** on every marketplace card and in a detail drawer (equity curve,

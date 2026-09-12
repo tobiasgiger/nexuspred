@@ -10,6 +10,7 @@ fills. Subscribers never see the publisher's account names.
 """
 from __future__ import annotations
 
+import math
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -79,6 +80,15 @@ def summarize_trades(trades: list[dict[str, Any]], zone: ZoneInfo, *, now: Optio
     return out
 
 
+def latency_summary(values: list[int]) -> Optional[dict[str, Any]]:
+    """p50 / p95 / max of the newest latencies (ms), or None without data."""
+    if not values:
+        return None
+    s = sorted(values)
+    at = lambda q: s[max(0, min(len(s) - 1, math.ceil(q * len(s)) - 1))]  # noqa: E731 - nearest rank
+    return {"n": len(s), "p50": at(0.5), "p95": at(0.95), "max": s[-1]}
+
+
 def _cached(kind: str, area_id: int, key: str, build) -> dict[str, Any]:
     ck = (kind, area_id, key)
     hit = _cache.get(ck)
@@ -105,6 +115,7 @@ def webhook_record(publisher_area_id: int, webhook: dict[str, Any], *, detail: b
         out.update({"basis": "accounts" if specs else "none", "accounts_n": len(specs),
                     "signals": db.signal_stats(publisher_area_id, wid),
                     "signals_30d": db.signal_stats(publisher_area_id, wid, _iso_days_ago(30)),
+                    "latency": latency_summary(db.signal_latencies(publisher_area_id, wid)),
                     "computed_at": datetime.now(timezone.utc).isoformat()})
         return out
     rec = _cached("webhook", publisher_area_id, wid, build)
@@ -119,7 +130,7 @@ def copy_record(publisher_area_id: int, group: dict[str, Any], *, detail: bool =
         spec = str((group.get("leader") or {}).get("spec") or "")
         trades = db.list_journal_trades(publisher_area_id, accounts=[spec]) if spec else []
         out = summarize_trades(trades, _zone(publisher_area_id), detail=True)
-        out.update({"basis": "leader" if spec else "none", "accounts_n": 1 if spec else 0, "signals": None, "signals_30d": None,
+        out.update({"basis": "leader" if spec else "none", "accounts_n": 1 if spec else 0, "signals": None, "signals_30d": None, "latency": None,
                     "computed_at": datetime.now(timezone.utc).isoformat()})
         return out
     rec = _cached("copy", publisher_area_id, gid, build)
@@ -127,7 +138,7 @@ def copy_record(publisher_area_id: int, group: dict[str, Any], *, detail: bool =
 
 
 COMPACT_KEYS = ("basis", "accounts_n", "verified", "verified_share", "trades", "win_rate", "profit_factor", "net_pnl", "max_drawdown",
-                "net_30d", "trades_30d", "net_90d", "trading_days", "first_trade_at", "last_trade_at", "signals", "signals_30d", "computed_at")
+                "net_30d", "trades_30d", "net_90d", "trading_days", "first_trade_at", "last_trade_at", "signals", "signals_30d", "latency", "computed_at")
 
 
 def compact(rec: dict[str, Any]) -> dict[str, Any]:
@@ -137,7 +148,7 @@ def compact(rec: dict[str, Any]) -> dict[str, Any]:
 # ------------------------------------------------------- subscription journal
 def _signal_view(row: dict[str, Any]) -> dict[str, Any]:
     p = row.get("payload") if isinstance(row.get("payload"), dict) else {}
-    return {"id": row["id"], "ts": row["ts"], "result": row["result"],
+    return {"id": row["id"], "ts": row["ts"], "result": row["result"], "latency_ms": row.get("latency_ms"),
             "action": str(p.get("action") or p.get("side") or p.get("event") or ""), "symbol": str(p.get("symbol") or ""),
             "qty": p.get("qty") if isinstance(p.get("qty"), (int, float)) else None}
 
@@ -156,12 +167,14 @@ def subscription_journal(area_id: int, sub: dict[str, Any], *, limit: int = 50) 
         gid = str(sub["webhook_id"])[5:]
         events = db.list_copy_events(int(sub["publisher_area_id"]), gid, limit=limit, followers=specs)
         out["copy_events"] = [{"ts": e["ts"], "kind": e["kind"], "symbol": e["symbol"], "detail": e["detail"], "latency_ms": e.get("latency_ms")} for e in events]
+        out["latency"] = latency_summary([int(e["latency_ms"]) for e in events if isinstance(e.get("latency_ms"), int)])
         out["signals"] = None
         out["recent"] = []
     else:
         wid = f"sub{int(sub['publisher_area_id'])}_{sub['webhook_id']}"
         out["signals"] = db.signal_stats(area_id, wid)
         out["signals_30d"] = db.signal_stats(area_id, wid, _iso_days_ago(30))
+        out["latency"] = latency_summary(db.signal_latencies(area_id, wid))
         out["recent"] = [_signal_view(r) for r in db.list_signals(area_id, limit=limit, webhook_id=wid)["items"]]
         out["copy_events"] = []
     return out

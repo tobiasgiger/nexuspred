@@ -94,9 +94,32 @@ async def api_group_sharing(group_id: str, request: Request) -> dict[str, Any]:
 async def api_group_subscribers(group_id: str, request: Request) -> list[dict[str, Any]]:
     require_admin(request)
     _group_or_404(group_id)
-    return [{"id": s["id"], "email": s["email"], "enabled": s["enabled"], "created_at": s["created_at"],
+    return [{"id": s["id"], "email": s["email"], "enabled": s["enabled"], "status": s.get("status", "active"), "created_at": s["created_at"],
              "accounts": len([a for a in s.get("accounts") or [] if isinstance(a, dict) and a.get("enabled", True)])}
             for s in db.list_subscribers(context.get_area(), f"copy:{group_id}")]
+
+
+@router.put("/groups/{group_id}/subscribers/{sub_id}")
+async def api_group_subscriber_status(group_id: str, sub_id: int, request: Request) -> dict[str, Any]:
+    """Publisher approves, pauses or resumes one follower; a paused follower's
+    accounts leave the mirror (positions stay, twin orders are cancelled)."""
+    user = require_admin(request)
+    _group_or_404(group_id)
+    body = await request.json()
+    status = str(body.get("status") or "")
+    if status not in db.SUB_STATUSES:
+        raise HTTPException(status_code=400, detail=f"status must be one of {', '.join(db.SUB_STATUSES)}")
+    cur = db.get_subscription(sub_id)
+    if not cur or cur["publisher_area_id"] != context.get_area() or cur["webhook_id"] != f"copy:{group_id}":
+        raise HTTPException(status_code=404, detail="Subscriber not found")
+    sub = db.set_subscription_status(sub_id, context.get_area(), status)
+    email = db.area_owner_email(cur["area_id"]) or str(cur["area_id"])
+    db.log_action(user["id"], user["email"], "subscriber_status", email, f"copy group {group_id}: {status}")
+    state.log_event("info", f"Follower {email} on copy group {group_id}: {status}")
+    if status != "active":
+        await copy.release_followers(context.get_area(), group_id, copy._enabled_specs(cur.get("accounts")))
+    await copy.sync_area(context.get_area())
+    return {"id": sub_id, "status": sub["status"] if sub else status}
 
 
 @router.delete("/groups/{group_id}/subscribers/{sub_id}")

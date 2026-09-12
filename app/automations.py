@@ -34,6 +34,7 @@ KINDS: dict[str, dict[str, str]] = {
     "copy.alert":          {},
     "discord.lost":        {},
     "daily.summary":       {},
+    "subscription.paused": {},
 }
 ACTIONS = ("notify", "trading_off", "flatten_account", "flatten_all", "lock_account", "pause_webhook")
 MAX_RULES = 50

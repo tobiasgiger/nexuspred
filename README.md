@@ -696,6 +696,34 @@ events for your accounts, and your own P&L on the routed accounts since you subs
 (`signal_log.webhook_id`), so a subscription's signals are counted exactly even when the
 publisher renames the signal.
 
+### Subscriber controls, publisher controls, discovery, latency fairness
+
+**Subscriber controls** (in the subscribe drawer, *My limits for this signal*): only these
+symbol roots, a max number of contracts per signal and account (caps the per-account
+sizing), a max number of entries per UTC day (closes are never blocked), a trading window
+of your own (entries only) and *switch off after N consecutive errors* — an error is a
+failed signal, an `error` result or an entry that reached none of your accounts; the
+subscription turns itself off and you get an alert on every channel. Skipped signals are
+logged with the reason (`subscription_symbols`, `subscription_daily_cap`, `trade_window`).
+
+**Publisher controls** (webhook / copy-group *Sharing* tab): pause forwarding (the listing
+stays, marked as paused), approve new subscribers (they wait as *pending* and receive
+nothing until approved), a subscriber limit (409 when reached; existing subscribers stay)
+and up to five tags. Per subscriber: approve, pause, resume, remove. `PUT
+/api/webhooks/{id}/subscribers/{sub_id} {status}` and `PUT /api/copy/groups/{id}/subscribers/{sub_id}`.
+
+**Discovery**: the marketplace page searches title, description, publisher and tags, sorts
+by best last 30 days / net P&L / win rate / trades / subscribers / newest, filters by
+kind and *broker-verified only*, and tag chips narrow the list. Listings show the
+publish date and `subscribers/limit`.
+
+**Latency fairness**: a published signal is fanned out to its subscribers in a random
+order on every signal, so nobody is systematically first in the queue; the publisher's
+own execution is never delayed by the fan-out. Every signal row records the wall time
+from acceptance to the broker's answer (`signal_log.latency_ms`); the subscription journal
+shows p50 / p95 per subscription and the track record shows the publisher's own execution
+latency.
+
 ## Rollover with confirmation
 
 Dated contracts in the symbol map (`MNQU6`) expire. The daily check flags every mapped
@@ -1006,7 +1034,7 @@ the dashboard **Update** button works.
 | `GET/POST` | `/api/trade-accounts` | Overview / save per-account execution on-off & multipliers |
 | `GET`  | `/api/health` | Check every connection (renews tokens if needed) |
 | `GET/POST` | `/api/webhooks` | List all webhooks / create one |
-| `PUT/DELETE` | `/api/webhooks/{id}` | Update / delete a webhook (name, strategy, qty, accounts, `trade_window`) |
+| `PUT/DELETE` | `/api/webhooks/{id}` | Update / delete a webhook (name, strategy, qty, accounts, `trade_window`) · `PUT …/sharing` also takes `max_subscribers`, `approval`, `paused`, `tags` |
 | `POST` | `/api/webhooks/{id}/regenerate-token` | Rotate a webhook's secret token |
 | `POST` | `/api/webhooks/{id}/test` | Run a payload through the pipeline for this webhook (`?subscribers=true` also forwards it) |
 | `PUT`  | `/api/webhooks/{id}/sharing` | Publish / unpublish on the marketplace (admin): title, description, visibility, allowed users |
@@ -1016,6 +1044,7 @@ the dashboard **Update** button works.
 | `GET/PUT/DELETE` | `/api/subscriptions[/{id}]` | My subscriptions: list / update / unsubscribe |
 | `GET`  | `/api/marketplace/{area}/{webhook_id}/record` | Full track record of a published signal · `…/copy/{group_id}/record` for a copy group · own: `GET /api/webhooks/{id}/record`, `GET /api/copy/groups/{id}/record` |
 | `GET`  | `/api/subscriptions/{id}/journal` | The subscriber's journal of one subscription: signals + outcomes (or copy events) and P&L since subscribing |
+| `PUT`  | `/api/webhooks/{id}/subscribers/{sub_id}` | Publisher sets a subscriber's status: `active` (approve / resume), `paused` · same under `/api/copy/groups/{id}/subscribers/{sub_id}` |
 | `GET`  | `/api/scenarios` | List built-in simulator scenarios |
 | `POST` | `/api/simulate` | Run a signal in simulation (no broker) |
 | `GET`  | `/api/simulate/state` | Simulated positions & working orders |

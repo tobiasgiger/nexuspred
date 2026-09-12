@@ -64,6 +64,7 @@ def _reset_runtime() -> None:
     signals._active.clear()
     signals._sim_active.clear()
     signals._trade_locks.clear()
+    signals._sub_errors.clear()
     tradovate._managers.clear()
     hub._areas.clear()
     listener._managers.clear()

@@ -94,6 +94,8 @@ from .marketplace import (  # noqa: F401
     _subs_changed,
     _row_to_sub,
     upsert_subscription,
+    set_subscription_status,
+    SUB_STATUSES,
     get_subscription,
     update_subscription,
     delete_subscription,
@@ -113,6 +115,8 @@ from .history import (  # noqa: F401
     list_orders,
     history_stats,
     signal_stats,
+    signal_latencies,
+    count_signal_outcomes,
     prune_history,
 )
 from .copytrade import (  # noqa: F401

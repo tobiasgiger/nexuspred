@@ -23,12 +23,23 @@ def _enrich(sub: dict[str, Any]) -> dict[str, Any]:
         if g is None:
             return {**sub, "kind": "copy", "webhook": None, "copy": None, "active": False}
         view = copy.public_view(g, sub["publisher_area_id"])
-        return {**sub, "kind": "copy", "webhook": None, "copy": view, "active": bool(sub["enabled"] and view["enabled"])}
+        return {**sub, "kind": "copy", "webhook": None, "copy": view, "active": bool(sub["enabled"] and view["enabled"] and sub.get("status", "active") == "active")}
     wh, sh = marketplace.find_published(sub["publisher_area_id"], sub["webhook_id"])
     if wh is None:
         return {**sub, "webhook": None, "active": False}
     view = marketplace.public_view(wh, sub["publisher_area_id"])
-    return {**sub, "webhook": view, "active": bool(sub["enabled"] and view["webhook_enabled"])}
+    return {**sub, "webhook": view, "active": bool(sub["enabled"] and view["webhook_enabled"] and sub.get("status", "active") == "active")}
+
+
+def _admission(publisher_area_id: int, key: str, sh: dict[str, Any], area: int) -> str:
+    """Publisher controls at subscribe time: the cap (409) and approval (pending)."""
+    existing = next((s for s in db.list_subscriptions(area) if s["publisher_area_id"] == publisher_area_id and s["webhook_id"] == key), None)
+    if existing:
+        return existing["status"]
+    cap = int(sh.get("max_subscribers") or 0)
+    if cap and db.subscriber_counts(publisher_area_id).get(key, 0) >= cap:
+        raise HTTPException(status_code=409, detail="This publisher has reached the subscriber limit")
+    return "pending" if sh.get("approval") else "active"
 
 
 @router.get("/marketplace")
@@ -133,7 +144,8 @@ async def api_subscribe_copy(request: Request, publisher_area_id: int, group_id:
     except (TypeError, ValueError, KeyError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     enabled = bool(body.get("enabled", True))
-    sub = db.upsert_subscription(area, publisher_area_id, f"copy:{group_id}", accounts, enabled)
+    status = _admission(publisher_area_id, f"copy:{group_id}", sh, area)
+    sub = db.upsert_subscription(area, publisher_area_id, f"copy:{group_id}", accounts, enabled, status=status)
     title = sh.get("title") or g.get("name", "")
     db.log_action(user["id"], user["email"], "subscribe", title, f"copy · {len([a for a in accounts if a.get('enabled')])} account(s), {'on' if enabled else 'off'}")
     state.log_event("info", f"Following copy group '{title}' on {len(accounts)} account(s)")
@@ -155,7 +167,12 @@ async def api_subscribe(request: Request, publisher_area_id: int, webhook_id: st
     body = await request.json()
     accounts = marketplace.clean_accounts(body.get("accounts"))
     enabled = bool(body.get("enabled", True))
-    sub = db.upsert_subscription(area, publisher_area_id, webhook_id, accounts, enabled)
+    try:
+        controls = marketplace.normalize_controls(body.get("controls")) if "controls" in body else None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    status = _admission(publisher_area_id, webhook_id, sh, area)
+    sub = db.upsert_subscription(area, publisher_area_id, webhook_id, accounts, enabled, controls=controls, status=status)
     title = sh.get("title") or wh.get("name", "")
     db.log_action(user["id"], user["email"], "subscribe", title,
                   f"{len([a for a in accounts if a.get('enabled')])} account(s), {'on' if enabled else 'off'}")
@@ -187,6 +204,11 @@ async def api_update_subscription(request: Request, sub_id: int) -> dict[str, An
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
         else:
             kwargs["accounts"] = marketplace.clean_accounts(body["accounts"])
+    if "controls" in body and not _is_copy(current):
+        try:
+            kwargs["controls"] = marketplace.normalize_controls(body["controls"])
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     sub = db.update_subscription(sub_id, context.get_area(), **kwargs)
     if not sub:
         raise HTTPException(status_code=404, detail="Subscription not found")

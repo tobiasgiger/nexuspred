@@ -17,9 +17,10 @@ def insert_signal(area_id: int, entry: dict[str, Any]) -> int:
     init()
     with _connect() as c:
         cur = c.execute(
-            "INSERT INTO signal_log(area_id,ts,result,webhook,payload,webhook_id) VALUES(?,?,?,?,?,?)",
+            "INSERT INTO signal_log(area_id,ts,result,webhook,payload,webhook_id,latency_ms) VALUES(?,?,?,?,?,?,?)",
             (area_id, entry.get("ts") or _now(), str(entry.get("result") or "")[:200],
-             str(entry.get("webhook") or "")[:200], _json(entry.get("payload")), str(entry.get("webhook_id") or "")[:80]))
+             str(entry.get("webhook") or "")[:200], _json(entry.get("payload")), str(entry.get("webhook_id") or "")[:80],
+             entry.get("latency_ms") if isinstance(entry.get("latency_ms"), int) else None))
         return int(cur.lastrowid or 0)
 
 
@@ -40,7 +41,8 @@ def _signal_row(r: sqlite3.Row) -> dict[str, Any]:
         payload = json.loads(r["payload"])
     except (TypeError, ValueError):
         payload = {"raw": r["payload"]}
-    return {"id": r["id"], "ts": r["ts"], "result": r["result"], "webhook": r["webhook"], "webhook_id": r["webhook_id"], "payload": payload}
+    return {"id": r["id"], "ts": r["ts"], "result": r["result"], "webhook": r["webhook"], "webhook_id": r["webhook_id"], "payload": payload,
+            "latency_ms": r["latency_ms"] if "latency_ms" in r.keys() else None}
 
 
 def _order_row(r: sqlite3.Row) -> dict[str, Any]:
@@ -117,6 +119,24 @@ def signal_stats(area_id: int, webhook_id: str, since_ts: str = "") -> dict[str,
             f"FROM signal_log WHERE {where}", params).fetchone()
     return {"received": int(r["received"] or 0), "executed": int(r["executed"] or 0), "skipped": int(r["skipped"] or 0),
             "errors": int(r["errors"] or 0), "first_at": r["first_ts"], "last_at": r["last_ts"]}
+
+
+def signal_latencies(area_id: int, webhook_id: str, limit: int = 200) -> list[int]:
+    """Latencies (ms) of the newest outcome rows of one webhook, newest first."""
+    init()
+    with _connect() as c:
+        rows = c.execute("SELECT latency_ms FROM signal_log WHERE area_id=? AND webhook_id=? AND latency_ms IS NOT NULL "
+                         "ORDER BY id DESC LIMIT ?", (area_id, webhook_id, max(1, min(int(limit), 2000)))).fetchall()
+    return [int(r["latency_ms"]) for r in rows]
+
+
+def count_signal_outcomes(area_id: int, webhook_id: str, since_ts: str) -> int:
+    """Outcome rows (everything but the ingress ``received`` echo) since ``since_ts``."""
+    init()
+    with _connect() as c:
+        r = c.execute("SELECT COUNT(*) n FROM signal_log WHERE area_id=? AND webhook_id=? AND ts>=? AND result<>'received'",
+                      (area_id, webhook_id, since_ts)).fetchone()
+    return int(r["n"] or 0)
 
 
 def history_stats(area_id: int, since_ts: str) -> dict[str, Any]:

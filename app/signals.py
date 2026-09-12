@@ -35,6 +35,7 @@ credentials, risk, or a configured webhook.
 from __future__ import annotations
 
 import asyncio
+import random
 import hmac
 import threading
 import time
@@ -195,10 +196,15 @@ def forward_to_subscribers(payload: dict[str, Any], webhook: dict[str, Any],
     Failures are isolated per subscriber and never affect the publisher."""
     from . import db, marketplace
 
-    if not marketplace.sharing_of(webhook)["enabled"]:
+    sh = marketplace.sharing_of(webhook)
+    if not sh["enabled"]:
+        return 0
+    if sh.get("paused"):
+        state.log_event("info", f"[{webhook.get('name', '?')}] not forwarded: sharing is paused by the publisher")
         return 0
     aid = publisher_area if publisher_area is not None else context.get_area()
     subs = db.active_subscriptions(aid, webhook.get("id", ""))
+    random.shuffle(subs)                    # fairness: no subscriber is systematically first in the queue
     shared = {k: v for k, v in payload.items() if not (isinstance(k, str) and "passphrase" in k.lower())}
     for sub in subs:
         view = marketplace.subscription_view(webhook, sub, aid)
@@ -217,21 +223,73 @@ async def process_background(payload: dict[str, Any], webhook: dict[str, Any], *
     name = webhook.get("name", "?")
     wid = str(webhook.get("id") or "")
     started = time.perf_counter()
+    ms = lambda: int((time.perf_counter() - started) * 1000)  # noqa: E731
     try:
         result = await process(payload, webhook, trusted=trusted, settings=settings)
-        state.log_signal(payload, result=result.get("status", "ok"), webhook=name, webhook_id=wid)
+        state.log_signal(payload, result=result.get("status", "ok"), webhook=name, webhook_id=wid, latency_ms=ms())
         events.emit("signal.done", webhook=name, status=result.get("status", "ok"), reason=result.get("reason", ""), action=result.get("action", ""),
                     seconds=time.perf_counter() - started)
+        coro = _note_subscription_outcome(webhook, None, result)
+        if coro is not None:
+            await coro
     except (SignalError, TradovateError) as exc:
         state.log_event("error", f"Signal error: {exc}", payload=payload)
-        state.log_signal(payload, result=f"error: {exc}", webhook=name, webhook_id=wid)
+        state.log_signal(payload, result=f"error: {exc}", webhook=name, webhook_id=wid, latency_ms=ms())
         events.emit("signal.done", webhook=name, status="error", reason=str(exc)[:200], action="", seconds=time.perf_counter() - started)
         await events.emit_async("signal.failed", webhook=name, reason=str(exc), settings=settings)
+        await _after_subscription_error(webhook, exc)
     except Exception as exc:  # noqa: BLE001
         state.log_event("error", f"Signal failed: {exc}", payload=payload)
-        state.log_signal(payload, result=f"error: {exc}", webhook=name, webhook_id=wid)
+        state.log_signal(payload, result=f"error: {exc}", webhook=name, webhook_id=wid, latency_ms=ms())
         events.emit("signal.done", webhook=name, status="error", reason=str(exc)[:200], action="", seconds=time.perf_counter() - started)
         await events.emit_async("signal.failed", webhook=name, reason=str(exc), settings=settings)
+        await _after_subscription_error(webhook, exc)
+
+
+_sub_errors: dict[tuple[int, int], int] = {}      # (area, subscription id) → consecutive errors
+
+
+async def _after_subscription_error(webhook: dict[str, Any], exc: Exception) -> None:
+    coro = _note_subscription_outcome(webhook, exc)
+    if coro is not None:
+        await coro
+
+
+def _note_subscription_outcome(webhook: dict[str, Any], exc: Exception | None, result: dict[str, Any] | None = None) -> Any:
+    """Subscriber control "pause after N consecutive errors": count the streak
+    per subscription and switch the subscription off when it is reached. An
+    error is an exception, an ``error`` result, or an entry that reached no
+    account (every routed account failed). Skips do not count either way.
+    Returns a coroutine (the alert) when it paused, else None."""
+    sub = webhook.get("subscription") if isinstance(webhook.get("subscription"), dict) else None
+    if not sub or not sub.get("id"):
+        return None
+    key = (context.get_area(), int(sub["id"]))
+    why = ""
+    if exc is not None:
+        why = str(exc)[:160]
+    elif result is not None:
+        if result.get("status") == "skipped":
+            return None
+        if result.get("status") == "error":
+            why = str(result.get("reason") or result.get("detail") or "error")[:160]
+        elif "accounts" in result and not result["accounts"]:
+            why = "no account executed the entry"
+    if not why:
+        _sub_errors.pop(key, None)
+        return None
+    n = _sub_errors.get(key, 0) + 1
+    _sub_errors[key] = n
+    limit = int((webhook.get("controls") or {}).get("pause_after_errors") or 0)
+    if not limit or n < limit:
+        return None
+    from . import db
+    _sub_errors.pop(key, None)
+    db.update_subscription(int(sub["id"]), key[0], enabled=False)
+    title = str(webhook.get("name") or sub.get("webhook_id") or "subscription")
+    reason = f"{n} consecutive signal errors (last: {why})"
+    state.log_event("warn", f"Subscription '{title}' switched off: {reason}")
+    return events.emit_async("subscription.paused", title=title, reason=reason, subscription_id=int(sub["id"]))
 
 
 # ------------------------------------------------------------ entry point
@@ -281,6 +339,12 @@ async def process(
             "warn", f"Trading disabled — signal '{action}' for {root} not executed"
         )
         return {"status": "skipped", "reason": "trading_disabled", "action": action}
+    if webhook.get("subscription"):
+        from . import marketplace
+        ok, why, detail = marketplace.subscription_gate(webhook, root, action, area_id=context.get_area())
+        if not ok:
+            state.log_event("warn", f"Subscription '{webhook.get('name')}': '{action}' for {root} not executed — {detail}")
+            return {"status": "skipped", "reason": why, "action": action, "detail": detail}
     if not simulate and action in ("buy", "sell"):
         lock = news.active_lock(settings=s)
         if lock:

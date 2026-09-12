@@ -174,7 +174,8 @@ def public_view(g: dict[str, Any], area_id: int, email: Optional[str] = None) ->
             "title": sh["title"] or g.get("name") or "Copy group", "description": sh["description"], "visibility": sh["visibility"],
             "publisher_email": email if email is not None else db.area_owner_email(area_id),
             "symbols": list(g.get("symbols") or []), "environment": env, "copy_orders": bool(g.get("copy_orders")),
-            "enabled": bool(g.get("enabled")), "running": bool(r and r.tasks), "feed_ok": bool(r and r.feed_ok), "paused": bool(r and r.paused),
+            "enabled": bool(g.get("enabled")) and not sh["paused"], "running": bool(r and r.tasks), "feed_ok": bool(r and r.feed_ok), "paused": bool(r and r.paused),
+            "publisher_paused": sh["paused"], "approval": sh["approval"], "max_subscribers": sh["max_subscribers"], "tags": sh["tags"], "published_at": sh["published_at"],
             "followers_count": len(g.get("followers") or []) + len(r.external if r else external_followers(area_id, g["id"]))}
 
 

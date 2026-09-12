@@ -140,6 +140,9 @@ ALERT_DE = {
     "🚨 **{title}** — {message}": "🚨 **{title}** — {message}",
     "⚙️ **Automation {name}** — {message}": "⚙️ **Automation {name}** — {message}",
     "Automation: {name}": "Automation: {name}",
+    "Subscription '{title}' switched off: {reason}": "Abo '{title}' ausgeschaltet: {reason}",
+    "⏸️ **Subscription paused** — {message}": "⏸️ **Abo pausiert** — {message}",
+    "Subscription paused": "Abo pausiert",
 }
 
 
