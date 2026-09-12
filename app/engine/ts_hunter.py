@@ -208,13 +208,26 @@ async def handle_full_close(payload, trade_id, target, executors, active_map, ta
     )
     cancelled = sum(r for r in results if isinstance(r, int))
     failed = [ex.name for (ex, _), r in zip(targets, results) if isinstance(r, Exception)]
+    succeeded = [ex.name for (ex, _), r in zip(targets, results) if isinstance(r, int)]
     for (ex, _), r in zip(targets, results):
         if isinstance(r, Exception):
             state.log_event("error", f"{tag}TS-Hunter full_close FAILED for {ex.name}: {r} — the position may still be open")
 
+    # On a mixed broker outcome, remove only accounts whose close was confirmed;
+    # failed accounts remain tracked so a retry cannot forget a live position or
+    # re-flatten accounts that already succeeded. With no broker failure, preserve
+    # the existing all-success tracking semantics (including disabled accounts).
     with _lock:
-        if not (failed and len(failed) == len(targets)):
-            active_map.pop(trade_id, None)      # nothing closed at all: keep the record for a retry
+        cur = active_map.get(trade_id)
+        if cur and cur.get("accounts"):
+            if failed:
+                accounts = cur["accounts"]
+                for name in succeeded:
+                    accounts.pop(name, None)
+                if not accounts:
+                    active_map.pop(trade_id, None)
+            else:
+                active_map.pop(trade_id, None)
 
     reason = payload.get("reason", "")
     suffix = f": {reason}" if reason else ""

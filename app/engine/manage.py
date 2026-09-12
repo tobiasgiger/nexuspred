@@ -11,32 +11,51 @@ from .common import _cancel_working, _close_contract, _lock, _trade_key
 
 
 async def handle_close_all(root, target, executors, active_map, tag, webhook):
+    key = _trade_key(webhook["id"], root)
+    with _lock:
+        tracked = active_map.get(key)
+        tracked_names = set((tracked or {}).get("accounts") or {})
+
+    # For a partially failed retry, only target accounts that are still tracked.
+    # Without tracking (for example after a restart), keep the existing safety-net
+    # behaviour and flatten every currently enabled account for the symbol.
+    targets = [ex for ex in executors if ex.name in tracked_names] if tracked_names else list(executors)
+
     async def close_account(ex) -> int:
         contract = await ex.resolve_contract(target)
         # Only this contract's working orders — other symbols keep their stops.
         return await _close_contract(ex, tag, contract)
 
-    # Flatten every enabled account in parallel.
-    results = await asyncio.gather(*(close_account(ex) for ex in executors),
+    results = await asyncio.gather(*(close_account(ex) for ex in targets),
                                    return_exceptions=True)
     cancelled = sum(r for r in results if isinstance(r, int))
-    failed = [ex.name for ex, r in zip(executors, results) if isinstance(r, Exception)]
-    for ex, r in zip(executors, results):
+    failed = [ex.name for ex, r in zip(targets, results) if isinstance(r, Exception)]
+    succeeded = [ex.name for ex, r in zip(targets, results) if isinstance(r, int)]
+    for ex, r in zip(targets, results):
         if isinstance(r, Exception):
             state.log_event("error", f"{tag}close_all FAILED for {ex.name}: {r} — the position may still be open")
 
-    key = _trade_key(webhook["id"], root)
+    # On a mixed broker outcome, remove only accounts whose close was confirmed;
+    # failed accounts remain tracked so a retry cannot forget a live position or
+    # re-flatten accounts that already succeeded. With no broker failure, preserve
+    # the existing all-success tracking semantics.
     with _lock:
-        if failed and len(failed) == len(executors):
-            pass                                   # nothing closed: keep the tracked record for a retry
-        else:
-            active_map.pop(key, None)
+        cur = active_map.get(key)
+        if cur and cur.get("accounts"):
+            if failed:
+                accounts = cur["accounts"]
+                for name in succeeded:
+                    accounts.pop(name, None)
+                if not accounts:
+                    active_map.pop(key, None)
+            else:
+                active_map.pop(key, None)
 
     state.log_event(
         "info", f"{tag}[{webhook.get('name', '?')}] Closed all for {root} on "
-        f"{len(executors)} account(s) ({cancelled} working orders cancelled)"
+        f"{len(targets)} account(s) ({cancelled} working orders cancelled)"
     )
-    return {"status": "ok", "action": "close_all", "accounts": len(executors),
+    return {"status": "ok", "action": "close_all", "accounts": len(targets),
             "cancelled": cancelled, "simulated": tag != ""}
 
 
