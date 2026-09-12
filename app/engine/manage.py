@@ -6,7 +6,7 @@ import time
 from typing import Any
 
 from .. import config, state
-from ..tradovate import TradovateError
+from ..tradovate import OrderOutcomeUnknown, TradovateError
 from .common import OrdersLeftWorking, SignalError, _cancel_working, _close_contract, _close_untracked, _lock, _trade_key
 
 
@@ -74,13 +74,29 @@ def _price(value: Any, label: str) -> float | None:
         raise SignalError(f"Invalid {label} '{value}'") from exc
 
 
+async def _order_still_working(ex: Any, order_id: int) -> bool | None:
+    """Broker-truth reconciliation after an uncertain cancel.
+
+    True/False means the broker answered; None means the state is still unknown.
+    No mutation is retried here.
+    """
+    try:
+        rows = await ex.working_orders()
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001
+        return None
+    return any(int(o.get("id") or 0) == int(order_id) for o in rows or [])
+
+
 async def handle_set_sl_tp(payload, root, target, executors, active_map, tag, webhook):
     """Set / replace the protective STOP and/or TARGET on the current open position.
 
     Existing stops are modified in place: a failed modify leaves the same tracked
     order rather than creating a second live stop. A replacement target is placed
-    before old targets are retired; if retirement is incomplete the new target is
-    rolled back where possible and every potentially-live order id remains tracked.
+    before old targets are retired; uncertain cancellations are reconciled against
+    broker truth before cleanup continues, and every potentially-live id remains
+    tracked when reconciliation cannot resolve the outcome.
     """
     s = config.load_settings()
     raw_sl = payload.get("stop_price", payload.get("new_sl"))
@@ -160,6 +176,15 @@ async def handle_set_sl_tp(payload, root, target, executors, active_map, tag, we
                 for oid in old_tps:
                     try:
                         await ex.cancel_order(oid)
+                    except OrderOutcomeUnknown as exc:
+                        still = await _order_still_working(ex, oid)
+                        if still is False:
+                            state.log_event("warn", f"{tag}{ex.name}: cancel of old target {oid} lost its answer, but broker reconciliation confirms it is gone")
+                            continue
+                        remaining_old.append(oid)
+                        detail = "still working" if still else "could not be reconciled"
+                        errors.append(f"old target {oid} cancel outcome unknown ({detail}): {exc}")
+                        state.log_event("error", f"{tag}{ex.name}: old target {oid} cancel outcome unknown and {detail}: {exc}")
                     except TradovateError as exc:
                         remaining_old.append(oid)
                         errors.append(f"old target {oid} cancel failed: {exc}")
@@ -170,17 +195,26 @@ async def handle_set_sl_tp(payload, root, target, executors, active_map, tag, we
                     changed = True
                 else:
                     # Do not knowingly leave a replacement plus old targets working.
-                    # Roll the new target back; if that cleanup is uncertain/failed,
-                    # retain every potentially-live id so later close/reconcile paths
-                    # cannot forget an order.
+                    # Roll the new target back; an uncertain rollback is reconciled
+                    # before deciding which order ids must remain tracked.
                     if new_id:
+                        replacement_live = True
                         try:
                             await ex.cancel_order(new_id)
-                            info["tp_order_ids"] = remaining_old
+                            replacement_live = False
+                        except OrderOutcomeUnknown as exc:
+                            still = await _order_still_working(ex, new_id)
+                            if still is False:
+                                replacement_live = False
+                                state.log_event("warn", f"{tag}{ex.name}: replacement target {new_id} rollback lost its answer, but broker reconciliation confirms it is gone")
+                            else:
+                                detail = "still working" if still else "could not be reconciled"
+                                errors.append(f"replacement target {new_id} rollback outcome unknown ({detail}): {exc}")
+                                state.log_event("error", f"{tag}{ex.name}: replacement target {new_id} rollback outcome unknown and {detail}: {exc}")
                         except TradovateError as exc:
-                            info["tp_order_ids"] = [new_id, *remaining_old]
                             errors.append(f"replacement target {new_id} rollback failed: {exc}")
                             state.log_event("error", f"{tag}{ex.name}: replacement target {new_id} could not be rolled back: {exc} — multiple targets may be working")
+                        info["tp_order_ids"] = ([new_id] if replacement_live else []) + remaining_old
                     else:
                         info["tp_order_ids"] = remaining_old
 
