@@ -239,5 +239,7 @@ async def handle_full_close(payload, trade_id, target, executors, active_map, ta
         f"account(s) ({cancelled} working orders cancelled){suffix}"
         + (f"; untracked position closed on {', '.join(extra_closed)}" if extra_closed else "")
     )
-    return {"status": "ok", "action": "full_close", "trade_id": trade_id,
-            "accounts": len(targets) + len(extra_closed), "cancelled": cancelled, "failed": failed + extra_failed, "simulated": tag != ""}
+    failures = failed + extra_failed
+    return {"status": "error" if failures else "ok", "action": "full_close", "trade_id": trade_id,
+            "accounts": len(targets) + len(extra_closed), "cancelled": cancelled,
+            "failed": failures, "simulated": tag != ""}

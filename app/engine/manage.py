@@ -58,8 +58,10 @@ async def handle_close_all(root, target, executors, active_map, tag, webhook):
         f"{len(targets) + len(extra_closed)} account(s) ({cancelled} working orders cancelled)"
         + (f"; untracked position closed on {', '.join(extra_closed)}" if extra_closed else "")
     )
-    return {"status": "ok", "action": "close_all", "accounts": len(targets) + len(extra_closed),
-            "cancelled": cancelled, "failed": failed + extra_failed, "simulated": tag != ""}
+    failures = failed + extra_failed
+    return {"status": "error" if failures else "ok", "action": "close_all",
+            "accounts": len(targets) + len(extra_closed), "cancelled": cancelled,
+            "failed": failures, "simulated": tag != ""}
 
 
 async def handle_set_sl_tp(payload, root, target, executors, active_map, tag, webhook):
