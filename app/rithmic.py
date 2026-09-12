@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from . import alerts, config, context, risk, state
-from .tradovate import TradovateError, _fire
+from .tradovate import OrderOutcomeUnknown, TradovateError, _fire
 
 log = logging.getLogger(__name__)
 
@@ -105,6 +105,18 @@ def _rp_error(responses: Any) -> str:
         if codes and str(codes[0]) != "0":
             return " ".join(str(c) for c in codes)[:200]
     return ""
+
+
+def _uncertain(exc: BaseException) -> bool:
+    """Transport-style failures where the order plant may have received the request."""
+    return isinstance(exc, (asyncio.TimeoutError, TimeoutError, ConnectionError, OSError))
+
+
+def _outcome_unknown(name: str, operation: str, detail: Any) -> OrderOutcomeUnknown:
+    msg = f"{name}: {operation} — outcome unknown, CHECK THE ACCOUNT ({detail})"
+    state.log_event("error", msg)
+    _fire(alerts.execution_problem(f"Order outcome unknown on {name}", msg))
+    return OrderOutcomeUnknown(msg)
 
 
 def _fingerprint(entry: dict[str, Any]) -> str:
@@ -561,17 +573,12 @@ class RithmicSession:
                 failure = "no basket id in the answer"
         except TradovateError:
             raise
-        except asyncio.TimeoutError:
-            # the request may have reached Rithmic: not a rejection — the operator checks the account
-            unknown = f"{name}: {action} {qty} {sym} {order_type} timed out — outcome unknown, CHECK THE ACCOUNT (tag {tag})"
-            state.log_order({"action": action, "symbol": sym, "account": name, "account_id": aid, "qty": qty, "order_type": order_type,
-                             "price": sent_price, "stop_price": sent_stop, "order_id": None, "user_tag": tag, "status": "unknown",
-                             "raw": {"errorText": "timeout"}})
-            state.log_event("error", unknown)
-            from .tradovate import OrderOutcomeUnknown, _fire
-            _fire(alerts.execution_problem(f"Order outcome unknown on {name}", unknown))
-            raise OrderOutcomeUnknown(unknown) from None
         except Exception as exc:  # noqa: BLE001
+            if _uncertain(exc):
+                state.log_order({"action": action, "symbol": sym, "account": name, "account_id": aid, "qty": qty, "order_type": order_type,
+                                 "price": sent_price, "stop_price": sent_stop, "order_id": None, "user_tag": tag, "status": "unknown",
+                                 "raw": {"errorText": str(exc) or type(exc).__name__}})
+                raise _outcome_unknown(name, f"{action} {qty} {sym} {order_type} (tag {tag})", exc) from exc
             failure, basket = f"{type(exc).__name__}: {exc}"[:200], ""
         order_id = self._oid(basket, spec) if basket else None
         result = {"action": action, "symbol": sym, "account": name, "account_id": aid, "qty": qty, "order_type": order_type,
@@ -597,14 +604,17 @@ class RithmicSession:
         try:
             second = await self.place_order(symbol=symbol, action=other["action"], qty=qty, order_type=other["order_type"], price=other.get("price"),
                                             stop_price=other.get("stop_price"), account_spec=account_spec, account_id=account_id, account_name=account_name)
-        except TradovateError as exc:
-            from .tradovate import OrderOutcomeUnknown
-            if isinstance(exc, OrderOutcomeUnknown):
-                raise                                           # leg 2 may be live: nothing is cancelled blindly
+        except OrderOutcomeUnknown:
+            raise                                           # leg 2 may be live: nothing is cancelled blindly
+        except TradovateError as original:
             try:
                 await self.cancel_order(int(first["order_id"]), account_spec=account_spec, account_id=account_id)
-            except Exception:  # noqa: BLE001
-                pass
+            except OrderOutcomeUnknown as cleanup:
+                raise cleanup from original
+            except TradovateError as cleanup:
+                raise TradovateError(
+                    f"second OCO leg failed ({original}); first leg {first['order_id']} cleanup also failed: {cleanup}"
+                ) from cleanup
             raise
         return {"order_id": first["order_id"], "oco_id": second["order_id"], "status": "submitted", "linked": False,
                 "raw": {"first": first.get("raw"), "second": second.get("raw")}}
@@ -613,6 +623,7 @@ class RithmicSession:
                            price: float | None = None, stop_price: float | None = None,
                            account_name: str | None = None, account_id: int | None = None, account_spec: str | None = None) -> dict[str, Any]:
         basket, spec = self._basket(order_id, account_spec, account_id)
+        name = account_name or spec or self.name
         from async_rithmic import OrderType
         otype = {"Market": OrderType.MARKET, "Limit": OrderType.LIMIT, "Stop": OrderType.STOP_MARKET, "StopLimit": OrderType.STOP_LIMIT}.get(order_type)
         kw: dict[str, Any] = {"basket_id": basket, "account_id": spec, "qty": int(qty)}
@@ -627,9 +638,16 @@ class RithmicSession:
             client = await self._ensure()
             raw = await client.modify_order(**kw)
             failure = _rp_error(raw)
+        except OrderOutcomeUnknown:
+            raise
         except Exception as exc:  # noqa: BLE001
+            if _uncertain(exc):
+                state.log_order({"action": "Modify", "symbol": "", "account": name, "qty": qty, "order_type": order_type,
+                                 "price": kw.get("price"), "stop_price": kw.get("trigger_price"), "order_id": order_id,
+                                 "status": "unknown", "raw": {"errorText": str(exc) or type(exc).__name__}})
+                raise _outcome_unknown(name, f"modify order {order_id}", exc) from exc
             failure = f"{type(exc).__name__}: {exc}"[:200]
-        state.log_order({"action": "Modify", "symbol": "", "account": account_name or self.name, "qty": qty, "order_type": order_type,
+        state.log_order({"action": "Modify", "symbol": "", "account": name, "qty": qty, "order_type": order_type,
                          "price": kw.get("price"), "stop_price": kw.get("trigger_price"), "order_id": order_id,
                          "status": "rejected" if failure else "modified", "raw": _plain(raw)})
         if failure:
@@ -657,7 +675,11 @@ class RithmicSession:
         client = await self._ensure()
         try:
             raw = await client.cancel_order(basket_id=basket, account_id=spec)
+        except OrderOutcomeUnknown:
+            raise
         except Exception as exc:  # noqa: BLE001
+            if _uncertain(exc):
+                raise _outcome_unknown(spec or self.name, f"cancel order {order_id}", exc) from exc
             raise TradovateError(f"cancel order {order_id} rejected — {exc}") from exc
         failure = _rp_error(raw)
         if failure:
@@ -671,18 +693,25 @@ class RithmicSession:
     async def liquidate_position(self, symbol: str, *, account_id: int | None = None,
                                  account_name: str | None = None, account_spec: str | None = None) -> dict[str, Any]:
         spec, aid = self._acct(account_spec, account_id)
+        name = account_name or spec or self.name
         sym = str(symbol).upper()
         client = await self._ensure()
         failure, raw = "", None
         try:
             raw = await client.exit_position(account_id=spec, symbol=sym, exchange=exchange_for(sym, self.exchanges))
             failure = _rp_error(raw)
+        except OrderOutcomeUnknown:
+            raise
         except Exception as exc:  # noqa: BLE001
+            if _uncertain(exc):
+                state.log_order({"action": "Liquidate", "symbol": sym, "account": name, "account_id": aid, "qty": 0,
+                                 "order_type": "Market", "status": "unknown", "raw": {"errorText": str(exc) or type(exc).__name__}})
+                raise _outcome_unknown(name, f"liquidate {sym}", exc) from exc
             failure = f"{type(exc).__name__}: {exc}"[:200]
-        state.log_order({"action": "Liquidate", "symbol": sym, "account": account_name or self.name, "account_id": aid, "qty": 0,
+        state.log_order({"action": "Liquidate", "symbol": sym, "account": name, "account_id": aid, "qty": 0,
                          "order_type": "Market", "status": "rejected" if failure else "submitted", "raw": _plain(raw)})
         if failure:
-            raise TradovateError(f"{account_name or self.name}: liquidate {sym} rejected — {failure}")
+            raise TradovateError(f"{name}: liquidate {sym} rejected — {failure}")
         return {"status": "submitted"}
 
     async def positions(self, *, account_id: int | None = None, account_name: str | None = None,
