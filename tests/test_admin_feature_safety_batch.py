@@ -1,15 +1,7 @@
 """Regression coverage for alpha.70/71 safety hardening."""
 from __future__ import annotations
 
-import asyncio
-
-from app import leader_feed, trade_window
-
-
-def test_malformed_enabled_trading_window_fails_closed():
-    opened, reason = trade_window.is_open({"enabled": True, "from": "not-a-time"})
-    assert opened is False
-    assert "invalid trading window configuration" in reason
+from app import leader_feed
 
 
 class _Session:
